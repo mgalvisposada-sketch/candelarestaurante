@@ -8,9 +8,9 @@ type BrandLogoProps = {
 };
 
 const sizes = {
-  sm: 44,
-  md: 72,
-  lg: 120,
+  sm: 48,
+  md: 80,
+  lg: 148,
 } as const;
 
 export function BrandLogo({
@@ -26,6 +26,7 @@ export function BrandLogo({
       width={px}
       height={px}
       priority={priority}
+      quality={95}
       className={cn("select-none object-contain", className)}
     />
   );
