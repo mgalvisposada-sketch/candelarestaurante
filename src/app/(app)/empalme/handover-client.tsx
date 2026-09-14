@@ -1,7 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import {
   closeHandoverAction,
   createHandoverItemAction,
@@ -11,7 +20,7 @@ import {
   updateHandoverItemAction,
   updateHandoverSessionAction,
 } from "./actions";
-import { Badge } from "@/components/ui/primitives";
+import { Badge, Button, Card } from "@/components/ui/primitives";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO } from "@/lib/dates";
 import {
@@ -35,6 +44,15 @@ import {
 } from "@/lib/handover";
 import type { VerificationStatus } from "@/types/domain";
 import { cn } from "@/lib/utils";
+import {
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  FileCheck2,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
 export type HandoverSession = {
   id: string;
@@ -60,6 +78,13 @@ export type HandoverItem = {
   comments: string | null;
   source: string | null;
   metadata?: unknown;
+};
+
+export type QualitySummary = {
+  total: number;
+  confirmed: number;
+  declared: number;
+  pending: number;
 };
 
 const inputClass =
@@ -89,24 +114,40 @@ function domainProgress(items: HandoverItem[]) {
   return { reviewed, total: items.length };
 }
 
+function parseAmountDraft(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const amount = Number(trimmed.replace(/,/g, "").replace(/\s/g, ""));
+  return Number.isNaN(amount) ? null : amount;
+}
+
+function formatAmountDraft(value: number | null | undefined): string {
+  if (value == null) return "";
+  return String(value);
+}
+
 const STATUS_OPTIONS: Array<{
   value: VerificationStatus;
   label: string;
+  short: string;
   hint: string;
 }> = [
   {
     value: "PENDIENTE",
     label: "Aún no",
+    short: "Pendiente",
     hint: "Todavía no lo revisamos",
   },
   {
     value: "DECLARADO",
     label: "Me lo dijeron",
-    hint: "Hay cifra, pero sin prueba",
+    short: "Dicho",
+    hint: "Válido sin prueba: queda en el acta",
   },
   {
     value: "CONFIRMADO",
     label: "Lo vi / tengo prueba",
+    short: "Con prueba",
     hint: "Hay extracto, factura u otro soporte",
   },
 ];
@@ -115,18 +156,29 @@ function StatusChooser({
   value,
   onChange,
   name = "verification_status",
+  compact = false,
 }: {
   value: VerificationStatus;
   onChange: (next: VerificationStatus) => void;
   name?: string;
+  compact?: boolean;
 }) {
   return (
-    <fieldset className="space-y-2">
-      <legend className="mb-1 text-sm font-medium text-[var(--ink)]">
-        ¿Cómo quedó esta respuesta?
-      </legend>
+    <fieldset className="space-y-1.5">
+      {!compact ? (
+        <legend className="mb-1 text-sm font-medium text-[var(--ink)]">
+          ¿Cómo quedó esta respuesta?
+        </legend>
+      ) : (
+        <legend className="sr-only">Estado de verificación</legend>
+      )}
       <input type="hidden" name={name} value={value} />
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div
+        className={cn(
+          "grid gap-1.5",
+          compact ? "grid-cols-3" : "gap-2 sm:grid-cols-3",
+        )}
+      >
         {STATUS_OPTIONS.map((option) => {
           const active = value === option.value;
           return (
@@ -135,16 +187,26 @@ function StatusChooser({
               type="button"
               onClick={() => onChange(option.value)}
               className={cn(
-                "rounded-lg border px-3 py-2.5 text-left transition",
+                "rounded-lg border text-left transition",
+                compact ? "px-2 py-2" : "px-3 py-2.5",
                 active
-                  ? "border-[var(--accent)] bg-[var(--accent-soft)]"
+                  ? "border-[var(--accent)] bg-[var(--accent-soft)] shadow-[inset_0_0_0_1px_var(--accent)]"
                   : "border-[var(--line)] bg-white hover:border-[var(--accent)]/40",
               )}
             >
-              <span className="block text-sm font-semibold">{option.label}</span>
-              <span className="mt-0.5 block text-xs text-[var(--muted)]">
-                {option.hint}
+              <span
+                className={cn(
+                  "block font-semibold",
+                  compact ? "text-xs" : "text-sm",
+                )}
+              >
+                {compact ? option.short : option.label}
               </span>
+              {!compact ? (
+                <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                  {option.hint}
+                </span>
+              ) : null}
             </button>
           );
         })}
@@ -174,14 +236,16 @@ export function CreateHandoverForm({
     >
       <div className="space-y-2 text-sm leading-relaxed text-[var(--muted)]">
         <p>
-          Imagina que te sientas con el administrador anterior y le preguntas,
-          punto por punto:{" "}
+          Se trata de construir{" "}
           <strong className="font-medium text-[var(--ink)]">
-            ¿qué plata hay, qué se debe, qué papeles entrega?
-          </strong>
+            una foto compartida
+          </strong>{" "}
+          de la plata, las deudas y los papeles — no de juzgar a quien entregaba
+          la administración.
         </p>
         <p>
-          Esta pantalla es esa reunión. Al final se congela como acta del día 1.
+          Si la información viene a medias, se declara igual. Al final se
+          congela como acta del día 1 para todos los socios.
         </p>
       </div>
 
@@ -236,13 +300,9 @@ export function CreateHandoverForm({
           {error}
         </p>
       ) : null}
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded-lg bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-60"
-      >
+      <Button type="submit" disabled={pending}>
         {pending ? "Preparando…" : "Empezar la entrega"}
-      </button>
+      </Button>
     </form>
   );
 }
@@ -326,13 +386,9 @@ export function SessionMetaForm({ session }: { session: HandoverSession }) {
         </label>
       </div>
       <div className="flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
-        >
+        <Button type="submit" variant="secondary" disabled={pending} className="px-3 py-1.5 text-xs">
           {pending ? "Guardando…" : "Guardar"}
-        </button>
+        </Button>
         {saved ? (
           <span className="text-xs text-emerald-700">Guardado</span>
         ) : null}
@@ -342,12 +398,153 @@ export function SessionMetaForm({ session }: { session: HandoverSession }) {
   );
 }
 
+function BreakdownEditor({
+  mode,
+  lines,
+  setLines,
+  domain,
+}: {
+  mode: ReturnType<typeof itemAnswerMode>;
+  lines: HandoverBreakdownLine[];
+  setLines: Dispatch<SetStateAction<HandoverBreakdownLine[]>>;
+  domain: string;
+}) {
+  const prefersList = mode === "list" || mode === "docs";
+  const namePlaceholder =
+    mode === "docs"
+      ? "Ej. RUT, Cámara de Comercio, estatutos"
+      : breakdownNamePlaceholder(domain);
+  const linesSum = sumHandoverBreakdownLines(lines);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-[var(--ink)]">
+            {mode === "docs"
+              ? "Lista de documentos"
+              : prefersList
+                ? "Tu respuesta: la lista"
+                : "Detalle opcional"}
+          </p>
+          <p className="text-xs text-[var(--muted)]">
+            {mode === "docs"
+              ? "Un renglón por documento. El monto puede ir en 0."
+              : prefersList
+                ? "Un renglón por cuenta, persona o concepto."
+                : "Solo si quieres desglosar el monto."}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="secondary"
+          className="px-3 py-1.5 text-xs"
+          onClick={() => setLines((prev) => [...prev, newBreakdownLine()])}
+        >
+          <Plus className="mr-1 size-3.5" />
+          Renglón
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {lines.map((line, index) => (
+          <div
+            key={line.id}
+            className="grid gap-2 rounded-lg border border-[var(--line)] bg-[var(--bg)]/50 p-2.5 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,1fr)_auto]"
+          >
+            <label className="block text-sm">
+              <span className="mb-1 block text-[11px] text-[var(--muted)]">
+                {mode === "docs" ? "Documento" : "Quién / qué"}
+              </span>
+              <input
+                value={line.name}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setLines((prev) =>
+                    prev.map((row, i) =>
+                      i === index ? { ...row, name: value } : row,
+                    ),
+                  );
+                }}
+                placeholder={namePlaceholder}
+                className={inputClass}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-[11px] text-[var(--muted)]">
+                {mode === "docs" ? "Valor (opc.)" : "Cuánto"}
+              </span>
+              <input
+                inputMode="decimal"
+                value={formatAmountDraft(line.amount)}
+                onChange={(e) => {
+                  const amount = parseAmountDraft(e.target.value);
+                  setLines((prev) =>
+                    prev.map((row, i) =>
+                      i === index ? { ...row, amount } : row,
+                    ),
+                  );
+                }}
+                placeholder={mode === "docs" ? "0" : "COP"}
+                className={cn(inputClass, "tabular-nums")}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-[11px] text-[var(--muted)]">
+                Nota
+              </span>
+              <input
+                value={line.note ?? ""}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setLines((prev) =>
+                    prev.map((row, i) =>
+                      i === index ? { ...row, note: value } : row,
+                    ),
+                  );
+                }}
+                placeholder="Opcional"
+                className={inputClass}
+              />
+            </label>
+            <div className="flex items-end">
+              <button
+                type="button"
+                aria-label="Quitar renglón"
+                onClick={() =>
+                  setLines((prev) => prev.filter((_, i) => i !== index))
+                }
+                className="inline-flex size-9 items-center justify-center rounded-lg border border-red-200 text-red-700 transition hover:bg-red-50"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {linesSum != null ? (
+        <p className="text-xs text-[var(--muted)]">
+          Suma:{" "}
+          <span className="font-semibold tabular-nums text-[var(--ink)]">
+            {formatCOP(linesSum)}
+          </span>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function HandoverItemCard({
   item,
   readOnly,
+  highlighted,
+  expanded,
+  onToggle,
 }: {
   item: HandoverItem;
   readOnly: boolean;
+  highlighted?: boolean;
+  expanded: boolean;
+  onToggle: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -363,15 +560,16 @@ export function HandoverItemCard({
       ? [newBreakdownLine()]
       : initialLines,
   );
+  const cleanComments = sanitizeItemComments(item.item_key, item.comments);
+  const [source, setSource] = useState(item.source ?? "");
+  const [comments, setComments] = useState(cleanComments);
+  const [detailsOpen, setDetailsOpen] = useState(
+    () => Boolean(item.source?.trim()) || Boolean(cleanComments),
+  );
   const linesSum = sumHandoverBreakdownLines(lines);
-  const namePlaceholder =
-    mode === "docs"
-      ? "Ej. RUT, Cámara de Comercio, estatutos"
-      : breakdownNamePlaceholder(item.domain);
   const ask = itemAsk(item.item_key, item.label);
   const expect = itemExpect(item.item_key);
   const answerHint = itemAnswerHint(item.item_key);
-  const cleanComments = sanitizeItemComments(item.item_key, item.comments);
   const amountLabel =
     mode === "confirm"
       ? "Total que entregan el día 1 (COP)"
@@ -380,330 +578,323 @@ export function HandoverItemCard({
         : prefersList
           ? "Total (suma de la lista)"
           : "Monto de la respuesta (COP)";
+  const cardRef = useRef<HTMLDivElement>(null);
+  const amountPreview =
+    item.amount != null
+      ? formatCOP(item.amount)
+      : linesSum != null
+        ? formatCOP(linesSum)
+        : null;
+  const lineCount = initialLines.filter((l) => l.name.trim()).length;
 
-  function renderLinesEditor() {
-    return (
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <p className="text-sm font-semibold text-[var(--ink)]">
-              {mode === "docs"
-                ? "Lista de documentos"
-                : prefersList
-                  ? "Tu respuesta: la lista"
-                  : "Detalle opcional"}
-            </p>
-            <p className="text-xs text-[var(--muted)]">
-              {mode === "docs"
-                ? "Un renglón por documento. El monto puede ir en 0."
-                : prefersList
-                  ? "Un renglón por cuenta, persona o concepto. Ese es el corazón de la respuesta."
-                  : "Solo si quieres desglosar el monto."}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setLines((prev) => [...prev, newBreakdownLine()])}
-            className="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold"
-          >
-            + Agregar renglón
-          </button>
-        </div>
-        <div className="space-y-2">
-          {lines.map((line, index) => (
-            <div
-              key={line.id}
-              className="grid gap-2 border border-[var(--line)] bg-[var(--bg)]/40 p-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,1fr)_auto]"
-            >
-              <label className="block text-sm">
-                <span className="mb-1 block text-xs text-[var(--muted)]">
-                  {mode === "docs" ? "Documento" : "Quién / qué"}
-                </span>
-                <input
-                  value={line.name}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setLines((prev) =>
-                      prev.map((row, i) =>
-                        i === index ? { ...row, name: value } : row,
-                      ),
-                    );
-                  }}
-                  placeholder={namePlaceholder}
-                  className={inputClass}
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="mb-1 block text-xs text-[var(--muted)]">
-                  {mode === "docs" ? "Valor (opc.)" : "Cuánto"}
-                </span>
-                <input
-                  value={line.amount != null ? String(line.amount) : ""}
-                  onChange={(e) => {
-                    const raw = e.target.value.trim();
-                    const amount =
-                      raw === "" ? null : Number(raw.replace(/,/g, ""));
-                    setLines((prev) =>
-                      prev.map((row, i) =>
-                        i === index
-                          ? {
-                              ...row,
-                              amount: Number.isNaN(amount as number)
-                                ? null
-                                : amount,
-                            }
-                          : row,
-                      ),
-                    );
-                  }}
-                  placeholder={mode === "docs" ? "0" : "COP"}
-                  className={inputClass}
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="mb-1 block text-xs text-[var(--muted)]">
-                  Nota corta
-                </span>
-                <input
-                  value={line.note ?? ""}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setLines((prev) =>
-                      prev.map((row, i) =>
-                        i === index ? { ...row, note: value } : row,
-                      ),
-                    );
-                  }}
-                  placeholder="Opcional"
-                  className={inputClass}
-                />
-              </label>
-              <div className="flex items-end">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setLines((prev) => prev.filter((_, i) => i !== index))
-                  }
-                  className="rounded-md border border-red-200 px-2.5 py-2 text-xs font-medium text-red-700"
-                >
-                  Quitar
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-        {linesSum != null ? (
-          <p className="text-xs text-[var(--muted)]">
-            Suma de la lista:{" "}
-            <span className="font-semibold text-[var(--ink)]">
-              {formatCOP(linesSum)}
-            </span>
-          </p>
-        ) : null}
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (!highlighted) return;
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlighted]);
 
   return (
-    <div className="border border-[var(--line)] bg-white p-4">
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0 max-w-2xl space-y-1">
-          <p className="font-display text-base font-bold tracking-tight">
+    <div
+      id={`item-${item.id}`}
+      ref={cardRef}
+      className={cn(
+        "overflow-hidden rounded-xl border bg-white transition",
+        highlighted
+          ? "border-[var(--accent)] shadow-[0_0_0_3px_var(--accent-soft)]"
+          : "border-[var(--line)]",
+      )}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-3.5 py-3 text-left transition hover:bg-black/[0.015]"
+      >
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-display text-sm font-bold tracking-tight">
             {ask}
           </p>
-          {expect ? (
-            <p className="text-sm text-[var(--muted)]">
-              Cómo responder: {expect}
-            </p>
-          ) : null}
-          {answerHint ? (
-            <p className="rounded-md bg-[var(--accent-soft)] px-2.5 py-1.5 text-xs text-[var(--accent)]">
-              {answerHint}
-            </p>
-          ) : null}
+          <p className="mt-0.5 truncate text-xs text-[var(--muted)]">
+            {amountPreview
+              ? amountPreview
+              : status === "PENDIENTE"
+                ? "Sin responder"
+                : verificationLabel(status)}
+            {lineCount > 0 ? ` · ${lineCount} renglón${lineCount === 1 ? "" : "es"}` : ""}
+          </p>
         </div>
-        <Badge tone={statusTone(status)}>{verificationLabel(status)}</Badge>
-      </div>
+        <Badge tone={statusTone(status)}>
+          {STATUS_OPTIONS.find((o) => o.value === status)?.short ??
+            verificationLabel(status)}
+        </Badge>
+        <ChevronDown
+          className={cn(
+            "size-4 shrink-0 text-[var(--muted)] transition",
+            expanded && "rotate-180",
+          )}
+        />
+      </button>
 
-      {readOnly ? (
-        <div className="space-y-3 text-sm text-[var(--muted)]">
-          <p>
-            Estado:{" "}
-            <span className="font-medium text-[var(--ink)]">
-              {verificationLabel(item.verification_status)}
-            </span>
-            <span className="block text-xs">
-              {verificationHint(item.verification_status)}
-            </span>
-          </p>
-          <p>
-            Monto:{" "}
-            <span className="font-medium text-[var(--ink)]">
-              {item.amount != null ? formatCOP(item.amount) : "—"}
-            </span>
-          </p>
-          {initialLines.length > 0 ? (
-            <div className="overflow-x-auto border border-[var(--line)]">
-              <table className="w-full min-w-[420px] text-left text-sm">
-                <thead className="bg-[var(--bg)] text-xs uppercase tracking-wide text-[var(--muted)]">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">Detalle</th>
-                    <th className="px-3 py-2 font-medium">Monto</th>
-                    <th className="px-3 py-2 font-medium">Nota</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {initialLines.map((line) => (
-                    <tr key={line.id} className="border-t border-[var(--line)]">
-                      <td className="px-3 py-2 text-[var(--ink)]">{line.name}</td>
-                      <td className="px-3 py-2 tabular-nums">
-                        {line.amount != null ? formatCOP(line.amount) : "—"}
-                      </td>
-                      <td className="px-3 py-2">{line.note || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {expanded ? (
+        <div className="border-t border-[var(--line)] px-3.5 py-3.5">
+          {expect || answerHint ? (
+            <div className="mb-3 space-y-1.5">
+              {expect ? (
+                <p className="text-xs text-[var(--muted)]">
+                  Cómo responder: {expect}
+                </p>
+              ) : null}
+              {answerHint ? (
+                <p className="rounded-md bg-[var(--accent-soft)] px-2.5 py-1.5 text-xs text-[var(--accent)]">
+                  {answerHint}
+                </p>
+              ) : null}
             </div>
           ) : null}
-          <p>De dónde salió: {item.source || "—"}</p>
-          <p>Notas: {cleanComments || "—"}</p>
-        </div>
-      ) : (
-        <form
-          className="space-y-4"
-          action={(fd) => {
-            setError(null);
-            setSaved(false);
-            const cleaned = lines
-              .map((line) => ({
-                ...line,
-                name: line.name.trim(),
-                note: line.note?.trim() || undefined,
-              }))
-              .filter((line) => line.name.length > 0);
-            fd.set(
-              "metadata_json",
-              JSON.stringify(buildHandoverItemMetadata(cleaned)),
-            );
-            startTransition(async () => {
-              const result = await updateHandoverItemAction(item.id, fd);
-              if (!result.ok) setError(result.error ?? "Error");
-              else {
-                setLines(
-                  cleaned.length > 0
-                    ? cleaned
-                    : prefersList
-                      ? [newBreakdownLine()]
-                      : [],
-                );
-                setSaved(true);
-              }
-            });
-          }}
-        >
-          <input type="hidden" name="label" value={item.label} />
-          <input type="hidden" name="domain" value={item.domain} />
-          <input type="hidden" name="item_key" value={item.item_key} />
 
-          {prefersList ? renderLinesEditor() : null}
-
-          {!prefersList ? (
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-[var(--ink)]">
-                {amountLabel}
-              </span>
-              <input
-                name="amount"
-                defaultValue={item.amount != null ? String(item.amount) : ""}
-                placeholder={
-                  mode === "confirm"
-                    ? "Suma esperada de bancos + caja + pasarelas…"
-                    : "Escribe el monto"
-                }
-                className={inputClass}
-              />
-            </label>
-          ) : linesSum != null ? (
-            <>
-              <input type="hidden" name="amount" value={String(linesSum)} />
-              <p className="text-sm text-[var(--muted)]">
-                {amountLabel}:{" "}
-                <span className="font-semibold text-[var(--ink)]">
-                  {formatCOP(linesSum)}
+          {readOnly ? (
+            <div className="space-y-3 text-sm text-[var(--muted)]">
+              <p>
+                Estado:{" "}
+                <span className="font-medium text-[var(--ink)]">
+                  {verificationLabel(item.verification_status)}
+                </span>
+                <span className="block text-xs">
+                  {verificationHint(item.verification_status)}
                 </span>
               </p>
-            </>
+              <p>
+                Monto:{" "}
+                <span className="font-medium tabular-nums text-[var(--ink)]">
+                  {item.amount != null ? formatCOP(item.amount) : "—"}
+                </span>
+              </p>
+              {initialLines.length > 0 ? (
+                <div className="overflow-x-auto rounded-lg border border-[var(--line)]">
+                  <table className="w-full min-w-[420px] text-left text-sm">
+                    <thead className="bg-[var(--bg)] text-xs uppercase tracking-wide text-[var(--muted)]">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Detalle</th>
+                        <th className="px-3 py-2 font-medium">Monto</th>
+                        <th className="px-3 py-2 font-medium">Nota</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {initialLines.map((line) => (
+                        <tr
+                          key={line.id}
+                          className="border-t border-[var(--line)]"
+                        >
+                          <td className="px-3 py-2 text-[var(--ink)]">
+                            {line.name}
+                          </td>
+                          <td className="px-3 py-2 tabular-nums">
+                            {line.amount != null ? formatCOP(line.amount) : "—"}
+                          </td>
+                          <td className="px-3 py-2">{line.note || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+              <p>De dónde salió: {item.source || "—"}</p>
+              <p>Notas: {cleanComments || "—"}</p>
+            </div>
           ) : (
-            <label className="block text-sm">
-              <span className="mb-1 block text-[var(--muted)]">{amountLabel}</span>
-              <input
-                name="amount"
-                defaultValue={item.amount != null ? String(item.amount) : ""}
-                placeholder="Se llena solo cuando agregues montos arriba"
-                className={inputClass}
-              />
-            </label>
-          )}
-
-          {mode === "single" ? renderLinesEditor() : null}
-
-          <StatusChooser value={status} onChange={setStatus} />
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="block text-sm">
-              <span className="mb-1 block text-[var(--muted)]">
-                ¿De dónde salió esta respuesta?
-              </span>
-              <input
-                name="source"
-                defaultValue={item.source ?? ""}
-                placeholder="Extracto, conteo físico, Excel, WhatsApp…"
-                className={inputClass}
-              />
-            </label>
-            <label className="block text-sm md:col-span-2">
-              <span className="mb-1 block text-[var(--muted)]">
-                Notas de la reunión (opcional)
-              </span>
-              <textarea
-                name="comments"
-                rows={2}
-                defaultValue={cleanComments}
-                placeholder="Solo lo que dijo el administrador anterior… no copies la guía"
-                className={inputClass}
-              />
-            </label>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="submit"
-              disabled={pending}
-              className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-            >
-              {pending ? "…" : "Guardar esta respuesta"}
-            </button>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => {
-                if (!confirm("¿Quitar esta pregunta del acta?")) return;
+            <form
+              className="space-y-3"
+              action={(fd) => {
+                setError(null);
+                setSaved(false);
+                const cleaned = lines
+                  .map((line) => ({
+                    ...line,
+                    name: line.name.trim(),
+                    note: line.note?.trim() || undefined,
+                  }))
+                  .filter((line) => line.name.length > 0);
+                fd.set(
+                  "metadata_json",
+                  JSON.stringify(buildHandoverItemMetadata(cleaned)),
+                );
                 startTransition(async () => {
-                  const result = await softDeleteHandoverItemAction(item.id);
+                  const result = await updateHandoverItemAction(item.id, fd);
                   if (!result.ok) setError(result.error ?? "Error");
+                  else {
+                    setLines(
+                      cleaned.length > 0
+                        ? cleaned
+                        : prefersList
+                          ? [newBreakdownLine()]
+                          : [],
+                    );
+                    setSaved(true);
+                  }
                 });
               }}
-              className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700"
             >
-              Quitar pregunta
-            </button>
-            {saved ? (
-              <span className="text-xs text-emerald-700">Guardado</span>
-            ) : null}
-            {error ? <span className="text-xs text-red-700">{error}</span> : null}
-          </div>
-        </form>
-      )}
+              <input type="hidden" name="label" value={item.label} />
+              <input type="hidden" name="domain" value={item.domain} />
+              <input type="hidden" name="item_key" value={item.item_key} />
+
+              <StatusChooser value={status} onChange={setStatus} compact />
+
+              {prefersList ? (
+                <BreakdownEditor
+                  mode={mode}
+                  lines={lines}
+                  setLines={setLines}
+                  domain={item.domain}
+                />
+              ) : null}
+
+              {!prefersList ? (
+                <label className="block text-sm">
+                  <span className="mb-1 block font-medium text-[var(--ink)]">
+                    {amountLabel}
+                  </span>
+                  <input
+                    name="amount"
+                    inputMode="decimal"
+                    defaultValue={
+                      item.amount != null ? String(item.amount) : ""
+                    }
+                    placeholder={
+                      mode === "confirm"
+                        ? "Suma esperada de bancos + caja + pasarelas…"
+                        : "Escribe el monto"
+                    }
+                    className={cn(inputClass, "tabular-nums")}
+                  />
+                </label>
+              ) : linesSum != null ? (
+                <>
+                  <input type="hidden" name="amount" value={String(linesSum)} />
+                  <p className="text-sm text-[var(--muted)]">
+                    {amountLabel}:{" "}
+                    <span className="font-semibold tabular-nums text-[var(--ink)]">
+                      {formatCOP(linesSum)}
+                    </span>
+                  </p>
+                </>
+              ) : (
+                <label className="block text-sm">
+                  <span className="mb-1 block text-[var(--muted)]">
+                    {amountLabel}
+                  </span>
+                  <input
+                    name="amount"
+                    inputMode="decimal"
+                    defaultValue={
+                      item.amount != null ? String(item.amount) : ""
+                    }
+                    placeholder="Se llena solo cuando agregues montos arriba"
+                    className={cn(inputClass, "tabular-nums")}
+                  />
+                </label>
+              )}
+
+              {mode === "single" ? (
+                <details className="rounded-lg border border-[var(--line)] bg-[var(--bg)]/40 px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-medium text-[var(--muted)]">
+                    Desglose opcional
+                  </summary>
+                  <div className="mt-3">
+                    <BreakdownEditor
+                      mode={mode}
+                      lines={lines}
+                      setLines={setLines}
+                      domain={item.domain}
+                    />
+                  </div>
+                </details>
+              ) : null}
+
+              <input type="hidden" name="source" value={source} />
+              <input type="hidden" name="comments" value={comments} />
+              <div className="rounded-lg border border-[var(--line)]">
+                <button
+                  type="button"
+                  onClick={() => setDetailsOpen((o) => !o)}
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-[var(--muted)]"
+                >
+                  <span>
+                    Fuente y notas {detailsOpen ? "" : "(opcional)"}
+                  </span>
+                  <ChevronDown
+                    className={cn(
+                      "size-3.5 transition",
+                      detailsOpen && "rotate-180",
+                    )}
+                  />
+                </button>
+                {detailsOpen ? (
+                  <div className="grid gap-3 border-t border-[var(--line)] px-3 py-3 md:grid-cols-2">
+                    <label className="block text-sm md:col-span-1">
+                      <span className="mb-1 block text-[var(--muted)]">
+                        ¿De dónde salió?
+                      </span>
+                      <input
+                        value={source}
+                        onChange={(e) => setSource(e.target.value)}
+                        placeholder="Extracto, conteo, Excel…"
+                        className={inputClass}
+                      />
+                    </label>
+                    <label className="block text-sm md:col-span-2">
+                      <span className="mb-1 block text-[var(--muted)]">
+                        Notas de la reunión
+                      </span>
+                      <textarea
+                        rows={2}
+                        value={comments}
+                        onChange={(e) => setComments(e.target.value)}
+                        placeholder="Solo lo que dijo el administrador anterior…"
+                        className={inputClass}
+                      />
+                    </label>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="submit"
+                  disabled={pending}
+                  className="px-3 py-1.5 text-xs"
+                >
+                  {pending ? "…" : "Guardar respuesta"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={pending}
+                  className="px-3 py-1.5 text-xs text-red-700 hover:bg-red-50"
+                  onClick={() => {
+                    if (!confirm("¿Quitar esta pregunta del acta?")) return;
+                    startTransition(async () => {
+                      const result = await softDeleteHandoverItemAction(
+                        item.id,
+                      );
+                      if (!result.ok) setError(result.error ?? "Error");
+                    });
+                  }}
+                >
+                  Quitar
+                </Button>
+                {saved ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+                    <Check className="size-3.5" />
+                    Guardado
+                  </span>
+                ) : null}
+                {error ? (
+                  <span className="text-xs text-red-700">{error}</span>
+                ) : null}
+              </div>
+            </form>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -719,86 +910,90 @@ export function AddHandoverItemForm({ sessionId }: { sessionId: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="w-full border border-dashed border-[var(--line)] px-4 py-3 text-left text-sm font-medium text-[var(--ink)] transition hover:border-[var(--accent)]/40 hover:bg-white"
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white/60 px-4 py-3 text-sm font-medium text-[var(--ink)] transition hover:border-[var(--accent)]/40 hover:bg-white"
       >
-        + Agregar otra pregunta que salió en la reunión
+        <Plus className="size-4" />
+        Agregar otra pregunta de la reunión
       </button>
     );
   }
 
   return (
-    <form
-      className="space-y-3 border border-[var(--line)] bg-white p-4"
-      action={(fd) => {
-        setError(null);
-        startTransition(async () => {
-          const result = await createHandoverItemAction(sessionId, fd);
-          if (!result.ok) setError(result.error ?? "Error");
-          else setOpen(false);
-        });
-      }}
-    >
-      <div className="flex items-center justify-between">
-        <h4 className="font-medium">Pregunta adicional</h4>
-        <button
-          type="button"
-          className="text-sm text-[var(--muted)]"
-          onClick={() => setOpen(false)}
-        >
-          Cancelar
-        </button>
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <label className="block text-sm md:col-span-2">
-          <span className="mb-1 block text-[var(--muted)]">
-            ¿Qué pregunta quieres agregar? *
-          </span>
-          <input
-            name="label"
-            required
-            className={inputClass}
-            placeholder="Ej. Anticipos ya pagados a proveedores"
-          />
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1 block text-[var(--muted)]">Tema *</span>
-          <select name="domain" defaultValue="otros" className={inputClass}>
-            {HANDOVER_DOMAINS.map((d) => (
-              <option key={d.value} value={d.value}>
-                {d.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1 block text-[var(--muted)]">Monto (COP)</span>
-          <input name="amount" className={inputClass} placeholder="Opcional" />
-        </label>
-        <div className="md:col-span-2">
-          <StatusChooser value={status} onChange={setStatus} />
-        </div>
-        <label className="block text-sm">
-          <span className="mb-1 block text-[var(--muted)]">De dónde salió</span>
-          <input name="source" className={inputClass} />
-        </label>
-        <label className="block text-sm md:col-span-2">
-          <span className="mb-1 block text-[var(--muted)]">Notas</span>
-          <textarea name="comments" rows={2} className={inputClass} />
-        </label>
-      </div>
-      {error ? (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
-          {error}
-        </p>
-      ) : null}
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+    <Card className="space-y-3">
+      <form
+        className="space-y-3"
+        action={(fd) => {
+          setError(null);
+          startTransition(async () => {
+            const result = await createHandoverItemAction(sessionId, fd);
+            if (!result.ok) setError(result.error ?? "Error");
+            else setOpen(false);
+          });
+        }}
       >
-        {pending ? "Guardando…" : "Agregar pregunta"}
-      </button>
-    </form>
+        <div className="flex items-center justify-between">
+          <h4 className="font-display font-bold">Pregunta adicional</h4>
+          <button
+            type="button"
+            className="text-sm text-[var(--muted)]"
+            onClick={() => setOpen(false)}
+          >
+            Cancelar
+          </button>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="block text-sm md:col-span-2">
+            <span className="mb-1 block text-[var(--muted)]">
+              ¿Qué pregunta quieres agregar? *
+            </span>
+            <input
+              name="label"
+              required
+              className={inputClass}
+              placeholder="Ej. Anticipos ya pagados a proveedores"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block text-[var(--muted)]">Tema *</span>
+            <select name="domain" defaultValue="otros" className={inputClass}>
+              {HANDOVER_DOMAINS.map((d) => (
+                <option key={d.value} value={d.value}>
+                  {d.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block text-[var(--muted)]">Monto (COP)</span>
+            <input
+              name="amount"
+              inputMode="decimal"
+              className={cn(inputClass, "tabular-nums")}
+              placeholder="Opcional"
+            />
+          </label>
+          <div className="md:col-span-2">
+            <StatusChooser value={status} onChange={setStatus} compact />
+          </div>
+          <label className="block text-sm">
+            <span className="mb-1 block text-[var(--muted)]">De dónde salió</span>
+            <input name="source" className={inputClass} />
+          </label>
+          <label className="block text-sm md:col-span-2">
+            <span className="mb-1 block text-[var(--muted)]">Notas</span>
+            <textarea name="comments" rows={2} className={inputClass} />
+          </label>
+        </div>
+        {error ? (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+            {error}
+          </p>
+        ) : null}
+        <Button type="submit" disabled={pending}>
+          {pending ? "Guardando…" : "Agregar pregunta"}
+        </Button>
+      </form>
+    </Card>
   );
 }
 
@@ -823,122 +1018,184 @@ export function SeedDefaultsButton({ sessionId }: { sessionId: string }) {
         }}
         className="text-xs font-medium text-[var(--muted)] underline-offset-2 hover:text-[var(--ink)] hover:underline"
       >
-        {pending ? "…" : "¿Faltan preguntas? Completar lista estándar"}
+        {pending
+          ? "…"
+          : "Completar preguntas estándar que falten (incluye las nuevas)"}
       </button>
       {msg ? <span className="text-xs text-[var(--muted)]">{msg}</span> : null}
     </div>
   );
 }
 
+type DomainGroup = {
+  domain: string;
+  items: HandoverItem[];
+};
+
+function groupItems(items: HandoverItem[]): DomainGroup[] {
+  const map = new Map<string, HandoverItem[]>();
+  for (const item of items) {
+    const list = map.get(item.domain) ?? [];
+    list.push(item);
+    map.set(item.domain, list);
+  }
+  const ordered = HANDOVER_DOMAINS.map((d) => d.value).filter((d) =>
+    map.has(d),
+  );
+  const extras = [...map.keys()].filter((d) => !ordered.includes(d as never));
+  return [...ordered, ...extras].map((domain) => ({
+    domain,
+    items: map.get(domain) ?? [],
+  }));
+}
+
 export function HandoverDomainSections({
   items,
   readOnly,
+  activeDomain,
+  onDomainChange,
+  highlightItemId,
+  expandedItemId,
+  onExpandItem,
 }: {
   items: HandoverItem[];
   readOnly: boolean;
+  activeDomain: string | null;
+  onDomainChange: (domain: string | null) => void;
+  highlightItemId?: string | null;
+  expandedItemId: string | null;
+  onExpandItem: (itemId: string | null) => void;
 }) {
-  const grouped = useMemo(() => {
-    const map = new Map<string, HandoverItem[]>();
-    for (const item of items) {
-      const list = map.get(item.domain) ?? [];
-      list.push(item);
-      map.set(item.domain, list);
-    }
-    const ordered = HANDOVER_DOMAINS.map((d) => d.value).filter((d) =>
-      map.has(d),
+  const grouped = useMemo(() => groupItems(items), [items]);
+
+  if (grouped.length === 0) {
+    return (
+      <Card>
+        <p className="text-sm text-[var(--muted)]">
+          Aún no hay preguntas. Completa la lista estándar o agrega una.
+        </p>
+      </Card>
     );
-    const extras = [...map.keys()].filter((d) => !ordered.includes(d as never));
-    return [...ordered, ...extras].map((domain) => ({
-      domain,
-      items: map.get(domain) ?? [],
-    }));
-  }, [items]);
-
-  const firstIncomplete =
-    grouped.find((g) =>
-      g.items.some((i) => i.verification_status === "PENDIENTE"),
-    )?.domain ?? grouped[0]?.domain;
-
-  const [openDomain, setOpenDomain] = useState<string | null>(
-    firstIncomplete ?? null,
-  );
+  }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {grouped.map((group, index) => {
         const meta = domainMeta(group.domain);
         const { reviewed, total } = domainProgress(group.items);
-        const open = openDomain === group.domain;
         const done = reviewed === total && total > 0;
+        const open = activeDomain === group.domain;
+        const pendingInBlock = group.items.filter(
+          (i) => i.verification_status === "PENDIENTE",
+        ).length;
 
         return (
           <section
             key={group.domain}
-            className="overflow-hidden border border-[var(--line)] bg-[var(--surface)]"
+            className={cn(
+              "overflow-hidden rounded-xl border bg-[var(--surface)] transition",
+              open
+                ? "border-[var(--accent)]/50 shadow-[0_1px_0_rgba(18,18,18,0.04)]"
+                : "border-[var(--line)]",
+            )}
           >
             <button
               type="button"
               onClick={() =>
-                setOpenDomain((current) =>
-                  current === group.domain ? null : group.domain,
-                )
+                onDomainChange(open ? null : group.domain)
               }
-              className="flex w-full items-start justify-between gap-4 px-4 py-4 text-left transition hover:bg-black/[0.02]"
+              className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-black/[0.015]"
             >
-              <div className="min-w-0">
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--bg)] text-[11px] font-bold tabular-nums text-[var(--muted)]">
+                {index + 1}
+              </span>
+              <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
-                    Bloque {index + 1}
-                  </span>
+                  <h3 className="font-display text-base font-bold tracking-tight">
+                    {domainLabel(group.domain)}
+                  </h3>
                   {done ? <Badge tone="ok">Listo</Badge> : null}
                 </div>
-                <h3 className="mt-1 font-display text-lg font-bold tracking-tight">
-                  {domainLabel(group.domain)}
-                </h3>
-                {meta && "ask" in meta ? (
-                  <p className="mt-1 text-sm font-medium text-[var(--ink)]">
-                    {meta.ask}
-                  </p>
-                ) : null}
-                {meta && "expect" in meta && meta.expect ? (
-                  <p className="mt-1 text-sm text-[var(--muted)]">
-                    Qué deberías recibir: {meta.expect}
-                  </p>
-                ) : null}
+                <p className="mt-0.5 truncate text-xs text-[var(--muted)]">
+                  {open && meta && "ask" in meta
+                    ? meta.ask
+                    : pendingInBlock > 0
+                      ? `${pendingInBlock} pendiente${pendingInBlock === 1 ? "" : "s"}`
+                      : "Completo"}
+                </p>
               </div>
               <div className="shrink-0 text-right">
                 <p className="text-sm font-semibold tabular-nums">
                   {reviewed}/{total}
                 </p>
-                <p className="text-xs text-[var(--muted)]">
-                  {done ? "Completo" : open ? "Cerrar" : "Abrir"}
-                </p>
               </div>
+              <ChevronDown
+                className={cn(
+                  "size-4 shrink-0 text-[var(--muted)] transition",
+                  open && "rotate-180",
+                )}
+              />
             </button>
 
             {open ? (
-              <div className="space-y-3 border-t border-[var(--line)] px-4 py-4">
-                {meta && "href" in meta && meta.href ? (
-                  <p className="text-sm text-[var(--muted)]">
-                    Si quieres el detalle operativo:{" "}
-                    <Link
-                      href={meta.href}
-                      className="font-medium text-[var(--accent)] underline-offset-2 hover:underline"
-                    >
-                      {"hrefLabel" in meta && meta.hrefLabel
-                        ? meta.hrefLabel
-                        : "Abrir módulo"}
-                    </Link>
+              <div className="space-y-2 border-t border-[var(--line)] bg-[var(--bg)]/35 px-3 py-3 sm:px-4">
+                {meta && "expect" in meta && meta.expect ? (
+                  <p className="px-1 text-xs text-[var(--muted)]">
+                    {meta.expect}
+                    {meta && "href" in meta && meta.href ? (
+                      <>
+                        {" · "}
+                        <Link
+                          href={meta.href}
+                          className="font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+                        >
+                          {"hrefLabel" in meta && meta.hrefLabel
+                            ? meta.hrefLabel
+                            : "Abrir módulo"}
+                        </Link>
+                      </>
+                    ) : null}
                   </p>
                 ) : null}
-                <div className="grid gap-3">
+
+                <div className="space-y-1.5">
                   {group.items.map((item) => (
                     <HandoverItemCard
                       key={item.id}
                       item={item}
                       readOnly={readOnly}
+                      highlighted={highlightItemId === item.id}
+                      expanded={expandedItemId === item.id}
+                      onToggle={() =>
+                        onExpandItem(
+                          expandedItemId === item.id ? null : item.id,
+                        )
+                      }
                     />
                   ))}
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="px-2 py-1.5 text-xs"
+                    disabled={index <= 0}
+                    onClick={() => onDomainChange(grouped[index - 1].domain)}
+                  >
+                    <ChevronLeft className="mr-1 size-3.5" />
+                    Anterior
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="px-2 py-1.5 text-xs"
+                    disabled={index >= grouped.length - 1}
+                    onClick={() => onDomainChange(grouped[index + 1].domain)}
+                  >
+                    Siguiente
+                    <ChevronRight className="ml-1 size-3.5" />
+                  </Button>
                 </div>
               </div>
             ) : null}
@@ -961,81 +1218,523 @@ export function CloseHandoverForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  if (session.status === "CERRADO") {
-    return (
-      <div className="space-y-3 border border-emerald-200 bg-emerald-50 px-5 py-5 text-sm text-emerald-950">
-        <p className="font-display text-lg font-bold">Entrega cerrada</p>
-        <p>
-          Quedó congelada el {formatDateCO(session.closed_at)}. Esta es la foto
-          oficial del día 1 de la nueva administración.
-        </p>
-        {session.closing_notes ? (
-          <p>Notas finales: {session.closing_notes}</p>
+  return (
+    <Card className="space-y-4">
+      <form
+        className="space-y-4"
+        action={(fd) => {
+          setError(null);
+          startTransition(async () => {
+            const result = await closeHandoverAction(session.id, fd);
+            if (!result.ok) setError(result.error ?? "Error al cerrar");
+          });
+        }}
+      >
+        <div>
+          <h3 className="font-display text-lg font-bold tracking-tight">
+            Cerrar y congelar el acta
+          </h3>
+          <p className="mt-1 text-sm leading-relaxed text-[var(--muted)]">
+            Cuando terminen la reunión, cierren aquí. No hace falta tener todo
+            perfecto
+            {pendingCount > 0
+              ? `: aún hay ${pendingCount} sin revisar y pueden quedar como pendientes`
+              : ""}
+            .
+          </p>
+        </div>
+
+        {summaryLines.length > 0 ? (
+          <div className="rounded-lg bg-[var(--bg)] px-3 py-3 text-sm">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+              Resumen de montos capturados
+            </p>
+            <ul className="space-y-1">
+              {summaryLines.map((line) => (
+                <li key={line.label} className="flex justify-between gap-3">
+                  <span>{line.label}</span>
+                  <span className="font-medium tabular-nums">{line.amount}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : null}
+
+        <textarea
+          name="closing_notes"
+          rows={3}
+          placeholder="Pendientes aceptados, próximos pasos, acuerdos verbales…"
+          className={inputClass}
+        />
+        {error ? (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+            {error}
+          </p>
+        ) : null}
+        <Button type="submit" disabled={pending}>
+          {pending ? "Cerrando…" : "Cerrar acta de entrega"}
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
+export function ClosedActaView({
+  session,
+  items,
+  quality,
+  summaryLines,
+}: {
+  session: HandoverSession;
+  items: HandoverItem[];
+  quality: QualitySummary;
+  summaryLines: Array<{ label: string; amount: string }>;
+}) {
+  const grouped = useMemo(() => groupItems(items), [items]);
+
+  return (
+    <div className="space-y-6">
+      <Card className="relative overflow-hidden">
+        <div
+          aria-hidden
+          className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,var(--accent),var(--gold))]"
+        />
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900">
+              <FileCheck2 className="size-3.5" />
+              Acta cerrada
+            </div>
+            <h2 className="mt-3 font-display text-2xl font-bold tracking-tight">
+              Foto oficial del día 1
+            </h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Congelada el {formatDateCO(session.closed_at)} · Corte{" "}
+              {formatDateCO(session.cutoff_date)}
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div>
+              <p className="font-display text-xl font-bold text-[var(--ok)]">
+                {quality.confirmed}
+              </p>
+              <p className="text-[11px] text-[var(--muted)]">Con prueba</p>
+            </div>
+            <div>
+              <p className="font-display text-xl font-bold text-[var(--warn)]">
+                {quality.declared}
+              </p>
+              <p className="text-[11px] text-[var(--muted)]">Solo dicho</p>
+            </div>
+            <div>
+              <p className="font-display text-xl font-bold text-[var(--danger)]">
+                {quality.pending}
+              </p>
+              <p className="text-[11px] text-[var(--muted)]">Pendiente</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 rounded-xl bg-[var(--bg)] p-4 text-sm md:grid-cols-2">
+          <p>
+            <span className="text-[var(--muted)]">Entrega:</span>{" "}
+            <span className="font-medium">
+              {session.delivered_by_name || "—"}
+            </span>
+          </p>
+          <p>
+            <span className="text-[var(--muted)]">Recibe:</span>{" "}
+            <span className="font-medium">
+              {session.received_by_name || "—"}
+            </span>
+          </p>
+          {session.notes ? (
+            <p className="md:col-span-2">
+              <span className="text-[var(--muted)]">Notas de reunión:</span>{" "}
+              {session.notes}
+            </p>
+          ) : null}
+          {session.closing_notes ? (
+            <p className="md:col-span-2">
+              <span className="text-[var(--muted)]">Notas de cierre:</span>{" "}
+              {session.closing_notes}
+            </p>
+          ) : null}
+        </div>
+
+        {summaryLines.length > 0 ? (
+          <div className="mt-5">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+              Totales por tema
+            </p>
+            <ul className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)]">
+              {summaryLines.map((line) => (
+                <li
+                  key={line.label}
+                  className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm"
+                >
+                  <span>{line.label}</span>
+                  <span className="font-semibold tabular-nums">{line.amount}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </Card>
+
+      <div className="space-y-4">
+        <h3 className="font-display text-xl font-bold tracking-tight">
+          Detalle del acta
+        </h3>
+        {grouped.map((group) => (
+          <Card key={group.domain} className="space-y-3">
+            <div>
+              <h4 className="font-display text-lg font-bold">
+                {domainLabel(group.domain)}
+              </h4>
+              <p className="text-xs text-[var(--muted)]">
+                {domainProgress(group.items).reviewed}/
+                {domainProgress(group.items).total} respondidas
+              </p>
+            </div>
+            <div className="space-y-2">
+              {group.items.map((item) => {
+                const lines = readHandoverItemMetadata(item.metadata).lines;
+                const comments = sanitizeItemComments(
+                  item.item_key,
+                  item.comments,
+                );
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-lg border border-[var(--line)] bg-[var(--bg)]/40 px-3 py-3"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <p className="font-medium">
+                        {itemAsk(item.item_key, item.label)}
+                      </p>
+                      <Badge tone={statusTone(item.verification_status)}>
+                        {verificationLabel(item.verification_status)}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-sm tabular-nums text-[var(--muted)]">
+                      Monto:{" "}
+                      <span className="font-medium text-[var(--ink)]">
+                        {item.amount != null ? formatCOP(item.amount) : "—"}
+                      </span>
+                    </p>
+                    {lines.length > 0 ? (
+                      <ul className="mt-2 space-y-1 text-sm text-[var(--muted)]">
+                        {lines.map((line) => (
+                          <li key={line.id} className="flex justify-between gap-3">
+                            <span>{line.name}</span>
+                            <span className="tabular-nums">
+                              {line.amount != null
+                                ? formatCOP(line.amount)
+                                : "—"}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {item.source || comments ? (
+                      <p className="mt-2 text-xs text-[var(--muted)]">
+                        {[item.source, comments].filter(Boolean).join(" · ")}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        ))}
       </div>
+    </div>
+  );
+}
+
+function CollapsibleSection({
+  title,
+  subtitle,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Card className="p-0 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+      >
+        <div>
+          <h3 className="font-display text-lg font-bold">{title}</h3>
+          {subtitle ? (
+            <p className="mt-0.5 text-sm text-[var(--muted)]">{subtitle}</p>
+          ) : null}
+        </div>
+        <ChevronDown
+          className={cn("size-4 shrink-0 text-[var(--muted)] transition", open && "rotate-180")}
+        />
+      </button>
+      {open ? (
+        <div className="border-t border-[var(--line)] px-5 py-4">{children}</div>
+      ) : null}
+    </Card>
+  );
+}
+
+export function EmpalmeMeetingView({
+  session,
+  items,
+  quality,
+  summaryLines,
+}: {
+  session: HandoverSession;
+  items: HandoverItem[];
+  quality: QualitySummary;
+  summaryLines: Array<{ label: string; amount: string }>;
+}) {
+  const readOnly = session.status === "CERRADO";
+  const reviewedCount = quality.confirmed + quality.declared;
+  const pendingItems = useMemo(
+    () => items.filter((i) => i.verification_status === "PENDIENTE"),
+    [items],
+  );
+  const declaredItems = useMemo(
+    () => items.filter((i) => i.verification_status === "DECLARADO"),
+    [items],
+  );
+  const grouped = useMemo(() => groupItems(items), [items]);
+
+  const firstIncomplete =
+    grouped.find((g) =>
+      g.items.some((i) => i.verification_status === "PENDIENTE"),
+    )?.domain ?? grouped[0]?.domain ?? null;
+
+  const [activeDomain, setActiveDomain] = useState<string | null>(
+    firstIncomplete,
+  );
+  const resolvedActiveDomain =
+    activeDomain !== null && grouped.some((g) => g.domain === activeDomain)
+      ? activeDomain
+      : firstIncomplete;
+  const firstPendingItemId =
+    pendingItems.find((i) => i.domain === firstIncomplete)?.id ??
+    pendingItems[0]?.id ??
+    null;
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(
+    firstPendingItemId,
+  );
+  const [highlightItemId, setHighlightItemId] = useState<string | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function selectDomain(domain: string | null) {
+    setActiveDomain(domain);
+    if (!domain) {
+      setExpandedItemId(null);
+      return;
+    }
+    const firstPendingInDomain =
+      pendingItems.find((i) => i.domain === domain)?.id ?? null;
+    setExpandedItemId(firstPendingInDomain);
+  }
+
+  function jumpToItem(item: HandoverItem) {
+    setActiveDomain(item.domain);
+    setExpandedItemId(item.id);
+    setHighlightItemId(item.id);
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setHighlightItemId(null), 2800);
+  }
+
+  function jumpToNextPending() {
+    const currentExpandedPending =
+      expandedItemId &&
+      pendingItems.find((i) => i.id === expandedItemId)
+        ? expandedItemId
+        : null;
+    const currentIndex = currentExpandedPending
+      ? pendingItems.findIndex((i) => i.id === currentExpandedPending)
+      : -1;
+    const next =
+      pendingItems[currentIndex + 1] ??
+      pendingItems.find((i) => i.domain === resolvedActiveDomain) ??
+      pendingItems[0] ??
+      null;
+    if (!next) return;
+    jumpToItem(next);
+  }
+
+  if (readOnly) {
+    return (
+      <ClosedActaView
+        session={session}
+        items={items}
+        quality={quality}
+        summaryLines={summaryLines}
+      />
     );
   }
 
+  const progressPct = quality.total
+    ? (reviewedCount / quality.total) * 100
+    : 0;
+
   return (
-    <form
-      className="space-y-4 border border-[var(--line)] bg-white p-5"
-      action={(fd) => {
-        setError(null);
-        startTransition(async () => {
-          const result = await closeHandoverAction(session.id, fd);
-          if (!result.ok) setError(result.error ?? "Error al cerrar");
-        });
-      }}
-    >
-      <div>
-        <h3 className="font-display text-lg font-bold tracking-tight">
-          Cerrar y congelar el acta
-        </h3>
-        <p className="mt-1 text-sm leading-relaxed text-[var(--muted)]">
-          Cuando terminen la reunión, cierren aquí. No hace falta tener todo
-          perfecto
-          {pendingCount > 0
-            ? `: aún hay ${pendingCount} sin revisar y pueden quedar como pendientes`
-            : ""}
-          .
-        </p>
+    <div className="space-y-6">
+      <div className="sticky top-0 z-20 -mx-8 border-b border-[var(--line)] bg-[var(--surface)]/95 px-8 py-3 backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+              Avance de la reunión · corte {formatDateCO(session.cutoff_date)}
+            </p>
+            <p className="font-display text-lg font-bold tabular-nums">
+              {reviewedCount} de {quality.total} respondidas
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="ok">Prueba {quality.confirmed}</Badge>
+            <Badge tone="warn">Dicho {quality.declared}</Badge>
+            <Badge tone="danger">Pend. {quality.pending}</Badge>
+            {pendingItems.length > 0 ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="px-3 py-1.5 text-xs"
+                onClick={jumpToNextPending}
+              >
+                Siguiente pendiente
+              </Button>
+            ) : (
+              <Badge tone="ok">Todo revisado</Badge>
+            )}
+          </div>
+        </div>
+        <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-[var(--line)]">
+          <div
+            className="h-full rounded-full bg-[var(--accent)] transition-all duration-300"
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
       </div>
 
-      {summaryLines.length > 0 ? (
-        <div className="bg-[var(--bg)] px-3 py-3 text-sm">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
-            Resumen de montos capturados
-          </p>
-          <ul className="space-y-1">
-            {summaryLines.map((line) => (
-              <li key={line.label} className="flex justify-between gap-3">
-                <span>{line.label}</span>
-                <span className="font-medium">{line.amount}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      <EmpalmeSteps current={2} />
 
-      <textarea
-        name="closing_notes"
-        rows={3}
-        placeholder="Pendientes aceptados, próximos pasos, acuerdos verbales…"
-        className={inputClass}
-      />
-      {error ? (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
-          {error}
-        </p>
-      ) : null}
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded-lg bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-60"
+      <CollapsibleSection
+        title="1. Quiénes participan"
+        subtitle="Nombres y fecha hasta la cual responde la administración anterior"
+        defaultOpen={
+          !session.delivered_by_name || !session.received_by_name
+        }
       >
-        {pending ? "Cerrando…" : "Cerrar acta de entrega"}
-      </button>
-    </form>
+        <SessionMetaForm session={session} />
+        <div className="mt-4 border-t border-[var(--line)] pt-4">
+          <SeedDefaultsButton sessionId={session.id} />
+        </div>
+      </CollapsibleSection>
+
+      <section className="space-y-3">
+        <div className="max-w-3xl">
+          <h3 className="font-display text-xl font-bold tracking-tight">
+            2. Preguntas, bloque por bloque
+          </h3>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Abre un bloque y una pregunta. Lo declarado sin prueba también
+            cuenta: es información para los socios, no un examen.
+          </p>
+        </div>
+
+        <HandoverDomainSections
+          items={items}
+          readOnly={false}
+          activeDomain={resolvedActiveDomain}
+          onDomainChange={selectDomain}
+          highlightItemId={highlightItemId}
+          expandedItemId={expandedItemId}
+          onExpandItem={setExpandedItemId}
+        />
+
+        <AddHandoverItemForm sessionId={session.id} />
+      </section>
+
+      {(pendingItems.length > 0 || declaredItems.length > 0) && (
+        <Card>
+          <h3 className="font-display text-lg font-bold">Para no olvidar</h3>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Toca una pregunta para saltar al bloque.
+          </p>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <ReminderList
+              title="Aún sin revisar"
+              items={pendingItems}
+              onJump={jumpToItem}
+            />
+            <ReminderList
+              title="Solo lo dijeron (sin prueba)"
+              items={declaredItems}
+              onJump={jumpToItem}
+            />
+          </div>
+        </Card>
+      )}
+
+      <section className="space-y-3">
+        <h3 className="font-display text-xl font-bold tracking-tight">
+          3. Cierra cuando la reunión termine
+        </h3>
+        <CloseHandoverForm
+          session={session}
+          pendingCount={pendingItems.length}
+          summaryLines={summaryLines}
+        />
+      </section>
+    </div>
+  );
+}
+
+function ReminderList({
+  title,
+  items,
+  onJump,
+}: {
+  title: string;
+  items: HandoverItem[];
+  onJump: (item: HandoverItem) => void;
+}) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+        {title}
+      </p>
+      {items.length === 0 ? (
+        <p className="mt-2 text-sm text-[var(--muted)]">Ninguna</p>
+      ) : (
+        <ul className="mt-2 space-y-1">
+          {items.slice(0, 8).map((item) => (
+            <li key={item.id}>
+              <button
+                type="button"
+                onClick={() => onJump(item)}
+                className="w-full rounded-md px-1.5 py-1 text-left text-sm text-[var(--muted)] transition hover:bg-[var(--accent-soft)] hover:text-[var(--ink)]"
+              >
+                {itemAsk(item.item_key, item.label)}
+              </button>
+            </li>
+          ))}
+          {items.length > 8 ? (
+            <li className="px-1.5 text-sm text-[var(--muted)]">
+              … y {items.length - 8} más
+            </li>
+          ) : null}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -1055,7 +1754,7 @@ export function EmpalmeSteps({ current }: { current: 1 | 2 | 3 }) {
           <li
             key={step.n}
             className={cn(
-              "border px-4 py-3",
+              "rounded-xl border px-4 py-3",
               active && "border-[var(--accent)] bg-[var(--accent-soft)]",
               done && "border-[var(--line)] bg-white",
               !active &&
@@ -1065,6 +1764,7 @@ export function EmpalmeSteps({ current }: { current: 1 | 2 | 3 }) {
           >
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
               Paso {step.n}
+              {done ? " · listo" : ""}
             </p>
             <p className="mt-1 text-sm font-semibold">{step.label}</p>
           </li>

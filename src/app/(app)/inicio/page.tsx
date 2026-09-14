@@ -5,6 +5,7 @@ import { formatDateCO } from "@/lib/dates";
 import { getOrgContext } from "@/lib/org-context";
 import { createClient } from "@/lib/supabase/server";
 import { summarizeHandoverQuality } from "@/lib/handover";
+import { sumOpeningBalances } from "@/lib/treasury";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 
@@ -18,6 +19,7 @@ export default async function InicioPage() {
     pctPending: 0,
   };
   let handoverStatus: string | null = null;
+  let liquidity = "0.00";
 
   if (ctx.organization) {
     const supabase = await createClient();
@@ -46,13 +48,29 @@ export default async function InicioPage() {
         })),
       );
     }
+
+    const cutoff = ctx.organization.administrative_cutoff_date;
+    let snapQuery = supabase
+      .from("bank_balance_snapshots")
+      .select("opening_balance, bank_account_id, cutoff_date")
+      .eq("organization_id", ctx.organization.id)
+      .is("deleted_at", null);
+
+    if (cutoff) {
+      snapQuery = snapQuery.eq("cutoff_date", cutoff);
+    }
+
+    const { data: snaps } = await snapQuery;
+    if (snaps && snaps.length > 0) {
+      liquidity = sumOpeningBalances(snaps.map((s) => s.opening_balance));
+    }
   }
 
   return (
     <>
       <AppHeader
         title="Inicio"
-        subtitle="Panel administrativo — entrega y control financiero"
+        subtitle="Panel administrativo — línea base y control financiero"
       />
       <main className="space-y-6 p-8">
         <PageIntro
@@ -72,11 +90,11 @@ export default async function InicioPage() {
           <Card>
             <p className="font-medium">Aún no hay empresa configurada</p>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Crea la organización para iniciar la entrega y el acta del día 1.
+              Crea la organización para iniciar el empalme y la línea base.
             </p>
             <Link
               href="/empresa"
-              className="mt-4 inline-flex rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]"
+              className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
             >
               Configurar empresa
             </Link>
@@ -84,7 +102,11 @@ export default async function InicioPage() {
         ) : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <StatCard label="Liquidez" value={formatCOP(0)} hint="Bancos + caja" />
+          <StatCard
+            label="Liquidez"
+            value={formatCOP(liquidity)}
+            hint="Bancos + caja + pasarelas"
+          />
           <StatCard label="CxP" value={formatCOP(0)} hint="Saldo proveedores" />
           <StatCard
             label="Deuda con socios"

@@ -125,3 +125,13 @@ describe("shareholders", () => {
     expect(sumParticipation([50, 30, 20])).toBe(100);
   });
 });
+
+describe("treasury", () => {
+  it("suma saldos iniciales", async () => {
+    const { sumOpeningBalances, bankKindLabel } = await import(
+      "../src/lib/treasury"
+    );
+    expect(sumOpeningBalances(["1000.50", "2000.25"])).toBe("3000.75");
+    expect(bankKindLabel("CAJA")).toBe("Caja");
+  });
+});
