@@ -7,10 +7,11 @@ type BrandLogoProps = {
   priority?: boolean;
 };
 
-const sizes = {
-  sm: 48,
-  md: 80,
-  lg: 148,
+/** Tamaño visual en pantalla (CSS). */
+const displaySizes = {
+  sm: 56,
+  md: 96,
+  lg: 160,
 } as const;
 
 export function BrandLogo({
@@ -18,16 +19,21 @@ export function BrandLogo({
   className,
   priority = false,
 }: BrandLogoProps) {
-  const px = sizes[size];
+  const displayPx = displaySizes[size];
+  // Pedimos 3× al optimizador para que el texto del círculo se lea nítido en retina.
+  const sourcePx = displayPx * 3;
+
   return (
     <Image
       src="/brand/candela-logo.png"
       alt="Candela Tacos & Amigos"
-      width={px}
-      height={px}
+      width={sourcePx}
+      height={sourcePx}
+      sizes={`${displayPx}px`}
       priority={priority}
-      quality={95}
+      quality={100}
       className={cn("select-none object-contain", className)}
+      style={{ width: displayPx, height: displayPx }}
     />
   );
 }

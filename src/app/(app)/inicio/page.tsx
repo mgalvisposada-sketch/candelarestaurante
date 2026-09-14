@@ -52,7 +52,7 @@ export default async function InicioPage() {
     <>
       <AppHeader
         title="Inicio"
-        subtitle="Panel administrativo — línea base y control financiero"
+        subtitle="Panel administrativo — entrega y control financiero"
       />
       <main className="space-y-6 p-8">
         <PageIntro
@@ -72,7 +72,7 @@ export default async function InicioPage() {
           <Card>
             <p className="font-medium">Aún no hay empresa configurada</p>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Crea la organización para iniciar el empalme y la línea base.
+              Crea la organización para iniciar la entrega y el acta del día 1.
             </p>
             <Link
               href="/empresa"
@@ -102,7 +102,7 @@ export default async function InicioPage() {
         <div className="grid gap-4 lg:grid-cols-3">
           <Card>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="font-medium">Calidad del empalme</h3>
+              <h3 className="font-medium">Calidad de la entrega</h3>
               <Badge tone={handoverStatus === "CERRADO" ? "ok" : "warn"}>
                 {handoverStatus ?? "Sin sesión"}
               </Badge>
@@ -116,7 +116,7 @@ export default async function InicioPage() {
               href="/empalme"
               className="mt-4 inline-block text-sm font-medium text-[var(--accent)]"
             >
-              Ir al empalme →
+              Ir a la entrega →
             </Link>
           </Card>
           <Card>
@@ -125,7 +125,7 @@ export default async function InicioPage() {
               <li>Completar datos de Empresa y fecha de corte</li>
               <li>Registrar socios y participación</li>
               <li>Cargar bancos, CxP y préstamos</li>
-              <li>Cerrar empalme y emitir Acta PDF</li>
+              <li>Cerrar la entrega y emitir Acta PDF</li>
             </ol>
           </Card>
           <Card>

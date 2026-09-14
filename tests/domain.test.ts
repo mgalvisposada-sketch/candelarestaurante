@@ -7,7 +7,9 @@ import {
 import { computeLoanKpis, computeFundingBag } from "../src/lib/loans";
 import {
   canCloseHandover,
+  parseHandoverBreakdownLines,
   participationWarning,
+  sumHandoverBreakdownLines,
   summarizeHandoverQuality,
 } from "../src/lib/handover";
 import { summarizeApAging } from "../src/lib/accounts-payable";
@@ -63,6 +65,33 @@ describe("handover", () => {
     expect(participationWarning(95)).toMatch(/95%/);
     expect(participationWarning(100)).toBeNull();
   });
+
+  it("parsea y suma líneas de desglose", () => {
+    const lines = parseHandoverBreakdownLines([
+      { id: "1", name: "Cliente A", amount: "150000.50", note: "factura" },
+      { id: "2", name: "  ", amount: 10 },
+      { id: "3", name: "Cliente B", amount: 50000 },
+      { name: "Cliente C" },
+    ]);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]?.name).toBe("Cliente A");
+    expect(lines[0]?.amount).toBe(150000.5);
+    expect(lines[1]?.name).toBe("Cliente B");
+    expect(lines[2]?.name).toBe("Cliente C");
+    expect(lines[2]?.amount).toBeNull();
+    expect(sumHandoverBreakdownLines(lines)).toBe(200000.5);
+  });
+
+  it("acepta metadata_json string y ignora arrays vacíos", () => {
+    expect(parseHandoverBreakdownLines("")).toEqual([]);
+    expect(parseHandoverBreakdownLines("not-json")).toEqual([]);
+    const fromJson = parseHandoverBreakdownLines(
+      JSON.stringify([{ id: "a", name: "Tercero X", amount: 1000 }]),
+    );
+    expect(fromJson).toHaveLength(1);
+    expect(sumHandoverBreakdownLines(fromJson)).toBe(1000);
+    expect(sumHandoverBreakdownLines([])).toBeNull();
+  });
 });
 
 describe("accounts payable aging", () => {
@@ -78,5 +107,21 @@ describe("accounts payable aging", () => {
     expect(aging["0-30"]).toBe("100.00");
     expect(aging["61-90"]).toBe("150.00");
     expect(aging[">90"]).toBe("300.00");
+  });
+});
+
+describe("shareholders", () => {
+  it("calcula saldo de cuenta socio y etiqueta", async () => {
+    const { computeShareholderAccountBalance, shareholderBalanceLabel, sumParticipation } =
+      await import("../src/lib/shareholders");
+
+    const balance = computeShareholderAccountBalance({
+      openingBalance: "1000000",
+      credits: ["500000"],
+      debits: ["200000"],
+    });
+    expect(balance.toFixed(2)).toBe("1300000.00");
+    expect(shareholderBalanceLabel(balance).label).toBe("Acreedor de Candela");
+    expect(sumParticipation([50, 30, 20])).toBe(100);
   });
 });

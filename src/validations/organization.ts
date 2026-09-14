@@ -37,6 +37,17 @@ export const handoverSessionSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
+export const handoverBreakdownLineSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1, "El nombre de la línea es obligatorio"),
+  amount: z.number().finite().nullable(),
+  note: z.string().optional(),
+});
+
+export const handoverItemMetadataSchema = z.object({
+  lines: z.array(handoverBreakdownLineSchema).max(50),
+});
+
 export const handoverItemSchema = z.object({
   domain: z.string().min(1),
   item_key: z.string().min(1),
@@ -45,6 +56,7 @@ export const handoverItemSchema = z.object({
   verification_status: z.enum(["CONFIRMADO", "DECLARADO", "PENDIENTE"]),
   comments: z.string().optional().nullable(),
   source: z.string().optional().nullable(),
+  metadata_json: z.string().optional().nullable(),
 });
 
 export type HandoverItemInput = z.infer<typeof handoverItemSchema>;

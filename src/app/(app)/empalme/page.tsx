@@ -1,15 +1,21 @@
 import { AppHeader } from "@/components/layout/app-header";
-import { Badge, Card, PageIntro } from "@/components/ui/primitives";
+import { Badge, Card } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
 import { createClient } from "@/lib/supabase/server";
 import { summarizeHandoverQuality } from "@/lib/handover";
+import { domainLabel, itemAsk } from "@/lib/handover-catalog";
+import { formatCOP } from "@/lib/money";
 import { formatDateCO } from "@/lib/dates";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
+  AddHandoverItemForm,
   CloseHandoverForm,
   CreateHandoverForm,
-  HandoverItemRow,
+  EmpalmeSteps,
+  HandoverDomainSections,
+  SeedDefaultsButton,
+  SessionMetaForm,
   type HandoverItem,
   type HandoverSession,
 } from "./handover-client";
@@ -22,16 +28,17 @@ export default async function EmpalmePage() {
     return (
       <>
         <AppHeader
-          title="Empalme"
-          subtitle="Línea base administrativa a fecha de corte"
+          title="Entrega"
+          subtitle="Acta de entrega entre administraciones"
         />
         <main className="p-8">
           <Card>
-            <p className="font-display text-lg font-medium">
+            <p className="font-display text-lg font-bold">
               Primero configura la empresa
             </p>
             <p className="mt-2 text-sm text-[var(--muted)]">
-              El empalme requiere una organización y fecha de corte.
+              Antes de la entrega necesitamos el nombre de la empresa y una
+              fecha de corte.
             </p>
             <Link
               href="/empresa"
@@ -62,7 +69,7 @@ export default async function EmpalmePage() {
     const { data: itemRows } = await supabase
       .from("handover_items")
       .select(
-        "id, domain, item_key, label, amount, verification_status, comments, source",
+        "id, domain, item_key, label, amount, verification_status, comments, source, metadata",
       )
       .eq("handover_session_id", session.id)
       .is("deleted_at", null)
@@ -73,117 +80,196 @@ export default async function EmpalmePage() {
   const quality = summarizeHandoverQuality(
     items.map((i) => ({ status: i.verification_status })),
   );
-  const pendingItems = items.filter((i) => i.verification_status === "PENDIENTE");
+  const pendingItems = items.filter(
+    (i) => i.verification_status === "PENDIENTE",
+  );
+  const declaredItems = items.filter(
+    (i) => i.verification_status === "DECLARADO",
+  );
   const readOnly = session?.status === "CERRADO";
+  const reviewedCount = quality.confirmed + quality.declared;
+
+  const summaryByDomain = new Map<string, number>();
+  for (const item of items) {
+    if (item.amount == null) continue;
+    summaryByDomain.set(
+      item.domain,
+      (summaryByDomain.get(item.domain) ?? 0) + Number(item.amount),
+    );
+  }
+  const summaryLines = [...summaryByDomain.entries()]
+    .filter(([, amount]) => amount !== 0)
+    .map(([domain, amount]) => ({
+      label: domainLabel(domain),
+      amount: formatCOP(amount),
+    }));
 
   return (
     <>
       <AppHeader
-        title="Empalme"
-        subtitle="Línea base administrativa a fecha de corte"
+        title="Entrega"
+        subtitle="Reunión de entrega del restaurante · acta del día 1"
       />
-      <main className="space-y-6 p-8">
-        <PageIntro
-          title="Construcción de la línea base"
-          description="Todo lo anterior a la fecha de corte es situación recibida. El empalme puede cerrarse con pendientes: se muestran % confirmado, declarado y pendiente, y se genera un snapshot inmutable."
-        />
+      <main className="space-y-8 p-8">
+        <section className="max-w-3xl space-y-3">
+          <h2 className="font-display text-2xl font-bold tracking-tight">
+            Recibir Candela con claridad
+          </h2>
+          <p className="text-sm leading-relaxed text-[var(--muted)]">
+            Úsalo como una guía de entrevista con el administrador anterior:
+            pregunta por la plata, las deudas, el inventario de apertura y los
+            papeles. Marca si lo viste con prueba o solo te lo dijeron. Al
+            cerrar, queda el acta del nuevo comienzo.
+          </p>
+        </section>
 
         {!session ? (
-          <Card>
-            <h3 className="mb-4 font-medium">Iniciar sesión de empalme</h3>
-            <CreateHandoverForm
-              defaultCutoff={ctx.organization.administrative_cutoff_date}
-            />
+          <Card className="max-w-3xl">
+            <EmpalmeSteps current={1} />
+            <div className="mt-6">
+              <h3 className="mb-4 font-display text-lg font-bold">
+                Empezar la reunión de entrega
+              </h3>
+              <CreateHandoverForm
+                defaultCutoff={ctx.organization.administrative_cutoff_date}
+              />
+            </div>
           </Card>
         ) : (
           <>
-            <div className="grid gap-4 md:grid-cols-4">
-              <Card>
-                <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)]">
-                  Fecha de corte
-                </p>
-                <p className="mt-2 font-display text-2xl">
-                  {formatDateCO(session.cutoff_date)}
-                </p>
-                <div className="mt-2">
-                  <Badge
-                    tone={session.status === "CERRADO" ? "ok" : "accent"}
-                  >
-                    {session.status}
+            <EmpalmeSteps current={readOnly ? 3 : 2} />
+
+            <Card>
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+                    Avance de la reunión
+                  </p>
+                  <p className="mt-1 font-display text-2xl font-bold">
+                    {reviewedCount} de {quality.total} preguntas respondidas
+                  </p>
+                  <p className="mt-1 text-sm text-[var(--muted)]">
+                    Corte: {formatDateCO(session.cutoff_date)} ·{" "}
+                    {session.status === "CERRADO"
+                      ? "Acta cerrada"
+                      : "En curso"}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge tone="ok">
+                    Con prueba {quality.confirmed}
+                  </Badge>
+                  <Badge tone="warn">
+                    Solo dicho {quality.declared}
+                  </Badge>
+                  <Badge tone="danger">
+                    Pendiente {quality.pending}
                   </Badge>
                 </div>
-              </Card>
-              <Card>
-                <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)]">
-                  Confirmado
-                </p>
-                <p className="mt-2 font-display text-3xl">
-                  {quality.pctConfirmed}%
-                </p>
-              </Card>
-              <Card>
-                <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)]">
-                  Declarado
-                </p>
-                <p className="mt-2 font-display text-3xl">
-                  {quality.pctDeclared}%
-                </p>
-              </Card>
-              <Card>
-                <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)]">
-                  Pendiente
-                </p>
-                <p className="mt-2 font-display text-3xl">
-                  {quality.pctPending}%
-                </p>
-              </Card>
-            </div>
-
-            <Card className="overflow-x-auto p-0">
-              <div className="border-b border-[var(--line)] px-5 py-4">
-                <h3 className="font-medium">Ítems de línea base</h3>
-                <p className="mt-1 text-sm text-[var(--muted)]">
-                  Actualiza montos y estado de verificación. CONFIRMADO requiere
-                  soporte; DECLARADO y PENDIENTE no bloquean el cierre.
-                </p>
               </div>
-              <table className="min-w-full text-left">
-                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-[var(--muted)]">
-                  <tr>
-                    <th className="px-3 py-3 font-medium">Ítem</th>
-                    <th className="px-3 py-3 font-medium">Monto</th>
-                    <th className="px-3 py-3 font-medium">Estado</th>
-                    <th className="px-3 py-3 font-medium">Comentarios</th>
-                    <th className="px-3 py-3 font-medium">Acción</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item) => (
-                    <HandoverItemRow
-                      key={item.id}
-                      item={item}
-                      readOnly={!!readOnly}
-                    />
-                  ))}
-                </tbody>
-              </table>
+              <div className="mt-4 h-2 overflow-hidden rounded-full bg-[var(--line)]">
+                <div
+                  className="h-full bg-[var(--accent)] transition-all"
+                  style={{
+                    width: `${quality.total ? (reviewedCount / quality.total) * 100 : 0}%`,
+                  }}
+                />
+              </div>
             </Card>
 
-            {pendingItems.length > 0 ? (
-              <Card>
-                <h3 className="font-medium">Lista de pendientes</h3>
-                <ul className="mt-3 space-y-1 text-sm text-[var(--muted)]">
-                  {pendingItems.map((item) => (
-                    <li key={item.id}>• {item.label}</li>
-                  ))}
-                </ul>
-              </Card>
-            ) : null}
+            <Card>
+              <h3 className="font-display text-lg font-bold">
+                1. Quiénes participan
+              </h3>
+              <p className="mt-1 mb-4 text-sm text-[var(--muted)]">
+                Nombres de la entrega y la fecha hasta la cual responde la
+                administración anterior.
+              </p>
+              <SessionMetaForm session={session} />
+              {!readOnly ? (
+                <div className="mt-4 border-t border-[var(--line)] pt-4">
+                  <SeedDefaultsButton sessionId={session.id} />
+                </div>
+              ) : null}
+            </Card>
 
-            <CloseHandoverForm
-              session={session}
-              pendingCount={pendingItems.length}
-            />
+            <section className="space-y-4">
+              <div className="max-w-3xl">
+                <h3 className="font-display text-xl font-bold tracking-tight">
+                  2. Haz las preguntas, bloque por bloque
+                </h3>
+                <p className="mt-1 text-sm text-[var(--muted)]">
+                  Abre un bloque, lee la pregunta en voz alta, anota la
+                  respuesta y marca si hay prueba. Si hay varios terceros o
+                  cuentas, usa el detalle por renglones.
+                </p>
+              </div>
+
+              <HandoverDomainSections items={items} readOnly={!!readOnly} />
+
+              {!readOnly ? (
+                <AddHandoverItemForm sessionId={session.id} />
+              ) : null}
+            </section>
+
+            {(pendingItems.length > 0 || declaredItems.length > 0) && (
+              <Card>
+                <h3 className="font-display text-lg font-bold">
+                  Para no olvidar
+                </h3>
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+                      Aún sin revisar
+                    </p>
+                    {pendingItems.length === 0 ? (
+                      <p className="mt-2 text-sm text-[var(--muted)]">Ninguna</p>
+                    ) : (
+                      <ul className="mt-2 space-y-1 text-sm text-[var(--muted)]">
+                        {pendingItems.slice(0, 8).map((item) => (
+                          <li key={item.id}>
+                            • {itemAsk(item.item_key, item.label)}
+                          </li>
+                        ))}
+                        {pendingItems.length > 8 ? (
+                          <li>… y {pendingItems.length - 8} más</li>
+                        ) : null}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+                      Solo lo dijeron (sin prueba)
+                    </p>
+                    {declaredItems.length === 0 ? (
+                      <p className="mt-2 text-sm text-[var(--muted)]">Ninguna</p>
+                    ) : (
+                      <ul className="mt-2 space-y-1 text-sm text-[var(--muted)]">
+                        {declaredItems.slice(0, 8).map((item) => (
+                          <li key={item.id}>
+                            • {itemAsk(item.item_key, item.label)}
+                          </li>
+                        ))}
+                        {declaredItems.length > 8 ? (
+                          <li>… y {declaredItems.length - 8} más</li>
+                        ) : null}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            <section className="space-y-3">
+              <h3 className="font-display text-xl font-bold tracking-tight">
+                3. Cierra cuando la reunión termine
+              </h3>
+              <CloseHandoverForm
+                session={session}
+                pendingCount={pendingItems.length}
+                summaryLines={summaryLines}
+              />
+            </section>
           </>
         )}
       </main>

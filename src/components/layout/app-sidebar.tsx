@@ -13,16 +13,14 @@ export function AppSidebar({ pathname }: { pathname: string }) {
   return (
     <aside className="flex w-64 shrink-0 flex-col bg-[var(--sidebar)] text-[var(--sidebar-text)]">
       <div className="border-b border-white/10 px-4 py-5">
-        <Link href="/inicio" className="flex items-center gap-3">
-          <BrandLogo size="sm" className="shrink-0" />
-          <div className="min-w-0">
-            <p className="font-display text-lg font-bold tracking-tight text-white">
-              Candela
-            </p>
-            <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-[var(--gold)]">
-              Admin
-            </p>
-          </div>
+        <Link
+          href="/inicio"
+          className="flex flex-col items-center gap-2.5 text-center"
+        >
+          <BrandLogo size="md" priority className="shrink-0 drop-shadow-sm" />
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--gold)]">
+            Admin
+          </p>
         </Link>
       </div>
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4">

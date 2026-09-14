@@ -9,7 +9,7 @@ export type VerificationStatus = "CONFIRMADO" | "DECLARADO" | "PENDIENTE";
 
 export const NAV_ITEMS = [
   { href: "/inicio", label: "Inicio", mvp: 1 },
-  { href: "/empalme", label: "Empalme", mvp: 1 },
+  { href: "/empalme", label: "Entrega", mvp: 1 },
   { href: "/empresa", label: "Empresa", mvp: 1 },
   { href: "/socios", label: "Socios", mvp: 1 },
   { href: "/tesoreria", label: "Tesorería", mvp: 1 },
