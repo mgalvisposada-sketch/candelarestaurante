@@ -1,0 +1,10 @@
+project_id = "candela-admin"
+
+[api]
+enabled = true
+
+[db]
+major_version = 15
+
+[storage]
+enabled = true

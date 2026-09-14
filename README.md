@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Candela Admin
 
-## Getting Started
+Plataforma web privada para el control **administrativo y financiero** de una empresa de restaurantes.
 
-First, run the development server:
+> No es un POS ni un ERP contable. La operación del restaurante (ventas, inventarios, Food Cost, pedidos) pertenece a **FILIPO**.
+
+## Stack
+
+- Next.js (App Router) + TypeScript + Tailwind CSS
+- Supabase (PostgreSQL, Auth, Storage, RLS)
+- Vercel + GitHub
+
+## Documentación
+
+| Documento | Contenido |
+|-----------|-----------|
+| [docs/PRODUCT.md](docs/PRODUCT.md) | Visión, frontera FILIPO, DoD MVP |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitectura técnica |
+| [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Modelo de datos |
+| [docs/SECURITY.md](docs/SECURITY.md) | Auth, RLS, Storage, auditoría |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Fases MVP 1–4 |
+
+## Inicio rápido
 
 ```bash
+cp .env.example .env.local
+# Completar URL y keys de Supabase
+
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Aplicar migraciones (CLI de Supabase):
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npx supabase db push
+# o: supabase migration up
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Scripts
 
-## Learn More
+| Comando | Descripción |
+|---------|-------------|
+| `npm run dev` | Servidor de desarrollo |
+| `npm run build` | Build de producción |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | TypeScript |
+| `npm test` | Pruebas unitarias (Vitest) |
 
-To learn more about Next.js, take a look at the following resources:
+## Principios
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Simplicidad, trazabilidad, evidencia, histórico, auditoría.
+2. Dinero en `NUMERIC` / `Decimal` — nunca float.
+3. Fechas visuales DD/MM/YYYY · timezone `America/Bogota` · moneda COP.
+4. Cambios de schema solo vía migraciones en `supabase/migrations/`.
+5. Sin secretos en el repositorio.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## MVP 1 (en construcción)
 
-## Deploy on Vercel
+Login, Empresa, Socios, Empalme, Documentos, Bancos/saldos, Proveedores/CxP, Préstamos, Resumen y Acta PDF.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Ver Definition of Done en `docs/PRODUCT.md`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Contribución
+
+Ver [CONTRIBUTING.md](CONTRIBUTING.md). Ramas `feature/*` + Pull Requests. `main` = producción.
