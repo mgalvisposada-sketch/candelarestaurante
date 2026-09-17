@@ -29,6 +29,18 @@ export const NAV_ITEMS = [
 
 export const WRITE_ROLES: AppRole[] = ["SUPER_ADMIN", "GESTION"];
 
+export const ROLE_LABELS: Record<AppRole, string> = {
+  SUPER_ADMIN: "Super admin",
+  GESTION: "Gestión",
+  SOCIO: "Socio",
+  CONTADOR: "Contador",
+  LECTURA: "Solo lectura",
+};
+
 export function canWrite(role: AppRole | null | undefined): boolean {
   return !!role && WRITE_ROLES.includes(role);
+}
+
+export function isSuperAdmin(role: AppRole | null | undefined): boolean {
+  return role === "SUPER_ADMIN";
 }

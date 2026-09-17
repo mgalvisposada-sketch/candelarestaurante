@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { BrandLogo } from "@/components/brand/logo";
-import { NAV_ITEMS } from "@/types/domain";
+import { SignOutButton } from "@/components/layout/sign-out-button";
+import { NAV_ITEMS, ROLE_LABELS, type AppRole } from "@/types/domain";
 import { cn } from "@/lib/utils";
 
 /** Habilita módulos implementados (MVP 1–3). Reportes queda para MVP 4. */
@@ -10,7 +11,15 @@ const ENABLED_HREFS: Set<string> = new Set(
   NAV_ITEMS.filter((i) => i.mvp <= 3).map((i) => i.href),
 );
 
-export function AppSidebar({ pathname }: { pathname: string }) {
+export function AppSidebar({
+  pathname,
+  userEmail,
+  role,
+}: {
+  pathname: string;
+  userEmail?: string | null;
+  role?: AppRole | null;
+}) {
   return (
     <aside className="flex w-64 shrink-0 flex-col bg-[var(--sidebar)] text-[var(--sidebar-text)]">
       <div className="border-b border-white/10 px-4 py-5">
@@ -55,8 +64,23 @@ export function AppSidebar({ pathname }: { pathname: string }) {
           );
         })}
       </nav>
-      <div className="border-t border-white/10 px-5 py-4 text-xs text-[var(--sidebar-muted)]">
-        Administración financiera · COP
+      <div className="space-y-3 border-t border-white/10 px-4 py-4">
+        {(userEmail || role) && (
+          <div className="px-1 text-xs text-[var(--sidebar-muted)]">
+            {userEmail ? (
+              <p className="truncate text-sm text-white/90" title={userEmail}>
+                {userEmail}
+              </p>
+            ) : null}
+            {role ? (
+              <p className="mt-0.5">{ROLE_LABELS[role] ?? role}</p>
+            ) : null}
+          </div>
+        )}
+        <SignOutButton />
+        <p className="px-1 text-[10px] text-[var(--sidebar-muted)]">
+          Administración financiera · COP
+        </p>
       </div>
     </aside>
   );

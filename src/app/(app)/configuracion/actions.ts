@@ -1,0 +1,343 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
+import type { OrgContext } from "@/lib/org-context";
+import { getOrgContext } from "@/lib/org-context";
+import { isSuperAdmin } from "@/types/domain";
+import {
+  createSystemUserSchema,
+  updateSystemUserSchema,
+} from "@/validations/users";
+import type { ActionResult } from "../empresa/actions";
+
+type AdminCtx = OrgContext & {
+  organization: NonNullable<OrgContext["organization"]>;
+};
+
+async function requireSuperAdmin(): Promise<
+  { ok: true; ctx: AdminCtx } | { ok: false; error: string }
+> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) {
+    return { ok: false, error: "Sin organización" };
+  }
+  if (!isSuperAdmin(ctx.role)) {
+    return {
+      ok: false,
+      error: "Solo un super admin puede gestionar usuarios del sistema",
+    };
+  }
+  return {
+    ok: true,
+    ctx: ctx as AdminCtx,
+  };
+}
+
+export async function createSystemUserAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const gate = await requireSuperAdmin();
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const { ctx } = gate;
+
+  const parsed = createSystemUserSchema.safeParse({
+    email: formData.get("email"),
+    full_name: formData.get("full_name"),
+    role: formData.get("role"),
+    password: formData.get("password"),
+    is_active: formData.get("is_active") || "true",
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+    };
+  }
+
+  const v = parsed.data;
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Service role no configurado",
+    };
+  }
+
+  const { data: created, error: createError } =
+    await admin.auth.admin.createUser({
+      email: v.email.trim().toLowerCase(),
+      password: v.password,
+      email_confirm: true,
+      user_metadata: { full_name: v.full_name.trim() },
+    });
+
+  if (createError || !created.user) {
+    return {
+      ok: false,
+      error: createError?.message ?? "No se pudo crear el usuario en Auth",
+    };
+  }
+
+  const userId = created.user.id;
+
+  const { error: profileError } = await admin
+    .from("profiles")
+    .update({
+      full_name: v.full_name.trim(),
+      email: v.email.trim().toLowerCase(),
+      is_active: v.is_active !== "false",
+    })
+    .eq("id", userId);
+
+  if (profileError) {
+    await admin.auth.admin.deleteUser(userId);
+    return { ok: false, error: profileError.message };
+  }
+
+  const supabase = await createClient();
+  const { data: membership, error: membershipError } = await supabase
+    .from("organization_users")
+    .insert({
+      organization_id: ctx.organization.id,
+      user_id: userId,
+      role: v.role,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+
+  if (membershipError) {
+    await admin.auth.admin.deleteUser(userId);
+    return { ok: false, error: membershipError.message };
+  }
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "CREATE",
+    entity: "organization_users",
+    entity_id: membership.id,
+    new_values: {
+      email: v.email.trim().toLowerCase(),
+      role: v.role,
+      target_user_id: userId,
+    },
+  });
+
+  revalidatePath("/configuracion");
+  return { ok: true, id: membership.id };
+}
+
+export async function updateSystemUserAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const gate = await requireSuperAdmin();
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const { ctx } = gate;
+
+  const parsed = updateSystemUserSchema.safeParse({
+    membership_id: formData.get("membership_id"),
+    user_id: formData.get("user_id"),
+    email: formData.get("email"),
+    full_name: formData.get("full_name"),
+    role: formData.get("role"),
+    password: formData.get("password"),
+    is_active: formData.get("is_active") || "true",
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+    };
+  }
+
+  const v = parsed.data;
+  const supabase = await createClient();
+
+  const { data: membership, error: loadError } = await supabase
+    .from("organization_users")
+    .select("id, user_id, role, organization_id")
+    .eq("id", v.membership_id)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (loadError || !membership) {
+    return { ok: false, error: loadError?.message ?? "Usuario no encontrado" };
+  }
+
+  if (membership.user_id !== v.user_id) {
+    return { ok: false, error: "Membresía inconsistente" };
+  }
+
+  if (
+    membership.user_id === ctx.userId &&
+    membership.role === "SUPER_ADMIN" &&
+    v.role !== "SUPER_ADMIN"
+  ) {
+    return {
+      ok: false,
+      error: "No puedes quitarte el rol de super admin a ti mismo",
+    };
+  }
+
+  if (membership.role === "SUPER_ADMIN" && v.role !== "SUPER_ADMIN") {
+    const { count } = await supabase
+      .from("organization_users")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", ctx.organization.id)
+      .eq("role", "SUPER_ADMIN")
+      .is("deleted_at", null);
+
+    if ((count ?? 0) <= 1) {
+      return {
+        ok: false,
+        error: "Debe quedar al menos un super admin en la organización",
+      };
+    }
+  }
+
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Service role no configurado",
+    };
+  }
+
+  const authPatch: {
+    email?: string;
+    password?: string;
+    user_metadata?: { full_name: string };
+  } = {
+    email: v.email.trim().toLowerCase(),
+    user_metadata: { full_name: v.full_name.trim() },
+  };
+  if (v.password) authPatch.password = v.password;
+
+  const { error: authError } = await admin.auth.admin.updateUserById(
+    v.user_id,
+    authPatch,
+  );
+  if (authError) return { ok: false, error: authError.message };
+
+  const { error: profileError } = await admin
+    .from("profiles")
+    .update({
+      full_name: v.full_name.trim(),
+      email: v.email.trim().toLowerCase(),
+      is_active: v.is_active !== "false",
+    })
+    .eq("id", v.user_id);
+
+  if (profileError) return { ok: false, error: profileError.message };
+
+  const { error: membershipError } = await supabase
+    .from("organization_users")
+    .update({
+      role: v.role,
+      updated_by: ctx.userId,
+    })
+    .eq("id", v.membership_id)
+    .eq("organization_id", ctx.organization.id);
+
+  if (membershipError) return { ok: false, error: membershipError.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "UPDATE",
+    entity: "organization_users",
+    entity_id: v.membership_id,
+    new_values: {
+      email: v.email.trim().toLowerCase(),
+      role: v.role,
+      is_active: v.is_active !== "false",
+      password_changed: Boolean(v.password),
+      target_user_id: v.user_id,
+    },
+  });
+
+  revalidatePath("/configuracion");
+  return { ok: true, id: v.membership_id };
+}
+
+export async function deactivateSystemUserAction(
+  membershipId: string,
+): Promise<ActionResult> {
+  const gate = await requireSuperAdmin();
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const { ctx } = gate;
+
+  const supabase = await createClient();
+  const { data: membership, error: loadError } = await supabase
+    .from("organization_users")
+    .select("id, user_id, role")
+    .eq("id", membershipId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (loadError || !membership) {
+    return { ok: false, error: loadError?.message ?? "Usuario no encontrado" };
+  }
+
+  if (membership.user_id === ctx.userId) {
+    return { ok: false, error: "No puedes desactivar tu propia cuenta" };
+  }
+
+  if (membership.role === "SUPER_ADMIN") {
+    const { count } = await supabase
+      .from("organization_users")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", ctx.organization.id)
+      .eq("role", "SUPER_ADMIN")
+      .is("deleted_at", null);
+
+    if ((count ?? 0) <= 1) {
+      return {
+        ok: false,
+        error: "Debe quedar al menos un super admin en la organización",
+      };
+    }
+  }
+
+  const { error } = await supabase
+    .from("organization_users")
+    .update({
+      deleted_at: new Date().toISOString(),
+      updated_by: ctx.userId,
+    })
+    .eq("id", membershipId);
+
+  if (error) return { ok: false, error: error.message };
+
+  try {
+    const admin = createAdminClient();
+    await admin
+      .from("profiles")
+      .update({ is_active: false })
+      .eq("id", membership.user_id);
+  } catch {
+    // Si no hay service role, la membresía ya quedó desactivada.
+  }
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "SOFT_DELETE",
+    entity: "organization_users",
+    entity_id: membershipId,
+    new_values: { target_user_id: membership.user_id },
+  });
+
+  revalidatePath("/configuracion");
+  return { ok: true, id: membershipId };
+}
