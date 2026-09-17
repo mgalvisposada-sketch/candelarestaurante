@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   useEffect,
   useMemo,
@@ -11,11 +10,13 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
+import { useRouter } from "next/navigation";
 import {
   closeHandoverAction,
   createHandoverItemAction,
   createHandoverSessionAction,
   seedMissingHandoverDefaultsAction,
+  cleanupObsoleteHandoverItemsAction,
   softDeleteHandoverItemAction,
   updateHandoverItemAction,
   updateHandoverSessionAction,
@@ -30,7 +31,10 @@ import {
   itemAnswerHint,
   itemAnswerMode,
   itemAsk,
+  itemExample,
   itemExpect,
+  itemSeedLines,
+  isObsoleteHandoverItem,
   sanitizeItemComments,
   verificationHint,
   verificationLabel,
@@ -47,8 +51,6 @@ import { cn } from "@/lib/utils";
 import {
   Check,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   FileCheck2,
   Plus,
   Trash2,
@@ -105,7 +107,7 @@ function newBreakdownLine(): HandoverBreakdownLine {
 function statusTone(status: VerificationStatus) {
   if (status === "CONFIRMADO") return "ok" as const;
   if (status === "DECLARADO") return "warn" as const;
-  return "danger" as const;
+  return "neutral" as const;
 }
 
 function domainProgress(items: HandoverItem[]) {
@@ -134,51 +136,56 @@ const STATUS_OPTIONS: Array<{
 }> = [
   {
     value: "PENDIENTE",
-    label: "Aún no",
+    label: "Pendiente",
     short: "Pendiente",
-    hint: "Todavía no lo revisamos",
+    hint: "Aún no lo indagué · lo dejo para después",
   },
   {
     value: "DECLARADO",
-    label: "Me lo dijeron",
-    short: "Dicho",
-    hint: "Válido sin prueba: queda en el acta",
+    label: "Sin prueba",
+    short: "Sin prueba",
+    hint: "Me respondieron de palabra · queda en el acta",
   },
   {
     value: "CONFIRMADO",
-    label: "Lo vi / tengo prueba",
+    label: "Con prueba",
     short: "Con prueba",
-    hint: "Hay extracto, factura u otro soporte",
+    hint: "Vi extracto, factura, Excel u otro soporte",
   },
 ];
+
+function seededBreakdownLines(itemKey: string): HandoverBreakdownLine[] {
+  const names = itemSeedLines(itemKey);
+  if (!names.length) return [newBreakdownLine()];
+  return names.map((name) => ({
+    ...newBreakdownLine(),
+    name,
+    // En checklists de docs el monto casi siempre es 0
+    amount:
+      itemAnswerMode(itemKey) === "docs" ||
+      itemKey.startsWith("claridad_") ||
+      itemKey === "informacion_solo_puente"
+        ? 0
+        : null,
+  }));
+}
 
 function StatusChooser({
   value,
   onChange,
   name = "verification_status",
-  compact = false,
 }: {
   value: VerificationStatus;
   onChange: (next: VerificationStatus) => void;
   name?: string;
-  compact?: boolean;
 }) {
   return (
-    <fieldset className="space-y-1.5">
-      {!compact ? (
-        <legend className="mb-1 text-sm font-medium text-[var(--ink)]">
-          ¿Cómo quedó esta respuesta?
-        </legend>
-      ) : (
-        <legend className="sr-only">Estado de verificación</legend>
-      )}
+    <fieldset className="space-y-2">
+      <legend className="text-sm font-medium text-[var(--ink)]">
+        ¿Cómo dejas esta pregunta?
+      </legend>
       <input type="hidden" name={name} value={value} />
-      <div
-        className={cn(
-          "grid gap-1.5",
-          compact ? "grid-cols-3" : "gap-2 sm:grid-cols-3",
-        )}
-      >
+      <div className="grid gap-2 sm:grid-cols-3">
         {STATUS_OPTIONS.map((option) => {
           const active = value === option.value;
           return (
@@ -186,27 +193,23 @@ function StatusChooser({
               key={option.value}
               type="button"
               onClick={() => onChange(option.value)}
+              aria-pressed={active}
               className={cn(
-                "rounded-lg border text-left transition",
-                compact ? "px-2 py-2" : "px-3 py-2.5",
+                "rounded-xl border px-3 py-2.5 text-left transition",
                 active
-                  ? "border-[var(--accent)] bg-[var(--accent-soft)] shadow-[inset_0_0_0_1px_var(--accent)]"
-                  : "border-[var(--line)] bg-white hover:border-[var(--accent)]/40",
+                  ? "border-[var(--ink)] bg-[var(--ink)] text-white"
+                  : "border-[var(--line)] bg-white text-[var(--ink)] hover:border-[var(--ink)]/30",
               )}
             >
+              <span className="block text-sm font-semibold">{option.label}</span>
               <span
                 className={cn(
-                  "block font-semibold",
-                  compact ? "text-xs" : "text-sm",
+                  "mt-0.5 block text-[11px] leading-snug",
+                  active ? "text-white/70" : "text-[var(--muted)]",
                 )}
               >
-                {compact ? option.short : option.label}
+                {option.hint}
               </span>
-              {!compact ? (
-                <span className="mt-0.5 block text-xs text-[var(--muted)]">
-                  {option.hint}
-                </span>
-              ) : null}
             </button>
           );
         })}
@@ -236,16 +239,17 @@ export function CreateHandoverForm({
     >
       <div className="space-y-2 text-sm leading-relaxed text-[var(--muted)]">
         <p>
-          Se trata de construir{" "}
+          Esta pantalla es tu{" "}
           <strong className="font-medium text-[var(--ink)]">
-            una foto compartida
+            material de apoyo
           </strong>{" "}
-          de la plata, las deudas y los papeles — no de juzgar a quien entregaba
-          la administración.
+          para indagar en la reunión: preguntas listas, desgloses y estados de
+          calidad.
         </p>
         <p>
-          Si la información viene a medias, se declara igual. Al final se
-          congela como acta del día 1 para todos los socios.
+          Empieza por papeles e inventario; Holding, Publicidad y capital por
+          socio vienen después. Si la respuesta viene a medias, márcala
+          declarada y sigue.
         </p>
       </div>
 
@@ -502,7 +506,9 @@ function BreakdownEditor({
                     ),
                   );
                 }}
-                placeholder="Opcional"
+                placeholder={
+                  mode === "docs" ? "entregado / falta / parcial" : "Opcional"
+                }
                 className={inputClass}
               />
             </label>
@@ -539,27 +545,32 @@ export function HandoverItemCard({
   highlighted,
   expanded,
   onToggle,
+  onSaveSuccess,
+  onSkip,
 }: {
   item: HandoverItem;
   readOnly: boolean;
   highlighted?: boolean;
   expanded: boolean;
   onToggle: () => void;
+  onSaveSuccess?: () => void;
+  onSkip?: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, startTransition] = useTransition();
+  const advanceRef = useRef(false);
   const [status, setStatus] = useState<VerificationStatus>(
     item.verification_status,
   );
   const mode = itemAnswerMode(item.item_key);
   const prefersList = mode === "list" || mode === "docs";
   const initialLines = readHandoverItemMetadata(item.metadata).lines;
-  const [lines, setLines] = useState<HandoverBreakdownLine[]>(() =>
-    prefersList && initialLines.length === 0
-      ? [newBreakdownLine()]
-      : initialLines,
-  );
+  const [lines, setLines] = useState<HandoverBreakdownLine[]>(() => {
+    if (initialLines.length > 0) return initialLines;
+    if (prefersList) return seededBreakdownLines(item.item_key);
+    return [];
+  });
   const cleanComments = sanitizeItemComments(item.item_key, item.comments);
   const [source, setSource] = useState(item.source ?? "");
   const [comments, setComments] = useState(cleanComments);
@@ -570,14 +581,16 @@ export function HandoverItemCard({
   const ask = itemAsk(item.item_key, item.label);
   const expect = itemExpect(item.item_key);
   const answerHint = itemAnswerHint(item.item_key);
+  const example = itemExample(item.item_key);
+  const obsolete = isObsoleteHandoverItem(item);
   const amountLabel =
     mode === "confirm"
-      ? "Total que entregan el día 1 (COP)"
+      ? "Total día 1 (COP)"
       : mode === "docs"
         ? "Monto (casi siempre 0)"
         : prefersList
           ? "Total (suma de la lista)"
-          : "Monto de la respuesta (COP)";
+          : "Monto (COP)";
   const cardRef = useRef<HTMLDivElement>(null);
   const amountPreview =
     item.amount != null
@@ -585,12 +598,48 @@ export function HandoverItemCard({
       : linesSum != null
         ? formatCOP(linesSum)
         : null;
-  const lineCount = initialLines.filter((l) => l.name.trim()).length;
+  const lineCount = (
+    initialLines.length > 0 ? initialLines : lines
+  ).filter((l) => l.name.trim()).length;
 
   useEffect(() => {
-    if (!highlighted) return;
-    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [highlighted]);
+    if (!highlighted && !expanded) return;
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [highlighted, expanded]);
+
+  function submitItem(fd: FormData) {
+    setError(null);
+    setSaved(false);
+    const andAdvance = advanceRef.current;
+    advanceRef.current = false;
+    const cleaned = lines
+      .map((line) => ({
+        ...line,
+        name: line.name.trim(),
+        note: line.note?.trim() || undefined,
+      }))
+      .filter((line) => line.name.length > 0);
+    fd.set(
+      "metadata_json",
+      JSON.stringify(buildHandoverItemMetadata(cleaned)),
+    );
+    startTransition(async () => {
+      const result = await updateHandoverItemAction(item.id, fd);
+      if (!result.ok) {
+        setError(result.error ?? "Error");
+      } else {
+        setLines(
+          cleaned.length > 0
+            ? cleaned
+            : prefersList
+              ? seededBreakdownLines(item.item_key)
+              : [],
+        );
+        setSaved(true);
+        if (andAdvance) onSaveSuccess?.();
+      }
+    });
+  }
 
   return (
     <div
@@ -598,8 +647,8 @@ export function HandoverItemCard({
       ref={cardRef}
       className={cn(
         "overflow-hidden rounded-xl border bg-white transition",
-        highlighted
-          ? "border-[var(--accent)] shadow-[0_0_0_3px_var(--accent-soft)]"
+        expanded || highlighted
+          ? "border-[var(--ink)]/30 shadow-[0_0_0_3px_var(--gold-soft)]"
           : "border-[var(--line)]",
       )}
     >
@@ -616,13 +665,15 @@ export function HandoverItemCard({
             {amountPreview
               ? amountPreview
               : status === "PENDIENTE"
-                ? "Sin responder"
+                ? "Sin capturar · puedes saltarla"
                 : verificationLabel(status)}
-            {lineCount > 0 ? ` · ${lineCount} renglón${lineCount === 1 ? "" : "es"}` : ""}
+            {lineCount > 0
+              ? ` · ${lineCount} renglón${lineCount === 1 ? "" : "es"}`
+              : ""}
           </p>
         </div>
         <Badge tone={statusTone(status)}>
-          {STATUS_OPTIONS.find((o) => o.value === status)?.short ??
+          {STATUS_OPTIONS.find((o) => o.value === status)?.label ??
             verificationLabel(status)}
         </Badge>
         <ChevronDown
@@ -634,19 +685,73 @@ export function HandoverItemCard({
       </button>
 
       {expanded ? (
-        <div className="border-t border-[var(--line)] px-3.5 py-3.5">
+        <div className="border-t border-[var(--line)] px-3.5 py-4 sm:px-5">
+          <div className="mb-4 rounded-2xl bg-[var(--ink)] px-4 py-4 text-white">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/55">
+              Pregunta en voz alta
+            </p>
+            <p className="mt-1.5 font-display text-lg font-bold leading-snug tracking-tight sm:text-xl">
+              {ask}
+            </p>
+          </div>
+
+          {example ? (
+            <div className="mb-4 rounded-xl border border-dashed border-[var(--ink)]/15 bg-[var(--bg)] px-3.5 py-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+                Nota aclaratoria · ejemplo
+              </p>
+              <p className="mt-1.5 text-sm leading-relaxed text-[var(--ink)]">
+                {example}
+              </p>
+            </div>
+          ) : null}
+
           {expect || answerHint ? (
-            <div className="mb-3 space-y-1.5">
+            <div className="mb-4 grid gap-2 sm:grid-cols-2">
               {expect ? (
-                <p className="text-xs text-[var(--muted)]">
-                  Cómo responder: {expect}
-                </p>
+                <div className="rounded-xl bg-[var(--bg)] px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+                    Qué capturar
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--ink)]">
+                    {expect}
+                  </p>
+                </div>
               ) : null}
               {answerHint ? (
-                <p className="rounded-md bg-[var(--accent-soft)] px-2.5 py-1.5 text-xs text-[var(--accent)]">
-                  {answerHint}
-                </p>
+                <div className="rounded-xl bg-[var(--gold-soft)] px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--warn)]">
+                    Tip de indagación
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--ink)]">
+                    {answerHint}
+                  </p>
+                </div>
               ) : null}
+            </div>
+          ) : null}
+
+          {obsolete && !readOnly ? (
+            <div className="mb-4 rounded-xl border border-[var(--warn)]/30 bg-[var(--gold-soft)] px-3.5 py-3">
+              <p className="text-xs leading-relaxed text-[var(--ink)]">
+                Esta pregunta es de un catálogo anterior y se solapa con las
+                nuevas. Puedes quitarla para no confundir la reunión.
+              </p>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  startTransition(async () => {
+                    const result = await softDeleteHandoverItemAction(item.id);
+                    if (!result.ok) {
+                      setError(result.error ?? "Error");
+                    }
+                  });
+                }}
+                className="mt-2 text-xs font-semibold text-[var(--warn)] underline-offset-2 hover:underline"
+              >
+                Quitar esta pregunta antigua
+              </button>
             </div>
           ) : null}
 
@@ -696,55 +801,51 @@ export function HandoverItemCard({
                   </table>
                 </div>
               ) : null}
-              <p>De dónde salió: {item.source || "—"}</p>
+              <p>Fuente: {item.source || "—"}</p>
               <p>Notas: {cleanComments || "—"}</p>
             </div>
           ) : (
-            <form
-              className="space-y-3"
-              action={(fd) => {
-                setError(null);
-                setSaved(false);
-                const cleaned = lines
-                  .map((line) => ({
-                    ...line,
-                    name: line.name.trim(),
-                    note: line.note?.trim() || undefined,
-                  }))
-                  .filter((line) => line.name.length > 0);
-                fd.set(
-                  "metadata_json",
-                  JSON.stringify(buildHandoverItemMetadata(cleaned)),
-                );
-                startTransition(async () => {
-                  const result = await updateHandoverItemAction(item.id, fd);
-                  if (!result.ok) setError(result.error ?? "Error");
-                  else {
-                    setLines(
-                      cleaned.length > 0
-                        ? cleaned
-                        : prefersList
-                          ? [newBreakdownLine()]
-                          : [],
-                    );
-                    setSaved(true);
-                  }
-                });
-              }}
-            >
+            <form className="space-y-3" action={(fd) => submitItem(fd)}>
               <input type="hidden" name="label" value={item.label} />
               <input type="hidden" name="domain" value={item.domain} />
               <input type="hidden" name="item_key" value={item.item_key} />
 
-              <StatusChooser value={status} onChange={setStatus} compact />
+              <StatusChooser value={status} onChange={setStatus} />
+
+              {status === "PENDIENTE" ? (
+                <div className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--bg)]/60 px-3 py-3 text-sm text-[var(--muted)]">
+                  Si aún no indagas esto:{" "}
+                  <button
+                    type="button"
+                    className="font-semibold text-[var(--ink)] underline-offset-2 hover:underline"
+                    onClick={() => onSkip?.()}
+                  >
+                    Saltar por ahora →
+                  </button>
+                  {prefersList
+                    ? " Abajo ya tienes la lista mínima para marcar."
+                    : null}
+                </div>
+              ) : null}
 
               {prefersList ? (
-                <BreakdownEditor
-                  mode={mode}
-                  lines={lines}
-                  setLines={setLines}
-                  domain={item.domain}
-                />
+                <div className="space-y-2">
+                  {itemSeedLines(item.item_key).length > 0 ? (
+                    <p className="text-xs text-[var(--muted)]">
+                      Lista mínima prearmada — en la nota marca{" "}
+                      <span className="font-medium text-[var(--ink)]">
+                        entregado / falta / parcial
+                      </span>{" "}
+                      (o el monto si aplica). Puedes agregar o quitar renglones.
+                    </p>
+                  ) : null}
+                  <BreakdownEditor
+                    mode={mode}
+                    lines={lines}
+                    setLines={setLines}
+                    domain={item.domain}
+                  />
+                </div>
               ) : null}
 
               {!prefersList ? (
@@ -758,15 +859,13 @@ export function HandoverItemCard({
                     defaultValue={
                       item.amount != null ? String(item.amount) : ""
                     }
-                    placeholder={
-                      mode === "confirm"
-                        ? "Suma esperada de bancos + caja + pasarelas…"
-                        : "Escribe el monto"
-                    }
+                    placeholder="Monto"
                     className={cn(inputClass, "tabular-nums")}
                   />
                 </label>
-              ) : linesSum != null ? (
+              ) : null}
+
+              {prefersList && linesSum != null ? (
                 <>
                   <input type="hidden" name="amount" value={String(linesSum)} />
                   <p className="text-sm text-[var(--muted)]">
@@ -776,22 +875,11 @@ export function HandoverItemCard({
                     </span>
                   </p>
                 </>
-              ) : (
-                <label className="block text-sm">
-                  <span className="mb-1 block text-[var(--muted)]">
-                    {amountLabel}
-                  </span>
-                  <input
-                    name="amount"
-                    inputMode="decimal"
-                    defaultValue={
-                      item.amount != null ? String(item.amount) : ""
-                    }
-                    placeholder="Se llena solo cuando agregues montos arriba"
-                    className={cn(inputClass, "tabular-nums")}
-                  />
-                </label>
-              )}
+              ) : null}
+
+              {prefersList && linesSum == null ? (
+                <input type="hidden" name="amount" value="" />
+              ) : null}
 
               {mode === "single" ? (
                 <details className="rounded-lg border border-[var(--line)] bg-[var(--bg)]/40 px-3 py-2">
@@ -831,24 +919,24 @@ export function HandoverItemCard({
                   <div className="grid gap-3 border-t border-[var(--line)] px-3 py-3 md:grid-cols-2">
                     <label className="block text-sm md:col-span-1">
                       <span className="mb-1 block text-[var(--muted)]">
-                        ¿De dónde salió?
+                        Fuente / evidencia
                       </span>
                       <input
                         value={source}
                         onChange={(e) => setSource(e.target.value)}
-                        placeholder="Extracto, conteo, Excel…"
+                        placeholder="Extracto, Excel, oral…"
                         className={inputClass}
                       />
                     </label>
                     <label className="block text-sm md:col-span-2">
                       <span className="mb-1 block text-[var(--muted)]">
-                        Notas de la reunión
+                        Notas de la indagación
                       </span>
                       <textarea
                         rows={2}
                         value={comments}
                         onChange={(e) => setComments(e.target.value)}
-                        placeholder="Solo lo que dijo el administrador anterior…"
+                        placeholder="Lo que respondió, contradicciones, qué quedó pendiente…"
                         className={inputClass}
                       />
                     </label>
@@ -856,14 +944,54 @@ export function HandoverItemCard({
                 ) : null}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="submit"
-                  disabled={pending}
-                  className="px-3 py-1.5 text-xs"
-                >
-                  {pending ? "…" : "Guardar respuesta"}
-                </Button>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {status === "PENDIENTE" ? (
+                  <>
+                    <Button
+                      type="button"
+                      disabled={pending}
+                      className="px-4 py-2.5 text-sm"
+                      onClick={() => onSkip?.()}
+                    >
+                      Saltar por ahora →
+                    </Button>
+                    <Button
+                      type="submit"
+                      variant="secondary"
+                      disabled={pending}
+                      className="px-3 py-2.5 text-xs"
+                      onClick={() => {
+                        advanceRef.current = true;
+                      }}
+                    >
+                      {pending ? "…" : "Guardar lista y seguir"}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      type="submit"
+                      disabled={pending}
+                      className="px-4 py-2.5 text-sm"
+                      onClick={() => {
+                        advanceRef.current = true;
+                      }}
+                    >
+                      {pending ? "…" : "Guardar y seguir"}
+                    </Button>
+                    <Button
+                      type="submit"
+                      variant="secondary"
+                      disabled={pending}
+                      className="px-3 py-2.5 text-xs"
+                      onClick={() => {
+                        advanceRef.current = false;
+                      }}
+                    >
+                      {pending ? "…" : "Solo guardar"}
+                    </Button>
+                  </>
+                )}
                 <Button
                   type="button"
                   variant="ghost"
@@ -973,7 +1101,7 @@ export function AddHandoverItemForm({ sessionId }: { sessionId: string }) {
             />
           </label>
           <div className="md:col-span-2">
-            <StatusChooser value={status} onChange={setStatus} compact />
+            <StatusChooser value={status} onChange={setStatus} />
           </div>
           <label className="block text-sm">
             <span className="mb-1 block text-[var(--muted)]">De dónde salió</span>
@@ -998,6 +1126,7 @@ export function AddHandoverItemForm({ sessionId }: { sessionId: string }) {
 }
 
 export function SeedDefaultsButton({ sessionId }: { sessionId: string }) {
+  const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -1008,19 +1137,30 @@ export function SeedDefaultsButton({ sessionId }: { sessionId: string }) {
         disabled={pending}
         onClick={() => {
           startTransition(async () => {
-            const result = await seedMissingHandoverDefaultsAction(sessionId);
+            const cleaned = await cleanupObsoleteHandoverItemsAction(sessionId);
+            const seeded = await seedMissingHandoverDefaultsAction(sessionId);
+            if (!cleaned.ok) {
+              setMsg(cleaned.error ?? "Error al limpiar");
+              return;
+            }
+            if (!seeded.ok) {
+              setMsg(seeded.error ?? "Error al completar");
+              return;
+            }
+            const removed = cleaned.removed ?? 0;
             setMsg(
-              result.ok
-                ? "Listo: se agregaron las preguntas estándar que faltaban."
-                : (result.error ?? "Error"),
+              removed > 0
+                ? `Listo: se quitaron ${removed} pregunta${removed === 1 ? "" : "s"} antigua${removed === 1 ? "" : "s"} y se completó la lista estándar.`
+                : "Listo: preguntas estándar listas para la reunión.",
             );
+            router.refresh();
           });
         }}
         className="text-xs font-medium text-[var(--muted)] underline-offset-2 hover:text-[var(--ink)] hover:underline"
       >
         {pending
           ? "…"
-          : "Completar preguntas estándar que falten (incluye las nuevas)"}
+          : "Preparar reunión (completar lista + quitar preguntas antiguas)"}
       </button>
       {msg ? <span className="text-xs text-[var(--muted)]">{msg}</span> : null}
     </div>
@@ -1035,6 +1175,7 @@ type DomainGroup = {
 function groupItems(items: HandoverItem[]): DomainGroup[] {
   const map = new Map<string, HandoverItem[]>();
   for (const item of items) {
+    if (isObsoleteHandoverItem(item)) continue;
     const list = map.get(item.domain) ?? [];
     list.push(item);
     map.set(item.domain, list);
@@ -1057,6 +1198,7 @@ export function HandoverDomainSections({
   highlightItemId,
   expandedItemId,
   onExpandItem,
+  onItemSaved,
 }: {
   items: HandoverItem[];
   readOnly: boolean;
@@ -1065,143 +1207,154 @@ export function HandoverDomainSections({
   highlightItemId?: string | null;
   expandedItemId: string | null;
   onExpandItem: (itemId: string | null) => void;
+  onItemSaved?: (itemId: string) => void;
 }) {
   const grouped = useMemo(() => groupItems(items), [items]);
+  const activeIndex = Math.max(
+    0,
+    grouped.findIndex((g) => g.domain === activeDomain),
+  );
+  const current = grouped[activeIndex] ?? grouped[0] ?? null;
 
   if (grouped.length === 0) {
     return (
       <Card>
         <p className="text-sm text-[var(--muted)]">
-          Aún no hay preguntas. Completa la lista estándar o agrega una.
+          Aún no hay preguntas. Prepáralas con el botón de completar lista
+          estándar.
         </p>
       </Card>
     );
   }
 
+  if (!current) return null;
+
+  const meta = domainMeta(current.domain);
+  const { reviewed, total } = domainProgress(current.items);
+  const done = reviewed === total && total > 0;
+  const pendingInBlock = current.items.filter(
+    (i) => i.verification_status === "PENDIENTE",
+  ).length;
+
   return (
-    <div className="space-y-2">
-      {grouped.map((group, index) => {
-        const meta = domainMeta(group.domain);
-        const { reviewed, total } = domainProgress(group.items);
-        const done = reviewed === total && total > 0;
-        const open = activeDomain === group.domain;
-        const pendingInBlock = group.items.filter(
-          (i) => i.verification_status === "PENDIENTE",
-        ).length;
-
-        return (
-          <section
-            key={group.domain}
-            className={cn(
-              "overflow-hidden rounded-xl border bg-[var(--surface)] transition",
-              open
-                ? "border-[var(--accent)]/50 shadow-[0_1px_0_rgba(18,18,18,0.04)]"
-                : "border-[var(--line)]",
-            )}
-          >
-            <button
-              type="button"
-              onClick={() =>
-                onDomainChange(open ? null : group.domain)
-              }
-              className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-black/[0.015]"
-            >
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--bg)] text-[11px] font-bold tabular-nums text-[var(--muted)]">
-                {index + 1}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-display text-base font-bold tracking-tight">
-                    {domainLabel(group.domain)}
-                  </h3>
-                  {done ? <Badge tone="ok">Listo</Badge> : null}
-                </div>
-                <p className="mt-0.5 truncate text-xs text-[var(--muted)]">
-                  {open && meta && "ask" in meta
-                    ? meta.ask
-                    : pendingInBlock > 0
-                      ? `${pendingInBlock} pendiente${pendingInBlock === 1 ? "" : "s"}`
-                      : "Completo"}
-                </p>
-              </div>
-              <div className="shrink-0 text-right">
-                <p className="text-sm font-semibold tabular-nums">
-                  {reviewed}/{total}
-                </p>
-              </div>
-              <ChevronDown
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-[var(--line)] bg-white/80 px-4 py-4">
+        <p className="mb-3 text-xs leading-relaxed text-[var(--muted)]">
+          Tu mapa de indagación. Elige una esfera para entrar al bloque; las
+          preguntas empiezan colapsadas.
+        </p>
+        <div className="flex flex-wrap gap-2.5">
+          {grouped.map((group, index) => {
+            const progress = domainProgress(group.items);
+            const complete =
+              progress.reviewed === progress.total && progress.total > 0;
+            const active = group.domain === current.domain;
+            return (
+              <button
+                key={group.domain}
+                type="button"
+                title={domainLabel(group.domain)}
+                onClick={() => onDomainChange(group.domain)}
                 className={cn(
-                  "size-4 shrink-0 text-[var(--muted)] transition",
-                  open && "rotate-180",
+                  "group flex min-w-[4.5rem] max-w-[7.5rem] flex-col items-center gap-1.5 rounded-2xl px-2 py-2 transition",
+                  active ? "bg-[var(--gold-soft)]" : "hover:bg-[var(--bg)]",
                 )}
-              />
-            </button>
+              >
+                <span
+                  className={cn(
+                    "flex size-10 items-center justify-center rounded-full text-sm font-bold tabular-nums transition",
+                    active &&
+                      "bg-[var(--ink)] text-white ring-2 ring-[var(--gold)] ring-offset-2",
+                    !active &&
+                      complete &&
+                      "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200",
+                    !active &&
+                      !complete &&
+                      "bg-[var(--bg)] text-[var(--muted)] ring-1 ring-[var(--line)] group-hover:ring-[var(--ink)]/20",
+                  )}
+                >
+                  {complete && !active ? (
+                    <Check className="size-4" />
+                  ) : (
+                    index + 1
+                  )}
+                </span>
+                <span
+                  className={cn(
+                    "line-clamp-2 text-center text-[10px] font-medium leading-tight",
+                    active ? "text-[var(--ink)]" : "text-[var(--muted)]",
+                  )}
+                >
+                  {domainLabel(group.domain)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-            {open ? (
-              <div className="space-y-2 border-t border-[var(--line)] bg-[var(--bg)]/35 px-3 py-3 sm:px-4">
-                {meta && "expect" in meta && meta.expect ? (
-                  <p className="px-1 text-xs text-[var(--muted)]">
-                    {meta.expect}
-                    {meta && "href" in meta && meta.href ? (
-                      <>
-                        {" · "}
-                        <Link
-                          href={meta.href}
-                          className="font-medium text-[var(--accent)] underline-offset-2 hover:underline"
-                        >
-                          {"hrefLabel" in meta && meta.hrefLabel
-                            ? meta.hrefLabel
-                            : "Abrir módulo"}
-                        </Link>
-                      </>
-                    ) : null}
-                  </p>
-                ) : null}
-
-                <div className="space-y-1.5">
-                  {group.items.map((item) => (
-                    <HandoverItemCard
-                      key={item.id}
-                      item={item}
-                      readOnly={readOnly}
-                      highlighted={highlightItemId === item.id}
-                      expanded={expandedItemId === item.id}
-                      onToggle={() =>
-                        onExpandItem(
-                          expandedItemId === item.id ? null : item.id,
-                        )
-                      }
-                    />
-                  ))}
-                </div>
-
-                <div className="flex items-center justify-between gap-2 pt-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="px-2 py-1.5 text-xs"
-                    disabled={index <= 0}
-                    onClick={() => onDomainChange(grouped[index - 1].domain)}
-                  >
-                    <ChevronLeft className="mr-1 size-3.5" />
-                    Anterior
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="px-2 py-1.5 text-xs"
-                    disabled={index >= grouped.length - 1}
-                    onClick={() => onDomainChange(grouped[index + 1].domain)}
-                  >
-                    Siguiente
-                    <ChevronRight className="ml-1 size-3.5" />
-                  </Button>
-                </div>
+      <Card className="overflow-hidden p-0">
+        <div className="border-b border-[var(--line)] bg-[var(--bg)]/40 px-5 py-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="flex size-7 items-center justify-center rounded-full bg-[var(--ink)] text-[11px] font-bold text-white">
+                  {activeIndex + 1}
+                </span>
+                <span className="text-xs text-[var(--muted)]">
+                  Bloque {activeIndex + 1} de {grouped.length}
+                </span>
+                {done ? <Badge tone="ok">Listo</Badge> : null}
               </div>
-            ) : null}
-          </section>
-        );
-      })}
+              <h3 className="mt-2 font-display text-xl font-bold tracking-tight">
+                {domainLabel(current.domain)}
+              </h3>
+              {meta && "ask" in meta ? (
+                <p className="mt-1 text-sm text-[var(--muted)]">{meta.ask}</p>
+              ) : null}
+              {meta && "expect" in meta && meta.expect ? (
+                <p className="mt-2 max-w-xl text-xs leading-relaxed text-[var(--ink)]/70">
+                  {meta.expect}
+                </p>
+              ) : null}
+            </div>
+            <div className="rounded-xl bg-white px-3 py-2 text-right ring-1 ring-[var(--line)]">
+              <p className="font-display text-xl font-bold tabular-nums">
+                {reviewed}/{total}
+              </p>
+              <p className="text-[11px] text-[var(--muted)]">
+                {pendingInBlock > 0
+                  ? `${pendingInBlock} por indagar`
+                  : "completo"}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2 px-4 py-4 sm:px-5">
+          {current.items.map((item) => (
+            <HandoverItemCard
+              key={item.id}
+              item={item}
+              readOnly={readOnly}
+              highlighted={highlightItemId === item.id}
+              expanded={expandedItemId === item.id}
+              onToggle={() =>
+                onExpandItem(expandedItemId === item.id ? null : item.id)
+              }
+              onSaveSuccess={() => onItemSaved?.(item.id)}
+              onSkip={() => onItemSaved?.(item.id)}
+            />
+          ))}
+        </div>
+
+        <div className="border-t border-[var(--line)] px-4 py-3 sm:px-5">
+          <p className="text-center text-[11px] text-[var(--muted)]">
+            Para cambiar de bloque, elige otra esfera arriba · abre una pregunta
+            para indagar
+          </p>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -1232,13 +1385,13 @@ export function CloseHandoverForm({
       >
         <div>
           <h3 className="font-display text-lg font-bold tracking-tight">
-            Cerrar y congelar el acta
+            Congelar el empalme
           </h3>
           <p className="mt-1 text-sm leading-relaxed text-[var(--muted)]">
-            Cuando terminen la reunión, cierren aquí. No hace falta tener todo
-            perfecto
+            Cuando la conversación haya llegado lo suficientemente lejos,
+            cierren aquí. No hace falta tenerlo todo perfecto
             {pendingCount > 0
-              ? `: aún hay ${pendingCount} sin revisar y pueden quedar como pendientes`
+              ? `: pueden quedar ${pendingCount} puntos por conversar o pendientes`
               : ""}
             .
           </p>
@@ -1272,7 +1425,7 @@ export function CloseHandoverForm({
           </p>
         ) : null}
         <Button type="submit" disabled={pending}>
-          {pending ? "Cerrando…" : "Cerrar acta de entrega"}
+          {pending ? "Cerrando…" : "Cerrar empalme"}
         </Button>
       </form>
     </Card>
@@ -1517,58 +1670,75 @@ export function EmpalmeMeetingView({
       g.items.some((i) => i.verification_status === "PENDIENTE"),
     )?.domain ?? grouped[0]?.domain ?? null;
 
-  const [activeDomain, setActiveDomain] = useState<string | null>(
-    firstIncomplete,
-  );
+  const [activeDomain, setActiveDomain] = useState<string | null>(firstIncomplete);
   const resolvedActiveDomain =
     activeDomain !== null && grouped.some((g) => g.domain === activeDomain)
       ? activeDomain
       : firstIncomplete;
-  const firstPendingItemId =
-    pendingItems.find((i) => i.domain === firstIncomplete)?.id ??
-    pendingItems[0]?.id ??
-    null;
-  const [expandedItemId, setExpandedItemId] = useState<string | null>(
-    firstPendingItemId,
-  );
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [highlightItemId, setHighlightItemId] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function persistFocus(domain: string | null, itemId: string | null) {
+    if (typeof window === "undefined") return;
+    if (!domain) {
+      sessionStorage.removeItem("candela-empalme-focus");
+      return;
+    }
+    sessionStorage.setItem(
+      "candela-empalme-focus",
+      JSON.stringify({ domain, itemId }),
+    );
+  }
 
   function selectDomain(domain: string | null) {
     setActiveDomain(domain);
-    if (!domain) {
-      setExpandedItemId(null);
-      return;
-    }
-    const firstPendingInDomain =
-      pendingItems.find((i) => i.domain === domain)?.id ?? null;
-    setExpandedItemId(firstPendingInDomain);
+    setExpandedItemId(null);
+    setHighlightItemId(null);
+    persistFocus(domain, null);
   }
 
   function jumpToItem(item: HandoverItem) {
-    setActiveDomain(item.domain);
+    // Los atajos solo abren preguntas del bloque actual; el cambio de
+    // bloque es exclusivo de las esferas.
+    if (item.domain !== resolvedActiveDomain) return;
     setExpandedItemId(item.id);
     setHighlightItemId(item.id);
+    persistFocus(item.domain, item.id);
     if (highlightTimer.current) clearTimeout(highlightTimer.current);
     highlightTimer.current = setTimeout(() => setHighlightItemId(null), 2800);
   }
 
   function jumpToNextPending() {
-    const currentExpandedPending =
-      expandedItemId &&
-      pendingItems.find((i) => i.id === expandedItemId)
-        ? expandedItemId
-        : null;
-    const currentIndex = currentExpandedPending
-      ? pendingItems.findIndex((i) => i.id === currentExpandedPending)
+    const pendingInBlock = pendingItems.filter(
+      (i) => i.domain === resolvedActiveDomain,
+    );
+    if (pendingInBlock.length === 0) return;
+    const currentIndex = expandedItemId
+      ? pendingInBlock.findIndex((i) => i.id === expandedItemId)
       : -1;
     const next =
-      pendingItems[currentIndex + 1] ??
-      pendingItems.find((i) => i.domain === resolvedActiveDomain) ??
-      pendingItems[0] ??
-      null;
+      pendingInBlock[currentIndex + 1] ?? pendingInBlock[0] ?? null;
     if (!next) return;
-    jumpToItem(next);
+    setExpandedItemId(next.id);
+    setHighlightItemId(next.id);
+    persistFocus(resolvedActiveDomain, next.id);
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setHighlightItemId(null), 2800);
+  }
+
+  function advanceAfterSave(savedItemId: string) {
+    const domainItems =
+      grouped.find((g) => g.domain === resolvedActiveDomain)?.items ?? [];
+    const idx = domainItems.findIndex((i) => i.id === savedItemId);
+    const nextInDomain = domainItems[idx + 1];
+    if (nextInDomain) {
+      setExpandedItemId(nextInDomain.id);
+      persistFocus(resolvedActiveDomain, nextInDomain.id);
+      return;
+    }
+    // Fin del bloque: colapsar; el usuario elige la siguiente esfera.
+    setExpandedItemId(null);
+    persistFocus(resolvedActiveDomain, null);
   }
 
   if (readOnly) {
@@ -1585,24 +1755,33 @@ export function EmpalmeMeetingView({
   const progressPct = quality.total
     ? (reviewedCount / quality.total) * 100
     : 0;
+  const activeAsk = expandedItemId
+    ? items.find((i) => i.id === expandedItemId)
+    : null;
 
   return (
     <div className="space-y-6">
       <div className="sticky top-0 z-20 -mx-8 border-b border-[var(--line)] bg-[var(--surface)]/95 px-8 py-3 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
-              Avance de la reunión · corte {formatDateCO(session.cutoff_date)}
+          <div className="min-w-0 max-w-xl">
+            <p className="text-[11px] font-medium tracking-wide text-[var(--muted)]">
+              Modo indagación · tú preguntas · aquí capturas · corte{" "}
+              {formatDateCO(session.cutoff_date)}
             </p>
-            <p className="font-display text-lg font-bold tabular-nums">
-              {reviewedCount} de {quality.total} respondidas
+            <p className="font-display text-lg font-bold tabular-nums text-[var(--ink)]">
+              {reviewedCount}/{quality.total} capturadas
             </p>
+            {activeAsk ? (
+              <p className="mt-0.5 truncate text-xs text-[var(--muted)]">
+                Ahora: {itemAsk(activeAsk.item_key, activeAsk.label)}
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="ok">Prueba {quality.confirmed}</Badge>
             <Badge tone="warn">Dicho {quality.declared}</Badge>
-            <Badge tone="danger">Pend. {quality.pending}</Badge>
-            {pendingItems.length > 0 ? (
+            <Badge tone="neutral">Faltan {quality.pending}</Badge>
+            {pendingItems.some((i) => i.domain === resolvedActiveDomain) ? (
               <Button
                 type="button"
                 variant="secondary"
@@ -1611,26 +1790,28 @@ export function EmpalmeMeetingView({
               >
                 Siguiente pendiente
               </Button>
+            ) : quality.pending > 0 ? (
+              <Badge tone="neutral">Elige otra esfera</Badge>
             ) : (
-              <Badge tone="ok">Todo revisado</Badge>
+              <Badge tone="ok">Listo</Badge>
             )}
           </div>
         </div>
         <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-[var(--line)]">
           <div
-            className="h-full rounded-full bg-[var(--accent)] transition-all duration-300"
+            className="h-full rounded-full bg-[linear-gradient(90deg,var(--gold),var(--accent))] transition-all duration-300"
             style={{ width: `${progressPct}%` }}
           />
         </div>
       </div>
 
-      <EmpalmeSteps current={2} />
-
       <CollapsibleSection
-        title="1. Quiénes participan"
-        subtitle="Nombres y fecha hasta la cual responde la administración anterior"
+        title="Datos de la sesión"
+        subtitle="Quién entrega / quién recibe / fecha de corte · preparar preguntas"
         defaultOpen={
-          !session.delivered_by_name || !session.received_by_name
+          !session.delivered_by_name ||
+          !session.received_by_name ||
+          items.length < 20
         }
       >
         <SessionMetaForm session={session} />
@@ -1642,11 +1823,11 @@ export function EmpalmeMeetingView({
       <section className="space-y-3">
         <div className="max-w-3xl">
           <h3 className="font-display text-xl font-bold tracking-tight">
-            2. Preguntas, bloque por bloque
+            Guía de indagación
           </h3>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Abre un bloque y una pregunta. Lo declarado sin prueba también
-            cuenta: es información para los socios, no un examen.
+            Una pregunta abierta a la vez. Lo demás queda compacto para no
+            perder el hilo de la reunión.
           </p>
         </div>
 
@@ -1657,43 +1838,55 @@ export function EmpalmeMeetingView({
           onDomainChange={selectDomain}
           highlightItemId={highlightItemId}
           expandedItemId={expandedItemId}
-          onExpandItem={setExpandedItemId}
+          onExpandItem={(id) => {
+            setExpandedItemId(id);
+            if (id && resolvedActiveDomain) {
+              persistFocus(resolvedActiveDomain, id);
+            }
+          }}
+          onItemSaved={advanceAfterSave}
         />
 
         <AddHandoverItemForm sessionId={session.id} />
       </section>
 
-      {(pendingItems.length > 0 || declaredItems.length > 0) && (
+      {(pendingItems.some((i) => i.domain === resolvedActiveDomain) ||
+        declaredItems.some((i) => i.domain === resolvedActiveDomain)) && (
         <Card>
-          <h3 className="font-display text-lg font-bold">Para no olvidar</h3>
+          <h3 className="font-display text-lg font-bold">Atajos de este bloque</h3>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Toca una pregunta para saltar al bloque.
+            Solo del bloque actual. Para otro tema, elige su esfera arriba.
           </p>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <ReminderList
-              title="Aún sin revisar"
-              items={pendingItems}
+              title="Aún por indagar"
+              items={pendingItems.filter(
+                (i) => i.domain === resolvedActiveDomain,
+              )}
               onJump={jumpToItem}
             />
             <ReminderList
-              title="Solo lo dijeron (sin prueba)"
-              items={declaredItems}
+              title="Declarado (sin prueba)"
+              items={declaredItems.filter(
+                (i) => i.domain === resolvedActiveDomain,
+              )}
               onJump={jumpToItem}
             />
           </div>
         </Card>
       )}
 
-      <section className="space-y-3">
-        <h3 className="font-display text-xl font-bold tracking-tight">
-          3. Cierra cuando la reunión termine
-        </h3>
+      <CollapsibleSection
+        title="Cerrar empalme"
+        subtitle="Solo cuando la reunión haya llegado lo suficientemente lejos"
+        defaultOpen={false}
+      >
         <CloseHandoverForm
           session={session}
           pendingCount={pendingItems.length}
           summaryLines={summaryLines}
         />
-      </section>
+      </CollapsibleSection>
     </div>
   );
 }
@@ -1741,8 +1934,8 @@ function ReminderList({
 export function EmpalmeSteps({ current }: { current: 1 | 2 | 3 }) {
   const steps = [
     { n: 1 as const, label: "Quiénes y fecha" },
-    { n: 2 as const, label: "Hacer las preguntas" },
-    { n: 3 as const, label: "Cerrar el acta" },
+    { n: 2 as const, label: "Conversar los temas" },
+    { n: 3 as const, label: "Cerrar el empalme" },
   ];
 
   return (
@@ -1754,12 +1947,12 @@ export function EmpalmeSteps({ current }: { current: 1 | 2 | 3 }) {
           <li
             key={step.n}
             className={cn(
-              "rounded-xl border px-4 py-3",
-              active && "border-[var(--accent)] bg-[var(--accent-soft)]",
+              "rounded-2xl border px-4 py-3",
+              active && "border-[var(--gold)] bg-[var(--gold-soft)]",
               done && "border-[var(--line)] bg-white",
               !active &&
                 !done &&
-                "border-[var(--line)] bg-transparent opacity-60",
+                "border-[var(--line)] bg-transparent opacity-55",
             )}
           >
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">

@@ -5,8 +5,9 @@ import { BrandLogo } from "@/components/brand/logo";
 import { NAV_ITEMS } from "@/types/domain";
 import { cn } from "@/lib/utils";
 
-const MVP1_HREFS: Set<string> = new Set(
-  NAV_ITEMS.filter((i) => i.mvp === 1).map((i) => i.href),
+/** Habilita módulos implementados (MVP 1–3). Reportes queda para MVP 4. */
+const ENABLED_HREFS: Set<string> = new Set(
+  NAV_ITEMS.filter((i) => i.mvp <= 3).map((i) => i.href),
 );
 
 export function AppSidebar({ pathname }: { pathname: string }) {
@@ -27,7 +28,7 @@ export function AppSidebar({ pathname }: { pathname: string }) {
         {NAV_ITEMS.map((item) => {
           const active =
             pathname === item.href || pathname.startsWith(`${item.href}/`);
-          const enabled = MVP1_HREFS.has(item.href);
+          const enabled = ENABLED_HREFS.has(item.href);
           return (
             <Link
               key={item.href}

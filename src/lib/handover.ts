@@ -162,13 +162,25 @@ export function breakdownNamePlaceholder(domain: string): string {
     case "prestamos":
       return "Acreedor / socio";
     case "socios":
-      return "Socio";
+      return "Socio (ej. Grupo A, Emilio…)";
+    case "capital":
+      return "Socio o destino del capital";
     case "contratos":
       return "Contrato / contraparte";
     case "documentos":
-      return "Documento";
+      return "Documento o acceso";
     case "inventario":
       return "Categoría / ítem";
+    case "gastos":
+      return "Concepto (ej. Holding, Meta Ads…)";
+    case "presupuesto":
+      return "Línea presupuestal";
+    case "personal":
+      return "Rol / persona";
+    case "operacion":
+      return "Canal / acción / causa";
+    case "activos":
+      return "Equipo o bien";
     default:
       return "Nombre / concepto";
   }

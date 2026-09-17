@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
 import {
   DEFAULT_HANDOVER_ITEMS,
+  isRetiredHandoverItem,
   slugifyItemKey,
 } from "@/lib/handover-catalog";
 import {
@@ -433,6 +434,62 @@ export async function seedMissingHandoverDefaultsAction(
 
   revalidatePath("/empalme");
   return { ok: true, id: sessionId };
+}
+
+/** Quita preguntas viejas/duplicadas que confunden (ej. Activos administrativos). */
+export async function cleanupObsoleteHandoverItemsAction(
+  sessionId: string,
+): Promise<ActionResult & { removed?: number }> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+
+  const supabase = await createClient();
+  const { data: session } = await supabase
+    .from("handover_sessions")
+    .select("id, status")
+    .eq("id", sessionId)
+    .eq("organization_id", ctx.organization.id)
+    .maybeSingle();
+
+  if (!session) return { ok: false, error: "Sesión no encontrada" };
+  if (session.status === "CERRADO") {
+    return { ok: false, error: "Empalme cerrado" };
+  }
+
+  const { data: rows } = await supabase
+    .from("handover_items")
+    .select("id, item_key, label")
+    .eq("handover_session_id", sessionId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  const ids = (rows ?? [])
+    .filter((row) =>
+      isRetiredHandoverItem({
+        item_key: row.item_key,
+        label: row.label,
+      }),
+    )
+    .map((r) => r.id);
+
+  if (ids.length === 0) {
+    return { ok: true, id: sessionId, removed: 0 };
+  }
+
+  const { data: deleted, error } = await supabase
+    .from("handover_items")
+    .update({
+      deleted_at: new Date().toISOString(),
+      updated_by: ctx.userId,
+    })
+    .in("id", ids)
+    .eq("organization_id", ctx.organization.id)
+    .select("id");
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/empalme");
+  return { ok: true, id: sessionId, removed: deleted?.length ?? ids.length };
 }
 
 export async function closeHandoverAction(

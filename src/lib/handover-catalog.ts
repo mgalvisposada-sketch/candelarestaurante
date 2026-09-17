@@ -1,132 +1,143 @@
 /**
- * Catálogo de empalme — tono calibrado para entrega con información
- * parcial (p. ej. socio-fundador-chef). DECLARADO/PENDIENTE son estados
- * respetables: el acta es foto compartida para socios, no juicio.
+ * Catálogo de empalme — Candela (fast food mexicano + tragos, una sede).
+ *
+ * Contexto de diseño:
+ * - Emilio (socio ~20%) entrega la administración pero sigue como socio/chef.
+ * - Ha pedido inyección de capital (“el restaurante no da”); los socios no han
+ *   completado el 100% por falta de confianza en números, presupuesto alto,
+ *   Holding burocrático y Publicidad sin estrategia visible.
+ * - Steven (~30%) puede refinanciar si hay claridad; Esteban (~10%) ayudará a
+ *   administrar. Grupo A (~20%) y Persona X (~20%) solo se conocen vía Emilio.
+ *
+ * Objetivo del acta: tranquilidad para el resto de socios — quién puso qué,
+ * a dónde fue, qué hay, qué se debe, y qué se afirma sin prueba.
+ *
+ * Orden = temperatura: de lo tangible/conocido a lo más sensible (capital,
+ * Holding/Publicidad, aportes por socio).
  */
 export const HANDOVER_DOMAINS = [
   {
-    value: "tesoreria",
-    label: "La plata que hay hoy",
-    ask: "¿Cuánta plata hay hoy y dónde está?",
-    expect:
-      "Lista de bancos, efectivo operativo, pasarelas y otros saldos. El total se confirma al final. Si algo es estimado, se marca como declarado.",
-    href: "/tesoreria",
-    hrefLabel: "Ver bancos y caja",
-  },
-  {
-    value: "cxc",
-    label: "Quién nos debe",
-    ask: "¿Quién le debe a Candela, aunque sea de palabra?",
-    expect:
-      "Deudores con papeles y también cuentas “en el aire” (eventos, convenios, promesas). Lo verbal también cuenta.",
-  },
-  {
-    value: "inventario",
-    label: "Inventario al abrir",
-    ask: "¿Qué hay en bodega/cocina el día del corte (orden de magnitud)?",
-    expect:
-      "Estimados de apertura en alimentos, bebidas, licores y empaques. No es el inventario diario del POS ni un avalúo formal.",
-  },
-  {
-    value: "activos",
-    label: "Equipos y bienes",
-    ask: "¿Qué equipos o bienes importantes se reciben?",
-    expect:
-      "Lista de equipos relevantes (neveras, freidoras, mobiliario). El valor es opcional si no se conoce.",
-  },
-  {
-    value: "cxp",
-    label: "Lo que debemos a proveedores",
-    ask: "¿A quién se le debe y qué hay que pagar para no parar?",
-    expect:
-      "Saldos por proveedor (con o sin factura) y lo urgente para no cortar suministro. Incluye compromisos de palabra.",
-    href: "/proveedores",
-    hrefLabel: "Ver proveedores y deudas",
-  },
-  {
-    value: "socios",
-    label: "Los socios",
-    ask: "Confirmemos juntos la participación según documentos",
-    expect:
-      "Contraste con acta/Cámara: nombre + %. Si algo no cuadra, se anota sin cerrar el tema hoy. El detalle fino vive en Socios.",
-    href: "/socios",
-    hrefLabel: "Ver socios",
-  },
-  {
-    value: "prestamos",
-    label: "Plata prestada a la empresa",
-    ask: "¿Qué plata de socios u otros se acordó devolver?",
-    expect:
-      "Préstamos a devolver (no capital), créditos y aportes cuyo carácter aún no está claro. Dejarlo escrito protege a quien aportó.",
-    href: "/prestamos",
-    hrefLabel: "Ver préstamos",
-  },
-  {
-    value: "personal",
-    label: "Gente y pagos a personas",
-    ask: "¿Qué costos de gente impactan la caja cada mes?",
-    expect:
-      "Costo admin aproximado y acuerdos especiales de pago (fijos, %, fuera de nómina formal). No es nómina completa.",
-  },
-  {
-    value: "gastos",
-    label: "Gastos del mes",
-    ask: "¿Qué gastos fijos hay que cubrir para seguir abiertos?",
-    expect:
-      "Arriendo, servicios, software y otros fijos/variables conocidos. Lista preferible a un solo total.",
-  },
-  {
-    value: "presupuesto",
-    label: "Con cuánto se puede operar",
-    ask: "¿Cuál es el mínimo mensual para no parar operación?",
-    expect:
-      "Estimado conjunto (puede ser declarado). Sirve para planificar, no para juzgar la gestión anterior.",
-  },
-  {
-    value: "tributario",
-    label: "Impuestos y DIAN",
-    ask: "¿Qué hay pendiente con impuestos — o quién lo sabe?",
-    expect:
-      "Obligaciones, sanciones o saldos a favor si se conocen. Si lo lleva el contador, anotar contacto y lo que se cree pendiente.",
-  },
-  {
-    value: "contratos",
-    label: "Contratos y compromisos",
-    ask: "¿Qué contratos o compromisos (aunque sean de palabra) siguen vivos?",
-    expect:
-      "Arriendo, servicios, proveedores clave, vencimientos y acuerdos verbales relevantes.",
-  },
-  {
-    value: "sst",
-    label: "Seguridad y salud",
-    ask: "¿Hay costos o papeles de SST/ARL que debamos asumir?",
-    expect:
-      "Documentos y costo aproximado (no es el SG-SST completo). Puede quedar pendiente.",
-  },
-  {
     value: "documentos",
     label: "Papeles y accesos",
-    ask: "¿Qué documentos y accesos se entregan hoy?",
+    ask: "¿Qué papeles y accesos se entregan hoy para que nadie dependa de un solo puente?",
     expect:
-      "Papeles oficiales y accesos admin (banco, correo, pasarelas…). También listar lo que NO se entrega hoy.",
+      "Checklist de documentos y accesos (banco, correo, pasarelas, drive…). También lo que NO se entrega hoy.",
     href: "/documentos",
     hrefLabel: "Ver documentos",
   },
   {
-    value: "capital",
-    label: "Plata que falta",
-    ask: "¿Qué colchón hace falta para sanear lo urgente y operar?",
+    value: "activos",
+    label: "Equipos del local",
+    ask: "¿Qué equipos y bienes del restaurante se reciben?",
     expect:
-      "Dos cifras hacia adelante: poner al día lo crítico y caja para las próximas semanas. Es plan, no veredicto del pasado.",
+      "Dos listas distintas: (1) cocina/barra que produce, (2) salón/servicio al cliente. No mezclar.",
+  },
+  {
+    value: "inventario",
+    label: "Inventario de apertura",
+    ask: "¿Qué hay hoy en cocina y barra (orden de magnitud)?",
+    expect:
+      "Estimados de alimentos y de licores/tragos. No es conteo SKU del POS.",
+  },
+  {
+    value: "contratos",
+    label: "Contratos del local",
+    ask: "¿Qué contratos o compromisos del local siguen vivos?",
+    expect:
+      "Arriendo, servicios, gas, internet, apps de domicilio, proveedores clave — con o sin papel.",
+  },
+  {
+    value: "operacion",
+    label: "Cómo está vendiendo",
+    ask: "¿Cómo se ve la venta real de esta sede (sin juzgar, con números)?",
+    expect:
+      "Ventas por canal y qué se ha hecho (o no) para mover la venta. Declarado vale si no hay reporte formal.",
+  },
+  {
+    value: "personal",
+    label: "Gente del restaurante",
+    ask: "¿Quién trabaja y cuánto cuesta la gente que mueve el local?",
+    expect:
+      "Costo aproximado de cocina/barra/servicio y acuerdos especiales (fijos, %, fuera de nómina). Admin/Holding va en gastos.",
+  },
+  {
+    value: "gastos",
+    label: "En qué se gasta",
+    ask: "¿Cómo se reparte el gasto mensual — sobre todo Holding y Publicidad?",
+    expect:
+      "Solo gastos (arriendo, servicios, Holding, publicidad…). No insumos ni food cost: eso es costo, no gasto.",
+  },
+  {
+    value: "presupuesto",
+    label: "Presupuesto de gastos",
+    ask: "Del presupuesto que usan hoy, ¿qué líneas son gastos y por cuánto?",
+    expect:
+      "Solo líneas de gasto (Holding, Publicidad, arriendo, servicios, admin…). Insumos/food cost son costo: no van aquí.",
+  },
+  {
+    value: "cxc",
+    label: "Quién nos debe",
+    ask: "¿Quién le debe a Candela?",
+    expect: "Terceros, eventos, vales. Incluye cobros de palabra si existen.",
+  },
+  {
+    value: "cxp",
+    label: "Proveedores y deudas",
+    ask: "¿A quién se le debe y qué hay que pagar para no parar cocina/barra?",
+    expect:
+      "Proveedores con saldo. Marca en nota lo urgente y lo que es solo de palabra.",
+    href: "/proveedores",
+    hrefLabel: "Ver proveedores",
+  },
+  {
+    value: "tributario",
+    label: "Impuestos",
+    ask: "¿Qué hay pendiente con impuestos — o quién lo sabe?",
+    expect:
+      "Obligaciones, sanciones o “preguntar al contador”. Mejor “no sé + fuente” que inventar.",
+  },
+  {
+    value: "tesoreria",
+    label: "Dónde está la plata hoy",
+    ask: "¿Cuánta plata hay hoy y en qué cuentas/caja/pasarelas?",
+    expect:
+      "Bancos, caja del local y datáfonos/pasarelas. Preferible con extracto o captura; si no, declarado.",
+    href: "/tesoreria",
+    hrefLabel: "Ver tesorería",
+  },
+  {
+    value: "capital",
+    label: "Capital de socios",
+    ask: "¿Quién inyectó, cuánto falta y a dónde fue la plata?",
+    expect:
+      "Aportes por socio, destino de lo inyectado, monto para sanear y checklist para refinanciar.",
     href: "/capital",
     hrefLabel: "Ver capital",
   },
   {
-    value: "otros",
-    label: "Otras cosas importantes",
-    ask: "¿Hay algo más que la nueva administración deba saber?",
+    value: "prestamos",
+    label: "Préstamos y plata a devolver",
+    ask: "¿Qué plata se acordó devolver (préstamo) y no es capital?",
     expect:
-      "Riesgos, promesas, relaciones clave o temas sensibles que no encajen arriba. Lo que “solo sabe quien operaba”.",
+      "Préstamos de socios u otros, y aportes cuyo carácter (capital vs préstamo) aún no está claro.",
+    href: "/prestamos",
+    hrefLabel: "Ver préstamos",
+  },
+  {
+    value: "socios",
+    label: "Mapa de socios",
+    ask: "Confirmemos participación y qué información llega solo por un puente",
+    expect:
+      "% por socio según acta + qué datos hoy solo existen vía Emilio.",
+    href: "/socios",
+    hrefLabel: "Ver socios",
+  },
+  {
+    value: "otros",
+    label: "Lo que falta decir",
+    ask: "¿Hay algo más que los socios deban saber para decidir con tranquilidad?",
+    expect:
+      "Riesgos, promesas, contactos delicados o temas sensibles.",
   },
 ] as const;
 
@@ -139,289 +150,12 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
   item_key: string;
   label: string;
   ask: string;
-  /** Cómo se responde esta pregunta en el formulario. */
   answerMode: HandoverAnswerMode;
-  /** Instrucción corta de qué respuesta se espera (no va en notas). */
   expect?: string;
   answerHint?: string;
   help?: string;
 }> = [
-  {
-    domain: "tesoreria",
-    item_key: "bancos",
-    label: "Bancos",
-    ask: "¿En qué bancos hay plata y cuánto en cada uno?",
-    answerMode: "list",
-    expect: "Un renglón por cuenta (ej. Bancolombia ahorros, Davivienda).",
-    answerHint:
-      "Si no hay extracto hoy, deja el saldo declarado y anota de dónde sale (WhatsApp, Excel, memoria).",
-  },
-  {
-    domain: "tesoreria",
-    item_key: "caja",
-    label: "Caja",
-    ask: "¿Cuánto efectivo hay hoy para operar (caja del local / caja fuerte)?",
-    answerMode: "single",
-    expect:
-      "Monto contado juntos o estimado del día. Si el conteo queda pendiente, anótalo en notas.",
-    answerHint:
-      "No es una auditoría sorpresa: es la foto del efectivo operativo. Estimado del chef/operación vale como declarado.",
-  },
-  {
-    domain: "tesoreria",
-    item_key: "pasarelas",
-    label: "Datáfonos y pasarelas",
-    ask: "¿Qué datáfonos o pasarelas tienen saldo y de cuánto?",
-    answerMode: "list",
-    expect: "Un renglón por medio (Bold, PayU, datáfono banco, etc.).",
-    answerHint:
-      "Si no hay saldos pendientes, deja un renglón “ninguno” con monto 0.",
-  },
-  {
-    domain: "tesoreria",
-    item_key: "otros_saldos",
-    label: "Otra plata disponible",
-    ask: "¿Hay plata del negocio fuera de bancos, caja o pasarelas?",
-    answerMode: "list",
-    expect:
-      "Fiducia, cuenta de terceros, pendiente de consignar, etc. Si no hay, “ninguno” con 0.",
-    answerHint:
-      "Declararlo protege a quien operaba y a los socios. No es cacería: es dejar la foto completa.",
-  },
-  {
-    domain: "tesoreria",
-    item_key: "liquidez_total",
-    label: "Total de plata disponible",
-    ask: "¿Cuánta plata total entregan el día 1?",
-    answerMode: "confirm",
-    expect: "Un solo total. Debe parecerse a bancos + caja + pasarelas + otros.",
-    answerHint:
-      "Si no cuadra, no pasa nada: explica en notas (estimado, falta extracto, plata por consignar).",
-  },
-  {
-    domain: "cxc",
-    item_key: "cuentas_por_cobrar",
-    label: "Quién nos debe",
-    ask: "¿Quién le debe a Candela y cuánto?",
-    answerMode: "list",
-    expect: "Un renglón por tercero (cliente, convenio, evento) con monto estimado.",
-    answerHint:
-      "Incluye lo que tenga soporte y lo que solo se sepa de memoria. La lista importa más que la perfección.",
-  },
-  {
-    domain: "cxc",
-    item_key: "cxc_en_el_aire",
-    label: "Cobros en el aire",
-    ask: "¿Hay cobros prometidos o cuentas “en el aire” sin factura clara?",
-    answerMode: "list",
-    expect:
-      "Un renglón por caso: quién + cuánto estimado + qué se acordó. Suele quedar como declarado.",
-    answerHint:
-      "Eventos, empresas amigas, vales o “me pagan la otra semana”. Si no hay, “ninguno” con 0.",
-  },
-  {
-    domain: "inventario",
-    item_key: "inventario_alimentos",
-    label: "Alimentos",
-    ask: "¿Cuánto estimas que hay en alimentos hoy (orden de magnitud)?",
-    answerMode: "single",
-    expect:
-      "Estimado de apertura en COP. Puedes anclarte en compras recientes o semanas de operación.",
-    answerHint: "No es food cost ni conteo SKU: es una foto para el día 1.",
-  },
-  {
-    domain: "inventario",
-    item_key: "inventario_bebidas",
-    label: "Bebidas",
-    ask: "¿Cuánto estimas que hay en bebidas hoy (orden de magnitud)?",
-    answerMode: "single",
-    expect: "Estimado de apertura en COP.",
-  },
-  {
-    domain: "inventario",
-    item_key: "inventario_licores",
-    label: "Licores",
-    ask: "¿Cuánto estimas que hay en licores hoy (orden de magnitud)?",
-    answerMode: "single",
-    expect: "Estimado de apertura. Si pueden hacer un conteo rápido juntos, mejor.",
-  },
-  {
-    domain: "inventario",
-    item_key: "inventario_empaques",
-    label: "Empaques",
-    ask: "¿Cuánto estimas que hay en empaques hoy?",
-    answerMode: "single",
-    expect: "Estimado o 0 si no es material (anótalo en notas).",
-  },
-  {
-    domain: "inventario",
-    item_key: "inventario_otros",
-    label: "Otro inventario",
-    ask: "¿Hay otro inventario relevante (aseo, uniformes, etc.) y de cuánto?",
-    answerMode: "list",
-    expect: "Si aplica, lista categorías; si no, “ninguno” con 0.",
-  },
-  {
-    domain: "activos",
-    item_key: "activos_administrativos",
-    label: "Equipos y bienes",
-    ask: "¿Qué equipos importantes se reciben? (valor solo si se conoce)",
-    answerMode: "list",
-    expect:
-      "Un renglón por equipo o grupo. El monto puede ir en 0 si no hay avalúo.",
-    answerHint:
-      "La lista y el estado del equipo importan más que el peso exacto.",
-  },
-  {
-    domain: "cxp",
-    item_key: "cuentas_por_pagar",
-    label: "Deuda total a proveedores",
-    ask: "Para no cortar suministro: ¿qué proveedores tienen saldo y de cuánto?",
-    answerMode: "list",
-    expect:
-      "Un renglón por proveedor (con factura o estimado). El total se suma solo.",
-    answerHint:
-      "Incluye saldos a medias o sin factura. El objetivo es continuidad, no juzgar la gestión anterior.",
-  },
-  {
-    domain: "cxp",
-    item_key: "cxp_critica",
-    label: "Deudas urgentes",
-    ask: "De esas deudas, ¿cuáles hay que pagar ya para no parar?",
-    answerMode: "list",
-    expect: "Solo las urgentes: proveedor + monto + por qué urge.",
-    answerHint: "Este es el mapa de “apagafuegos” para los próximos días.",
-  },
-  {
-    domain: "cxp",
-    item_key: "cxp_verbales",
-    label: "Compromisos de palabra",
-    ask: "¿Hay compromisos de pago verbales o “de palabra” con proveedores?",
-    answerMode: "list",
-    expect: "Proveedor + monto + qué se acordó. Suele quedar declarado.",
-    answerHint:
-      "Muy común cuando se negociaba directo. Si no hay, “ninguno” con 0.",
-  },
-  {
-    domain: "socios",
-    item_key: "composicion_accionaria",
-    label: "Participación de socios",
-    ask: "Confirmemos juntos la participación según acta/Cámara (nombre + %)",
-    answerMode: "list",
-    expect:
-      "Un renglón por socio (nombre + % en la nota; monto puede ir en 0). Si algo no cuadra, se anota sin pelearlo hoy.",
-    answerHint:
-      "Preferible contrastar documento. Si no hay acta a mano, déjalo declarado y marca la fuente.",
-  },
-  {
-    domain: "prestamos",
-    item_key: "deuda_socios",
-    label: "Préstamos de socios",
-    ask: "¿Qué aportes de socios se acordaron como préstamo a devolver (no como capital)?",
-    answerMode: "list",
-    expect: "Un renglón por préstamo/socio. Esto no es la participación accionaria.",
-    answerHint:
-      "Aunque sea verbal o a medias, listarlo protege a quien puso la plata — incluido quien entrega hoy.",
-  },
-  {
-    domain: "prestamos",
-    item_key: "otras_deudas_financieras",
-    label: "Otras deudas financieras",
-    ask: "¿Hay créditos bancarios u otras deudas financieras?",
-    answerMode: "list",
-    expect: "Si hay, lista acreedor + saldo; si no, “ninguno” con 0.",
-  },
-  {
-    domain: "prestamos",
-    item_key: "aportes_sin_clasificar",
-    label: "Aportes sin clasificar",
-    ask: "¿Hay plata de socios cuyo carácter (capital vs préstamo) aún no está claro?",
-    answerMode: "list",
-    expect:
-      "Un renglón por aporte ambiguo + nota de qué se sabe. Dejar la ambigüedad escrita evita pelea después.",
-    answerHint:
-      "No hay que resolverlo hoy: hay que nombrarlo. Eso protege a todos los socios.",
-  },
-  {
-    domain: "personal",
-    item_key: "costo_personal_mensual",
-    label: "Costo de personal",
-    ask: "¿Cuánto sale al mes el personal administrativo (y lo que impacte caja admin)?",
-    answerMode: "single",
-    expect: "Monto mensual aproximado. Si es 0 o mínimo, dilo; no inventes.",
-    answerHint:
-      "Candela no es nómina completa: buscamos lo que afecta la caja administrativa.",
-  },
-  {
-    domain: "personal",
-    item_key: "acuerdos_personales",
-    label: "Acuerdos especiales de pago",
-    ask: "¿Hay pagos fijos o % a personas fuera de la nómina formal?",
-    answerMode: "list",
-    expect:
-      "Persona/rol + monto o % + frecuencia. Incluye acuerdos con chef, socios u otros si aplican.",
-    answerHint:
-      "Tema sensible: se lista con respeto. Si no hay, “ninguno” con 0.",
-  },
-  {
-    domain: "gastos",
-    item_key: "gasto_mensual_actual",
-    label: "Gasto mensual",
-    ask: "¿Cuáles son los gastos fijos mensuales para seguir abiertos?",
-    answerMode: "list",
-    expect:
-      "Ideal: renglones (arriendo, servicios, software…). Si solo hay un total, ponlo en monto.",
-    answerHint:
-      "Piensa en “qué hay que pagar sí o sí”, no solo en gastos de oficina.",
-  },
-  {
-    domain: "presupuesto",
-    item_key: "presupuesto_minimo_viable",
-    label: "Mínimo para operar",
-    ask: "Con lo que conoces del día a día, ¿cuál es el mínimo mensual para no parar?",
-    answerMode: "single",
-    expect: "Un número estimado o acordado. Puede quedar declarado.",
-    answerHint: "Es planificación conjunta, no un examen de la gestión anterior.",
-  },
-  {
-    domain: "tributario",
-    item_key: "obligaciones_tributarias",
-    label: "Impuestos pendientes",
-    ask: "¿Qué impuestos están pendientes y por cuánto — o quién lo sabe?",
-    answerMode: "list",
-    expect:
-      "Un renglón por obligación (IVA, retefuente, etc.) o nota con el contador a consultar.",
-    answerHint:
-      "Si no lo manejabas tú: anota quién sí y qué crees que está pendiente. “No sé” con fuente es mejor que inventar.",
-  },
-  {
-    domain: "tributario",
-    item_key: "sanciones_acuerdos",
-    label: "Sanciones o acuerdos",
-    ask: "¿Hay sanciones, acuerdos de pago o saldos a favor?",
-    answerMode: "list",
-    expect:
-      "Lista cada uno; si no hay o no se sabe, “ninguno / preguntar a contador” con 0 y nota.",
-  },
-  {
-    domain: "contratos",
-    item_key: "compromisos_contratos",
-    label: "Contratos vigentes",
-    ask: "¿Qué contratos o compromisos (aunque sean de palabra) siguen vivos?",
-    answerMode: "list",
-    expect:
-      "Un renglón por compromiso (arriendo, gas, internet…). Monto = canon si aplica; vencimiento en la nota.",
-    answerHint: "Lo verbal también cuenta si afecta operación o caja.",
-  },
-  {
-    domain: "sst",
-    item_key: "sst_costo",
-    label: "SST / ARL",
-    ask: "¿Cuánto cuesta o qué compromiso de SST/ARL se entrega?",
-    answerMode: "single",
-    expect:
-      "Monto aproximado o 0 si solo hay papeles / queda pendiente (detalla en notas).",
-  },
+  // ——— 1. Documentos ———
   {
     domain: "documentos",
     item_key: "documentos_entregados",
@@ -429,9 +163,9 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     ask: "¿Qué papeles oficiales se entregan hoy — y cuáles faltan?",
     answerMode: "docs",
     expect:
-      "Lista RUT, Cámara, estatutos, poderes… El monto puede ir en 0. Anota también lo que no se entrega hoy.",
+      "Un renglón por documento: RUT, Cámara, estatutos, actas, poderes, contratos de arriendo… Monto 0.",
     answerHint:
-      "Es un checklist, no un interrogatorio. Lo faltante queda pendiente explícito para los socios.",
+      "Lista también lo que NO se entrega hoy. Eso deja pendientes explícitos.",
   },
   {
     domain: "documentos",
@@ -440,58 +174,335 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     ask: "¿Qué accesos administrativos se entregan hoy?",
     answerMode: "docs",
     expect:
-      "Banco, correo, DIAN, cloud, pasarelas/datáfonos, drive, etc. Monto en 0.",
+      "Banco, correo empresa, DIAN, drive/cloud, pasarelas, apps de domicilio, POS admin si aplica. Monto 0.",
     answerHint:
-      "Sin accesos la nueva admin no opera. Lista también lo que aún no se entrega.",
+      "Sin esto, los socios siguen dependiendo de un solo puente.",
+  },
+  {
+    domain: "documentos",
+    item_key: "reportes_entregados",
+    label: "Reportes y archivos de números",
+    ask: "¿Qué Excel, reportes o carpetas de números se entregan (aunque estén incompletos)?",
+    answerMode: "docs",
+    expect:
+      "Presupuestos, flujos, listados de CxP, extractos, reportes de venta. Monto 0.",
+    answerHint:
+      "Entregar lo que hay, aunque no esté perfecto, gana confianza.",
+  },
+
+  // ——— 2. Activos ———
+  {
+    domain: "activos",
+    item_key: "activos_cocina_barra",
+    label: "Equipos cocina y barra",
+    ask: "¿Qué equipos de cocina y de barra (tragos) se reciben?",
+    answerMode: "list",
+    expect:
+      "Solo máquinas/muebles de producir: plancha, freidora, neveras, estación de tragos… Monto opcional.",
+    answerHint:
+      "No mezclar con mesas/datáfonos del salón — eso va en la siguiente pregunta.",
+  },
+  {
+    domain: "activos",
+    item_key: "activos_salon_otros",
+    label: "Salón y servicio",
+    ask: "¿Qué hay en el salón o para atender clientes (muebles, datáfonos, etc.)?",
+    answerMode: "list",
+    expect: "Mesas, sillas, TV, datáfonos, cámaras… Monto opcional.",
+    answerHint:
+      "No mezclar con neveras/freidoras — eso va en cocina y barra.",
+  },
+
+  // ——— 3. Inventario ———
+  {
+    domain: "inventario",
+    item_key: "inventario_alimentos",
+    label: "Alimentos",
+    ask: "¿Cuánto estimas el inventario de alimentos hoy (incluye soft drinks / aguas)?",
+    answerMode: "single",
+    expect:
+      "Orden de magnitud en COP. Puedes anclarte en compras de la última semana.",
+    answerHint: "No es food cost: es foto de apertura para socios.",
+  },
+  {
+    domain: "inventario",
+    item_key: "inventario_licores",
+    label: "Licores y tragos",
+    ask: "¿Cuánto estimas el inventario de licores / barra de tragos hoy?",
+    answerMode: "list",
+    expect:
+      "Ideal: renglones por categoría (tequila, mezcal, cerveza…). Si solo hay un total, úsalo.",
+    answerHint:
+      "Distinto de equipos de barra (esas son máquinas). Aquí es el stock.",
+  },
+
+  // ——— 4. Contratos ———
+  {
+    domain: "contratos",
+    item_key: "compromisos_contratos",
+    label: "Contratos vigentes",
+    ask: "¿Qué contratos o compromisos del local siguen vivos?",
+    answerMode: "list",
+    expect:
+      "Arriendo, gas, internet, aseo, apps (Rappi/iFood/etc.), mantenimiento. Canon en monto; vencimiento en nota.",
+    answerHint: "Incluye lo de palabra si afecta operación o caja.",
+  },
+
+  // ——— 5. Operación ———
+  {
+    domain: "operacion",
+    item_key: "ventas_por_canal",
+    label: "Ventas por canal",
+    ask: "En el mes más reciente que recuerdes, ¿cuánto se vendió por canal?",
+    answerMode: "list",
+    expect:
+      "Un renglón por canal: salón, domicilio, Rappi/apps, tragos si se separa. Monto = venta del mes (o promedio).",
+    answerHint:
+      "Si no hay reporte formal, declara estimado y anota la fuente.",
+  },
+  {
+    domain: "operacion",
+    item_key: "acciones_comerciales",
+    label: "Acciones para vender",
+    ask: "¿Qué acciones concretas se han hecho en los últimos 60–90 días para subir ventas?",
+    answerMode: "list",
+    expect:
+      "Promos, menú, redes, alianzas, horarios, eventos… Un renglón por acción. Monto = costo si hubo.",
+    answerHint:
+      "Si la respuesta es “casi nada”, también es información valiosa.",
+  },
+
+  // ——— 6. Personal ———
+  {
+    domain: "personal",
+    item_key: "costo_personal_operativo",
+    label: "Costo gente operativa",
+    ask: "¿Cuánto sale al mes cocina, barra y servicio (aprox.)?",
+    answerMode: "list",
+    expect:
+      "Renglones por rol o turno (cocina, meseros, bartender…). Si solo hay un total, un renglón “operativo”.",
+  },
+  {
+    domain: "personal",
+    item_key: "acuerdos_personales",
+    label: "Acuerdos especiales",
+    ask: "¿Hay pagos fijos, % o acuerdos fuera de la nómina formal?",
+    answerMode: "list",
+    expect: "Persona/rol + monto o % + frecuencia. Incluye acuerdos con chef/socios si aplican.",
+    answerHint: "Tema sensible: se lista para claridad, no para atacar.",
+  },
+
+  // ——— 7. Gastos ———
+  {
+    domain: "gastos",
+    item_key: "gasto_fijos_local",
+    label: "Fijos del local",
+    ask: "¿Cuáles son los gastos fijos mensuales de esta única sede?",
+    answerMode: "list",
+    expect:
+      "Arriendo, servicios, gas, internet, aseo, alarmas… Un renglón por concepto. No pongas insumos ni licores (eso es costo).",
+    answerHint:
+      "Gasto = lo que se paga para operar el local (sin ser la mercancía que se vende).",
+  },
+  {
+    domain: "gastos",
+    item_key: "gasto_holding",
+    label: "Desglose Holding",
+    ask: "En la línea Holding del presupuesto, ¿qué gastos exactos entran y por cuánto?",
+    answerMode: "list",
+    expect:
+      "Obligatorio desglosar: sueldos admin, honorarios, software, contador, “oficina”, otros.",
+    answerHint:
+      "Un total llamado Holding sin detalle es justo lo que genera alerta en socios.",
+  },
+  {
+    domain: "gastos",
+    item_key: "gasto_publicidad",
+    label: "Desglose Publicidad",
+    ask: "¿Qué se ha gastado en publicidad y qué se hizo a cambio?",
+    answerMode: "list",
+    expect:
+      "Un renglón por gasto: meta ads, diseñador, pauta, influencers… Monto + en la nota qué se vio a cambio.",
+    answerHint:
+      "Si hubo plata pero no se ven acciones, anótalo: “pagado / sin evidencia”.",
+  },
+
+  // ——— 8. Presupuesto (enfoque: gastos, no costos) ———
+  {
+    domain: "presupuesto",
+    item_key: "presupuesto_lineas",
+    label: "Líneas de gasto del presupuesto",
+    ask: "Del presupuesto actual, ¿cuáles son las líneas de gasto y sus montos?",
+    answerMode: "list",
+    expect:
+      "Solo gastos: Holding, Publicidad, arriendo, servicios, admin… Idealmente del mismo archivo que se entrega.",
+    answerHint:
+      "Insumos, food cost y licores de reventa son costo (van con inventario/compras), no gasto. Si salen en el Excel, no los copies aquí: anota en nota “hay línea de costo aparte”.",
+  },
+
+  // ——— 9. CxC ———
+  {
+    domain: "cxc",
+    item_key: "cuentas_por_cobrar",
+    label: "Quién nos debe",
+    ask: "¿Quién le debe a Candela y cuánto?",
+    answerMode: "list",
+    expect:
+      "Un renglón por tercero. Incluye eventos, vales y cobros de palabra. Si no hay, “ninguno” con 0.",
+  },
+
+  // ——— 10. CxP ———
+  {
+    domain: "cxp",
+    item_key: "cuentas_por_pagar",
+    label: "Deuda a proveedores",
+    ask: "¿Qué proveedores tienen saldo y cuáles urge pagar para no parar?",
+    answerMode: "list",
+    expect:
+      "Un renglón por proveedor. En la nota: urgente / de palabra / con factura.",
+    answerHint: "Continuidad del local, no juicio de la gestión.",
+  },
+
+  // ——— 11. Tributario ———
+  {
+    domain: "tributario",
+    item_key: "obligaciones_tributarias",
+    label: "Impuestos pendientes",
+    ask: "¿Qué impuestos, sanciones o acuerdos de pago están pendientes?",
+    answerMode: "list",
+    expect:
+      "IVA, retefuente, sanciones, acuerdos… o renglón “contador” con nota de contacto.",
+  },
+
+  // ——— 12. Tesorería ———
+  {
+    domain: "tesoreria",
+    item_key: "bancos",
+    label: "Bancos",
+    ask: "¿En qué bancos hay plata y cuánto en cada uno a la fecha de corte?",
+    answerMode: "list",
+    expect: "Un renglón por cuenta. Ideal con extracto o captura.",
+    answerHint:
+      "Si no hay extracto hoy, declara el saldo y anota la fuente.",
+  },
+  {
+    domain: "tesoreria",
+    item_key: "caja",
+    label: "Caja del local",
+    ask: "¿Cuánto efectivo hay hoy en caja / caja fuerte del restaurante?",
+    answerMode: "single",
+    expect: "Conteo juntos o estimado. Si queda pendiente, anótalo.",
+  },
+  {
+    domain: "tesoreria",
+    item_key: "pasarelas",
+    label: "Datáfonos y pasarelas",
+    ask: "¿Qué datáfonos o pasarelas tienen saldo por consignar?",
+    answerMode: "list",
+    expect: "Bold, PayU, datáfono banco, etc. Si no hay, “ninguno” con 0.",
+  },
+
+  // ——— 13. Capital ———
+  {
+    domain: "capital",
+    item_key: "capital_inyectado_por_socio",
+    label: "Capital ya inyectado por socio",
+    ask: "¿Cuánto capital ha inyectado cada socio hasta hoy?",
+    answerMode: "list",
+    expect:
+      "Un renglón por socio (Grupo A, Emilio, Steven, Persona X, Esteban…). Monto = lo efectivamente aportado.",
+    answerHint:
+      "Si algún renglón es “no sé / solo me lo dijeron”, márcalo declarado.",
+  },
+  {
+    domain: "capital",
+    item_key: "capital_pendiente_por_socio",
+    label: "Capital pendiente por socio",
+    ask: "De lo comprometido, ¿cuánto falta por inyectar cada socio?",
+    answerMode: "list",
+    expect:
+      "Mismos socios. Monto = faltante. En nota: si estaba condicionado a reportes/claridad.",
+  },
+  {
+    domain: "capital",
+    item_key: "capital_destino_inyeccion",
+    label: "A dónde fue el capital inyectado",
+    ask: "Del capital que sí entró, ¿a qué se destinó?",
+    answerMode: "list",
+    expect:
+      "Un renglón por destino: proveedores, arriendo, nómina, Holding, publicidad, caja, deudas…",
+    answerHint:
+      "Sin este desglose, pedir más capital suena a pozo sin fondo.",
   },
   {
     domain: "capital",
     item_key: "capital_saneamiento",
-    label: "Capital para sanear",
-    ask: "Para no parar y poner al día lo urgente, ¿qué monto estimas que hace falta?",
+    label: "Capital para sanear ya",
+    ask: "Para no parar y poner al día lo urgente, ¿qué monto hace falta ahora?",
     answerMode: "single",
     expect:
-      "Estimado anclado a deudas críticas. Puede ser un rango explicado en notas.",
-    answerHint:
-      "Es plan hacia adelante, no una factura de la gestión anterior.",
+      "Estimado anclado a CxP crítica / arriendo / caja. Incluye el colchón de las próximas semanas si aplica.",
   },
   {
     domain: "capital",
-    item_key: "capital_funcionamiento",
-    label: "Capital para operar",
-    ask: "¿Qué colchón de caja necesitan las próximas 4–8 semanas?",
-    answerMode: "single",
-    expect: "Monto estimado para seguir operando día a día.",
-    answerHint: "Piensa en nómina crítica, proveedores y imprevistos cercanos.",
+    item_key: "claridad_para_refinanciar",
+    label: "Qué falta para refinanciar con tranquilidad",
+    ask: "¿Qué información o soportes faltan para que un socio pueda refinanciar con tranquilidad?",
+    answerMode: "list",
+    expect:
+      "Un renglón por requisito: extractos, CxP, desglose Holding, evidencia de publicidad… Monto 0.",
   },
+
+  // ——— 14. Préstamos ———
+  {
+    domain: "prestamos",
+    item_key: "deuda_socios",
+    label: "Préstamos y aportes a devolver",
+    ask: "¿Qué plata de socios (u otros) se acordó devolver — o aún no está claro si es capital o préstamo?",
+    answerMode: "list",
+    expect:
+      "Socio/acreedor + monto + en nota: préstamo / banco / carácter aún ambiguo. Si no hay, “ninguno” con 0.",
+    answerHint: "Listarlo protege a quien puso la plata.",
+  },
+
+  // ——— 15. Socios ———
+  {
+    domain: "socios",
+    item_key: "composicion_accionaria",
+    label: "Participación",
+    ask: "Confirmemos juntos: ¿quiénes son los socios y con qué %?",
+    answerMode: "list",
+    expect:
+      "Renglones esperados: Grupo A 20%, Emilio 20%, Steven 30%, Persona X 20%, Esteban 10% (ajustar si el acta dice otra cosa). % en la nota; monto 0.",
+    answerHint:
+      "Contrastar con acta/Cámara. Si no cuadra, se anota sin pelearlo hoy.",
+  },
+  {
+    domain: "socios",
+    item_key: "informacion_solo_puente",
+    label: "Información que solo llega por un puente",
+    ask: "¿Qué datos de socios o aportes hoy solo se conocen porque Emilio los dice?",
+    answerMode: "list",
+    expect:
+      "Ej. “si Grupo A ya puso”, “extractos que solo él tiene”. Monto 0; detalle en nota.",
+    answerHint:
+      "El objetivo no es acusar: es dejar de depender de un solo puente.",
+  },
+
+  // ——— 16. Otros ———
   {
     domain: "otros",
     item_key: "otros_riesgos",
-    label: "Riesgos y promesas",
-    ask: "¿Hay algo que la nueva administración deba saber para no sorprenderse?",
+    label: "Riesgos, promesas y contactos delicados",
+    ask: "¿Hay algo (riesgo, promesa o contacto) que la nueva admin deba saber para no sorprenderse?",
     answerMode: "list",
     expect:
-      "Riesgos, promesas hechas, temas sensibles o “cosas que solo quien operaba sabe”. Monto 0 si no aplica dinero.",
-    answerHint:
-      "Dejarlo escrito evita pelea mañana. Si no hay nada, “ninguno” con 0.",
-  },
-  {
-    domain: "otros",
-    item_key: "relaciones_clave",
-    label: "Relaciones clave",
-    ask: "¿Hay proveedores, contactos o personas clave con las que hay que manejar el cambio con cuidado?",
-    answerMode: "list",
-    expect:
-      "Nombre + por qué importa + cómo se sugiere el empalme. Monto 0 salvo acuerdo económico.",
-    answerHint:
-      "Ayuda a no romper relaciones operativas mientras cambia la administración.",
+      "Riesgos, promesas, proveedores/arrendador delicados. Monto 0 si no hay plata.",
   },
 ];
 
 export function domainLabel(domain: string): string {
-  return (
-    HANDOVER_DOMAINS.find((d) => d.value === domain)?.label ?? domain
-  );
+  return HANDOVER_DOMAINS.find((d) => d.value === domain)?.label ?? domain;
 }
 
 export function domainMeta(domain: string) {
@@ -503,7 +514,27 @@ export function itemGuide(itemKey: string) {
 }
 
 export function itemAsk(itemKey: string, fallbackLabel: string): string {
-  return itemGuide(itemKey)?.ask ?? fallbackLabel;
+  const guide = itemGuide(itemKey);
+  if (guide?.ask) return guide.ask;
+  // Preguntas viejas de catálogos anteriores: guía clara + opción de quitarlas
+  const legacy: Record<string, string> = {
+    activos_administrativos:
+      "¿Qué equipos importantes se reciben? (pregunta antigua — quítala si ya tienes cocina/barra y salón)",
+    inventario_otros:
+      "¿Hay otro inventario relevante? (pregunta antigua — puedes quitarla)",
+    inventario_bebidas:
+      "Bebidas soft (pregunta antigua — ya va dentro de alimentos)",
+    inventario_empaques:
+      "Empaques (pregunta antigua — poco crítica; puedes quitarla)",
+    ticket_y_volumen:
+      "Ticket y ritmo (pregunta antigua — se cubre en ventas por canal)",
+    diagnostico_no_da:
+      "Por qué “no da” (pregunta antigua — se cubre en ventas/acciones)",
+    costo_personal_mensual:
+      "Admin/Holding gente (pregunta antigua — va en desglose Holding)",
+    sst_costo: "SST/ARL (pregunta antigua — anótalo en “lo que falta decir”)",
+  };
+  return legacy[itemKey] ?? fallbackLabel;
 }
 
 export function itemExpect(itemKey: string): string | null {
@@ -518,7 +549,411 @@ export function itemAnswerHint(itemKey: string): string | null {
   return itemGuide(itemKey)?.answerHint ?? null;
 }
 
-/** Evita mostrar guías viejas que se guardaron por error en comments. */
+/**
+ * Renglones mínimos prearmados para la indagación en vivo.
+ * El facilitador marca entregado/falta, montos o notas; no parte de cero.
+ */
+export const HANDOVER_SEED_LINES: Record<string, string[]> = {
+  // Documentos
+  documentos_entregados: [
+    "RUT",
+    "Cámara de Comercio (certificado existencia)",
+    "Estatutos / reforma estatutaria",
+    "Acta de composición societaria / participación",
+    "Contrato de arriendo del local",
+    "Poderes / representaciones legales",
+    "Contratos con proveedores clave",
+    "Pólizas (si aplican)",
+  ],
+  accesos_claves: [
+    "Banca en línea (usuario/token)",
+    "Correo corporativo",
+    "DIAN / factura electrónica",
+    "Drive / nube de archivos",
+    "Pasarelas / datáfonos (Bold, banco, etc.)",
+    "Apps de domicilio (Rappi/iFood/admin)",
+    "POS / sistema de ventas (acceso admin)",
+    "Redes sociales del local",
+  ],
+  reportes_entregados: [
+    "Presupuesto vigente (Excel/PDF)",
+    "Flujo de caja / control de gastos",
+    "Listado CxP proveedores",
+    "Extractos bancarios recientes",
+    "Reporte de ventas (último mes)",
+    "Detalle Holding",
+    "Detalle Publicidad / pauta",
+  ],
+
+  // Activos
+  activos_cocina_barra: [
+    "Plancha / freidora",
+    "Neveras / congeladores",
+    "Campana / extracción",
+    "Estación de preparación",
+    "Estación de tragos / barra",
+    "Licuadoras / equipos menores cocina",
+  ],
+  activos_salon_otros: [
+    "Mesas y sillas",
+    "Datáfonos",
+    "TV / audio",
+    "Cámaras de seguridad",
+    "Caja registradora / impresora",
+    "Aire acondicionado",
+  ],
+
+  // Inventario
+  inventario_licores: [
+    "Tequila / mezcal",
+    "Cerveza",
+    "Licores / destilados otros",
+    "Vinos / espumosos (si aplica)",
+    "Insumos de coctelería",
+  ],
+
+  // Contratos
+  compromisos_contratos: [
+    "Arriendo del local",
+    "Gas",
+    "Energía / agua",
+    "Internet / telefonía",
+    "Aseo / residuos",
+    "Apps de domicilio (comisión/contrato)",
+    "Mantenimiento equipos",
+  ],
+
+  // Operación
+  ventas_por_canal: [
+    "Salón",
+    "Domicilio propio",
+    "Apps (Rappi/iFood/etc.)",
+    "Tragos / barra",
+    "Eventos / otros",
+  ],
+  acciones_comerciales: [
+    "Promos de menú / combos",
+    "Pauta en redes / Meta Ads",
+    "Influencers / canjes",
+    "Cambios de horario o carta",
+    "Alianzas / eventos",
+    "Ninguna acción relevante (anotar si aplica)",
+  ],
+
+  // Personal
+  costo_personal_operativo: [
+    "Cocina",
+    "Barra / bartender",
+    "Meseros / servicio",
+    "Domicilios (si aplica)",
+    "Turnos extras / dominicales",
+  ],
+  acuerdos_personales: [
+    "Acuerdo chef / cocina",
+    "Acuerdo socio-admin",
+    "Porcentajes / comisiones",
+    "Ninguno (anotar si aplica)",
+  ],
+
+  // Gastos
+  gasto_fijos_local: [
+    "Arriendo",
+    "Energía",
+    "Agua",
+    "Gas",
+    "Internet",
+    "Aseo / vigilancia",
+    "Seguros / alarmas",
+  ],
+  gasto_holding: [
+    "Sueldos / honorarios admin",
+    "Contador / externos",
+    "Software / herramientas",
+    "Oficina / imprevistos Holding",
+    "Otros Holding",
+  ],
+  gasto_publicidad: [
+    "Pauta digital (Meta/Google/etc.)",
+    "Diseño / agencia",
+    "Influencers / canjes",
+    "Impresos / material",
+    "Otros publicidad",
+  ],
+
+  // Presupuesto (solo gastos)
+  presupuesto_lineas: [
+    "Holding",
+    "Publicidad",
+    "Arriendo",
+    "Servicios (energía/gas/agua/internet)",
+    "Nómina operativa (gasto de gente)",
+    "Otros gastos",
+  ],
+
+  // CxC / CxP
+  cuentas_por_cobrar: [
+    "Cliente / convenio 1",
+    "Evento / vale",
+    "Cobro de palabra (si hay)",
+    "Ninguno (si aplica)",
+  ],
+  cuentas_por_pagar: [
+    "Proveedor alimentos",
+    "Proveedor licores",
+    "Proveedor empaques",
+    "Urgente (sin esto para cocina/barra)",
+    "De palabra / sin factura",
+  ],
+
+  // Tributario
+  obligaciones_tributarias: [
+    "IVA",
+    "Retención en la fuente",
+    "ICA / otros",
+    "Sanción / acuerdo de pago",
+    "Preguntar a contador (si no se sabe)",
+  ],
+
+  // Tesorería
+  bancos: [
+    "Cuenta principal (banco)",
+    "Cuenta secundaria (si hay)",
+  ],
+  pasarelas: [
+    "Datáfono banco",
+    "Bold / pasarela",
+    "Otro medio",
+    "Ninguno pendiente",
+  ],
+
+  // Capital
+  capital_inyectado_por_socio: [
+    "Grupo A",
+    "Emilio",
+    "Steven",
+    "Persona X",
+    "Esteban",
+  ],
+  capital_pendiente_por_socio: [
+    "Grupo A",
+    "Emilio",
+    "Steven",
+    "Persona X",
+    "Esteban",
+  ],
+  capital_destino_inyeccion: [
+    "Proveedores / CxP",
+    "Arriendo",
+    "Nómina",
+    "Holding",
+    "Publicidad",
+    "Caja / operación",
+    "Otro destino",
+  ],
+  claridad_para_refinanciar: [
+    "Extractos bancarios al corte",
+    "CxP completa con soportes",
+    "Desglose Holding",
+    "Evidencia de Publicidad (qué se pagó vs qué se hizo)",
+    "Ventas por canal último mes",
+    "Accesos compartidos (banco/drive)",
+    "Confirmación aportes Grupo A y Persona X",
+  ],
+
+  // Préstamos
+  deuda_socios: [
+    "Préstamo Emilio",
+    "Préstamo Steven",
+    "Crédito bancario / otro",
+    "Aporte aún ambiguo (capital vs préstamo)",
+    "Ninguno (si aplica)",
+  ],
+
+  // Socios
+  composicion_accionaria: [
+    "Grupo A (20%)",
+    "Emilio (20%)",
+    "Steven (30%)",
+    "Persona X (20%)",
+    "Esteban (10%)",
+  ],
+  informacion_solo_puente: [
+    "Si Grupo A ya inyectó todo lo comprometido",
+    "Si Persona X ya inyectó todo lo comprometido",
+    "Extractos / reportes que solo maneja Emilio",
+    "Acuerdos verbales con proveedores",
+    "Otro dato solo oral",
+  ],
+
+  // Otros
+  otros_riesgos: [
+    "Riesgo operativo",
+    "Promesa hecha a tercero",
+    "Contacto delicado (arrendador / proveedor)",
+    "Tema sensible a manejar",
+    "Ninguno adicional",
+  ],
+};
+
+export function itemSeedLines(itemKey: string): string[] {
+  return HANDOVER_SEED_LINES[itemKey] ?? [];
+}
+
+/**
+ * Preguntas que ya no van en la guía de reunión (solapes o poco útiles en vivo).
+ * Al preparar la sesión se limpian de la base.
+ */
+export const OBSOLETE_HANDOVER_KEYS = [
+  // Catálogos viejos
+  "activos_administrativos",
+  "equipos_importantes",
+  "inventario_inicial",
+  "inventario_inicial_resumen",
+  "inventario_otros",
+  "costo_personal_mensual_old",
+  // Recorte reunión: solapes / detalle que se captura en otra pregunta
+  "inventario_bebidas",
+  "inventario_empaques",
+  "ticket_y_volumen",
+  "diagnostico_no_da",
+  "costo_personal_mensual",
+  "gasto_otros_variables",
+  "presupuesto_minimo_viable",
+  "cxc_en_el_aire",
+  "cxp_critica",
+  "cxp_verbales",
+  "sanciones_acuerdos",
+  "sst_costo",
+  "otros_saldos",
+  "liquidez_total",
+  "capital_funcionamiento",
+  "otras_deudas_financieras",
+  "aportes_sin_clasificar",
+  "relaciones_clave",
+] as const;
+
+const OBSOLETE_LABEL_PATTERNS = [
+  /activos?\s*administrativ/i,
+  /equipos?\s*importantes?/i,
+  /inventario\s*inicial/i,
+];
+
+const CURRENT_HANDOVER_KEYS = new Set(
+  DEFAULT_HANDOVER_ITEMS.map((item) => item.item_key),
+);
+
+export function isCurrentHandoverKey(itemKey: string): boolean {
+  return CURRENT_HANDOVER_KEYS.has(itemKey);
+}
+
+export function isObsoleteHandoverKey(itemKey: string): boolean {
+  const key = itemKey.trim().toLowerCase();
+  if ((OBSOLETE_HANDOVER_KEYS as readonly string[]).includes(key)) return true;
+  // Variantes de slug (guiones, espacios, etc.)
+  const normalized = key.replace(/[\s-]+/g, "_");
+  if ((OBSOLETE_HANDOVER_KEYS as readonly string[]).includes(normalized)) {
+    return true;
+  }
+  return (
+    normalized.includes("activos_administrativ") ||
+    normalized.includes("equipos_importantes") ||
+    normalized.includes("inventario_inicial")
+  );
+}
+
+export function isObsoleteHandoverItem(item: {
+  item_key: string;
+  label?: string | null;
+}): boolean {
+  if (isObsoleteHandoverKey(item.item_key)) return true;
+  const label = item.label?.trim() ?? "";
+  if (!label) return false;
+  return OBSOLETE_LABEL_PATTERNS.some((re) => re.test(label));
+}
+
+/** Pregunta que ya no pertenece a la guía actual (residuo o catálogo viejo). */
+export function isRetiredHandoverItem(item: {
+  item_key: string;
+  label?: string | null;
+}): boolean {
+  return (
+    isObsoleteHandoverItem(item) || !isCurrentHandoverKey(item.item_key)
+  );
+}
+
+/**
+ * Notas aclaratorias con ejemplos básicos (lenguaje de restaurante, no jerga).
+ * Sirven para que el facilitador y quien responde no mezclen temas.
+ */
+export const HANDOVER_EXAMPLES: Record<string, string> = {
+  documentos_entregados:
+    "Ejemplo: RUT → entregado; estatutos → faltan. En la nota de cada renglón escribe entregado / falta / parcial. No es lista de equipos ni de plata.",
+  accesos_claves:
+    "Ejemplo: banca en línea, correo @candela, drive de Excel, admin de Rappi. Si solo Emilio tiene el acceso, anótalo: así dejan de depender de un solo puente.",
+  reportes_entregados:
+    "Ejemplo: Excel del presupuesto, listado de deudas a proveedores, extracto del banco. Aunque esté incompleto o 'a medias', se lista.",
+  activos_cocina_barra:
+    "Solo lo que cocina o prepara tragos. Ejemplo: plancha, freidora, nevera, estación de barra, licuadora. No pongas mesas, sillas ni datáfonos (eso es la otra pregunta de este bloque).",
+  activos_salon_otros:
+    "Solo salón y servicio al cliente. Ejemplo: mesas, sillas, TV, datáfonos, cámaras. No pongas neveras ni freidoras (eso es cocina/barra).",
+  inventario_alimentos:
+    "Valor aproximado de lo que hay hoy para cocinar + soft drinks/aguas. Ejemplo: 'unos $X de la última compra'. No es conteo SKU del POS. El alcohol va en licores.",
+  inventario_licores:
+    "Botellas y stock de barra. Ejemplo: tequila, mezcal, cerveza. Es distinto de 'equipos de barra' (esas son máquinas/muebles).",
+  compromisos_contratos:
+    "Papeles o acuerdos vivos del local. Ejemplo: arriendo, gas, internet, contrato con Rappi. Si es de palabra, igual se lista.",
+  ventas_por_canal:
+    "Cuánto entró por cada forma de vender. Ejemplo: salón $X, Rappi $Y, tragos $Z. No es el inventario ni el gasto de publicidad.",
+  acciones_comerciales:
+    "Cosas concretas hechas para vender más. Ejemplo: promo 2x1, pauta en Instagram, cambio de carta. Si no se hizo casi nada, también se anota.",
+  costo_personal_operativo:
+    "Solo gente del local día a día. Ejemplo: cocina, meseros, bartender. El costo de admin/oficina NO va aquí: más adelante, en el bloque «En qué se gasta», pregunta «Desglose Holding».",
+  acuerdos_personales:
+    "Pagos especiales fuera de nómina formal. Ejemplo: % al chef, fijo a un socio. Si no hay, marca ninguno.",
+  gasto_fijos_local:
+    "Gasto fijo del local, no mercancía. Ejemplo: arriendo, luz, gas, internet. Insumos/tortillas/licores de reventa NO van aquí (son costo). Holding y publicidad tienen su propia pregunta.",
+  gasto_holding:
+    "Desglose de la línea Holding del presupuesto (gasto admin). Ejemplo: sueldo admin, contador, software. Si solo hay un total sin detalle, anótalo: eso es justo lo que genera desconfianza.",
+  gasto_publicidad:
+    "Gasto en pauta/diseño y qué se vio a cambio. Ejemplo: Meta Ads $X — sí hubo campaña / no se vio resultado. No es Holding ni food cost.",
+  presupuesto_lineas:
+    "Aquí solo gastos del presupuesto. Ejemplo: Holding $X, Publicidad $Y, Arriendo $Z. Insumos / food cost / licores de reventa = costo (no los listes aquí; ya se ven en inventario o compras).",
+  cuentas_por_cobrar:
+    "Quién le debe a Candela. Ejemplo: un evento, un convenio, cobro de palabra. No es lo que Candela debe a proveedores.",
+  cuentas_por_pagar:
+    "A quién le debe Candela. Ejemplo: proveedor de tortilla, de licores. En la nota marca si urge o si es solo de palabra.",
+  obligaciones_tributarias:
+    "Impuestos, sanciones o acuerdos. Ejemplo: IVA, retefuente. Si no lo maneja quien entrega, anota 'preguntar a contador'.",
+  bancos:
+    "Saldos en cuentas bancarias a la fecha de corte. Ejemplo: Bancolombia ahorros $X. Ideal con extracto o captura.",
+  caja:
+    "Efectivo físico del local hoy. Ejemplo: lo contado en caja fuerte. No es el saldo del banco.",
+  pasarelas:
+    "Plata en datáfonos/pasarelas por consignar. Ejemplo: Bold, datáfono banco. Si no hay, ninguno.",
+  capital_inyectado_por_socio:
+    "Cuánto puso cada socio de verdad. Ejemplo: Steven $X con transferencia. Distinto de 'préstamo a devolver' y de la participación %.",
+  capital_pendiente_por_socio:
+    "Cuánto falta por inyectar de lo comprometido. Ejemplo: Grupo A falta $Y (condicionado a claridad).",
+  capital_destino_inyeccion:
+    "A dónde se fue el capital que sí entró. Ejemplo: $ a proveedores, $ a Holding, $ a publicidad.",
+  capital_saneamiento:
+    "Plata que hace falta ahora para apagar incendios y operar unas semanas. Ejemplo: CxP crítica + arriendo + colchón corto.",
+  claridad_para_refinanciar:
+    "Checklist de lo que falta para que un socio financie con tranquilidad. Ejemplo: extractos, desglose Holding, evidencia de publicidad. Monto 0.",
+  deuda_socios:
+    "Plata a devolver (préstamo, banco) o aporte aún ambiguo capital vs préstamo. Ejemplo: Emilio prestó $X. No confundir con % de participación.",
+  composicion_accionaria:
+    "Quién es socio y con qué %. Ejemplo: Steven 30%, Emilio 20%… Contrastar con acta. No es cuánto dinero inyectaron.",
+  informacion_solo_puente:
+    "Datos que hoy solo se saben porque Emilio los cuenta. Ejemplo: 'si Grupo A ya puso'. El objetivo es volverlos documento o acceso compartido.",
+  otros_riesgos:
+    "Algo que pueda sorprender a la nueva admin. Ejemplo: promesa a un proveedor, arrendador delicado, riesgo de corte de servicio.",
+};
+
+export function itemExample(itemKey: string): string | null {
+  return HANDOVER_EXAMPLES[itemKey] ?? null;
+}
+
 export function sanitizeItemComments(
   itemKey: string,
   comments: string | null | undefined,
@@ -542,50 +977,40 @@ export function sanitizeItemComments(
     "Un solo monto del conteo físico del día.",
     "Respuesta: el número que salió al contar billetes y monedas.",
     "La respuesta es la lista de cuentas + saldos, no un solo número suelto.",
-    "Si no hay saldos pendientes, deja monto 0 o marca “Me lo dijeron” con nota “ninguno”.",
     "No dejes la pregunta en el aire: o listas saldos, o dejas explícito que no hay.",
     "Si no cuadra con la suma de arriba, explica la diferencia en las notas.",
     "La respuesta es la lista de deudores, no solo el total.",
     "Un monto estimado de apertura (no el inventario diario del POS).",
-    "Un renglón por equipo o grupo (neveras, freidoras, mobiliario).",
     "La respuesta es la lista de acreedores, no solo un total suelto.",
     "Aquí la respuesta es la lista de socios, no un valor en pesos.",
-    "Un monto mensual aproximado.",
-    "Un solo número acordado o estimado.",
     "La respuesta es el inventario de documentos, no un valor en pesos.",
-    "Un monto estimado de “apagar incendios”.",
-    "Un monto estimado de caja para seguir abiertos.",
-    "¿Cuánto efectivo contaron en caja / caja fuerte?",
-    "Además de bancos, caja y pasarelas, ¿hay otra plata?",
-    "¿A qué proveedores se les debe y cuánto a cada uno?",
-    "¿A qué socios se les debe por préstamos y cuánto?",
-    "¿Quiénes son los socios y con qué porcentaje?",
-    "¿Cuánto capital hace falta para poner al día deudas críticas?",
-    "¿Cuánto capital hace falta para operar el día a día?",
   ];
   if (polluted.includes(raw) || legacy.includes(raw)) return "";
   return comments ?? "";
 }
 
 export function verificationLabel(status: string): string {
-  if (status === "CONFIRMADO") return "Lo vi / tengo prueba";
-  if (status === "DECLARADO") return "Me lo dijeron";
-  return "Aún no";
+  if (status === "CONFIRMADO") return "Con prueba";
+  if (status === "DECLARADO") return "Sin prueba";
+  return "Pendiente";
 }
 
 export function verificationHint(status: string): string {
-  if (status === "CONFIRMADO") return "Hay extracto, factura, acta u otro soporte.";
+  if (status === "CONFIRMADO")
+    return "Hay extracto, factura, acta u otro soporte.";
   if (status === "DECLARADO")
     return "Hay cifra o relato, todavía sin soporte. Es válido y queda en el acta.";
-  return "Todavía no se revisó este punto en la reunión.";
+  return "Aún no se indaga este punto; se puede saltar y volver después.";
 }
 
 export function slugifyItemKey(label: string): string {
-  return label
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_|_$/g, "")
-    .slice(0, 60) || `item_${Date.now()}`;
+  return (
+    label
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_|_$/g, "")
+      .slice(0, 60) || `item_${Date.now()}`
+  );
 }

@@ -1,11 +1,12 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Badge, Card, PageIntro, StatCard } from "@/components/ui/primitives";
-import { formatCOP } from "@/lib/money";
+import { formatCOP, money, apDocumentBalance } from "@/lib/money";
 import { formatDateCO } from "@/lib/dates";
 import { getOrgContext } from "@/lib/org-context";
 import { createClient } from "@/lib/supabase/server";
 import { summarizeHandoverQuality } from "@/lib/handover";
 import { sumOpeningBalances } from "@/lib/treasury";
+import { computeLoanKpis, computeFundingBag } from "@/lib/loans";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 
@@ -20,13 +21,19 @@ export default async function InicioPage() {
   };
   let handoverStatus: string | null = null;
   let liquidity = "0.00";
+  let cxpTotal = money(0);
+  let loanDebt = money(0);
+  let capitalAvailable = money(0);
+  let monthlyExpense = money(0);
 
   if (ctx.organization) {
     const supabase = await createClient();
+    const orgId = ctx.organization.id;
+
     const { data: session } = await supabase
       .from("handover_sessions")
       .select("id, status")
-      .eq("organization_id", ctx.organization.id)
+      .eq("organization_id", orgId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -53,7 +60,7 @@ export default async function InicioPage() {
     let snapQuery = supabase
       .from("bank_balance_snapshots")
       .select("opening_balance, bank_account_id, cutoff_date")
-      .eq("organization_id", ctx.organization.id)
+      .eq("organization_id", orgId)
       .is("deleted_at", null);
 
     if (cutoff) {
@@ -64,6 +71,88 @@ export default async function InicioPage() {
     if (snaps && snaps.length > 0) {
       liquidity = sumOpeningBalances(snaps.map((s) => s.opening_balance));
     }
+
+    const { data: apDocs } = await supabase
+      .from("accounts_payable_documents")
+      .select("original_amount, paid_amount, status")
+      .eq("organization_id", orgId)
+      .is("deleted_at", null);
+    for (const d of apDocs ?? []) {
+      if (d.status === "ANULADA") continue;
+      cxpTotal = cxpTotal.plus(
+        apDocumentBalance(d.original_amount, d.paid_amount),
+      );
+    }
+
+    const { data: loans } = await supabase
+      .from("loans")
+      .select("id, approved_principal, status")
+      .eq("organization_id", orgId)
+      .is("deleted_at", null);
+    const activeLoans = (loans ?? []).filter((l) => l.status !== "ANULADO");
+    const loanIds = activeLoans.map((l) => l.id);
+    if (loanIds.length > 0) {
+      const [{ data: disbs }, { data: pays }] = await Promise.all([
+        supabase
+          .from("loan_disbursements")
+          .select("loan_id, amount")
+          .eq("organization_id", orgId)
+          .is("deleted_at", null)
+          .in("loan_id", loanIds),
+        supabase
+          .from("loan_payments")
+          .select("loan_id, principal_amount, interest_amount")
+          .eq("organization_id", orgId)
+          .is("deleted_at", null)
+          .in("loan_id", loanIds),
+      ]);
+      for (const loan of activeLoans) {
+        const kpis = computeLoanKpis({
+          approvedPrincipal: loan.approved_principal,
+          disbursements: (disbs ?? [])
+            .filter((d) => d.loan_id === loan.id)
+            .map((d) => d.amount),
+          principalPaid: (pays ?? [])
+            .filter((p) => p.loan_id === loan.id)
+            .map((p) => p.principal_amount),
+          interestAccrued: 0,
+          interestPaid: (pays ?? [])
+            .filter((p) => p.loan_id === loan.id)
+            .map((p) => p.interest_amount),
+        });
+        loanDebt = loanDebt.plus(kpis.saldoCapital);
+      }
+    }
+
+    const { data: allocations } = await supabase
+      .from("funding_allocations")
+      .select("approved_amount, committed_amount, paid_amount")
+      .eq("organization_id", orgId)
+      .is("deleted_at", null);
+    for (const a of allocations ?? []) {
+      const bag = computeFundingBag({
+        approved: a.approved_amount,
+        committed: a.committed_amount,
+        paid: a.paid_amount,
+      });
+      capitalAvailable = capitalAvailable.plus(bag.disponible);
+    }
+
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const monthStart = `${y}-${m}-01`;
+    const { data: expenses } = await supabase
+      .from("expenses")
+      .select("total_amount, status")
+      .eq("organization_id", orgId)
+      .is("deleted_at", null)
+      .gte("expense_date", monthStart)
+      .neq("status", "ANULADO");
+    monthlyExpense = (expenses ?? []).reduce(
+      (acc, e) => acc.plus(money(e.total_amount)),
+      money(0),
+    );
   }
 
   return (
@@ -107,16 +196,20 @@ export default async function InicioPage() {
             value={formatCOP(liquidity)}
             hint="Bancos + caja + pasarelas"
           />
-          <StatCard label="CxP" value={formatCOP(0)} hint="Saldo proveedores" />
+          <StatCard label="CxP" value={formatCOP(cxpTotal)} hint="Saldo proveedores" />
           <StatCard
             label="Deuda con socios"
-            value={formatCOP(0)}
+            value={formatCOP(loanDebt)}
             hint="Préstamos activos"
           />
-          <StatCard label="Gasto mensual" value="—" hint="Disponible en MVP 2" />
+          <StatCard
+            label="Gasto del mes"
+            value={formatCOP(monthlyExpense)}
+            hint="Gastos no anulados"
+          />
           <StatCard
             label="Capital disponible"
-            value={formatCOP(0)}
+            value={formatCOP(capitalAvailable)}
             hint="Bolsas sin comprometer"
           />
         </div>
@@ -124,7 +217,7 @@ export default async function InicioPage() {
         <div className="grid gap-4 lg:grid-cols-3">
           <Card>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="font-medium">Calidad de la entrega</h3>
+              <h3 className="font-medium">Calidad del empalme</h3>
               <Badge tone={handoverStatus === "CERRADO" ? "ok" : "warn"}>
                 {handoverStatus ?? "Sin sesión"}
               </Badge>
@@ -138,17 +231,53 @@ export default async function InicioPage() {
               href="/empalme"
               className="mt-4 inline-block text-sm font-medium text-[var(--accent)]"
             >
-              Ir a la entrega →
+              Ir al empalme →
             </Link>
           </Card>
           <Card>
-            <h3 className="mb-3 font-medium">Próximos pasos MVP 1</h3>
-            <ol className="list-decimal space-y-2 pl-4 text-sm text-[var(--muted)]">
-              <li>Completar datos de Empresa y fecha de corte</li>
-              <li>Registrar socios y participación</li>
-              <li>Cargar bancos, CxP y préstamos</li>
-              <li>Cerrar la entrega y emitir Acta PDF</li>
-            </ol>
+            <h3 className="mb-3 font-medium">Módulos listos</h3>
+            <ul className="space-y-2 text-sm text-[var(--muted)]">
+              <li>
+                <Link href="/proveedores" className="text-[var(--accent)]">
+                  Proveedores & CxP
+                </Link>
+              </li>
+              <li>
+                <Link href="/prestamos" className="text-[var(--accent)]">
+                  Préstamos
+                </Link>{" "}
+                ·{" "}
+                <Link href="/capital" className="text-[var(--accent)]">
+                  Capital
+                </Link>
+              </li>
+              <li>
+                <Link href="/gastos" className="text-[var(--accent)]">
+                  Gastos
+                </Link>{" "}
+                ·{" "}
+                <Link href="/presupuesto" className="text-[var(--accent)]">
+                  Presupuesto
+                </Link>
+              </li>
+              <li>
+                <Link href="/personal" className="text-[var(--accent)]">
+                  Personal
+                </Link>{" "}
+                ·{" "}
+                <Link href="/contratos" className="text-[var(--accent)]">
+                  Contratos
+                </Link>{" "}
+                ·{" "}
+                <Link href="/tributario" className="text-[var(--accent)]">
+                  Tributario
+                </Link>{" "}
+                ·{" "}
+                <Link href="/sst" className="text-[var(--accent)]">
+                  SST
+                </Link>
+              </li>
+            </ul>
           </Card>
           <Card>
             <h3 className="mb-3 font-medium">Frontera FILIPO</h3>

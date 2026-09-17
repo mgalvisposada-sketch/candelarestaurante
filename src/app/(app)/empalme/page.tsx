@@ -4,7 +4,7 @@ import { getOrgContext } from "@/lib/org-context";
 import { createClient } from "@/lib/supabase/server";
 import { summarizeHandoverQuality } from "@/lib/handover";
 import { formatCOP } from "@/lib/money";
-import { domainLabel } from "@/lib/handover-catalog";
+import { domainLabel, isObsoleteHandoverItem } from "@/lib/handover-catalog";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
@@ -23,8 +23,8 @@ export default async function EmpalmePage() {
     return (
       <>
         <AppHeader
-          title="Entrega"
-          subtitle="Acta de entrega entre administraciones"
+          title="Empalme"
+          subtitle="Línea base entre administraciones"
         />
         <main className="p-8">
           <Card>
@@ -32,8 +32,8 @@ export default async function EmpalmePage() {
               Primero configura la empresa
             </p>
             <p className="mt-2 text-sm text-[var(--muted)]">
-              Antes de la entrega necesitamos el nombre de la empresa y una
-              fecha de corte.
+              Antes del empalme necesitamos el nombre de la empresa y una fecha
+              de corte.
             </p>
             <Link
               href="/empresa"
@@ -69,7 +69,9 @@ export default async function EmpalmePage() {
       .eq("handover_session_id", session.id)
       .is("deleted_at", null)
       .order("created_at", { ascending: true });
-    items = (itemRows ?? []) as HandoverItem[];
+    items = ((itemRows ?? []) as HandoverItem[]).filter(
+      (item) => !isObsoleteHandoverItem(item),
+    );
   }
 
   const quality = summarizeHandoverQuality(
@@ -96,11 +98,11 @@ export default async function EmpalmePage() {
   return (
     <>
       <AppHeader
-        title="Entrega"
+        title="Empalme"
         subtitle={
           isClosed
             ? "Acta del día 1 · congelada"
-            : "Reunión de entrega del restaurante · acta del día 1"
+            : "Guía de indagación · captura en vivo"
         }
       />
       <main className="space-y-8 p-8">
@@ -108,21 +110,19 @@ export default async function EmpalmePage() {
           <>
             <section className="max-w-3xl space-y-3">
               <h2 className="font-display text-2xl font-bold tracking-tight">
-                Una misma foto para todos los socios
+                Tu guía de indagación
               </h2>
               <p className="text-sm leading-relaxed text-[var(--muted)]">
-                Esta reunión no es un juicio de la gestión anterior: es dejar
-                escrita la plata, las deudas, el inventario y los papeles para
-                que todos vean lo mismo. Si algo viene a medias, se marca como
-                “me lo dijeron” o pendiente — eso también protege a quien
-                entrega y sigue en el negocio.
+                Herramienta de apoyo para la reunión: tú preguntas, capturas
+                aquí y dejas el acta clara para los socios. Flujo rápido —
+                esferas, una pregunta abierta, Guardar y seguir.
               </p>
             </section>
             <Card className="max-w-3xl">
               <EmpalmeSteps current={1} />
               <div className="mt-6">
                 <h3 className="mb-4 font-display text-lg font-bold">
-                  Empezar la reunión de entrega
+                  Preparar el empalme
                 </h3>
                 <CreateHandoverForm
                   defaultCutoff={ctx.organization.administrative_cutoff_date}
