@@ -8,15 +8,22 @@ export function AppShell({
   children,
   userEmail,
   role,
+  permissions,
 }: {
   children: React.ReactNode;
   userEmail?: string | null;
   role?: AppRole | null;
+  permissions?: string[];
 }) {
   const pathname = usePathname();
   return (
     <div className="flex min-h-screen">
-      <AppSidebar pathname={pathname} userEmail={userEmail} role={role} />
+      <AppSidebar
+        pathname={pathname}
+        userEmail={userEmail}
+        role={role}
+        permissions={permissions}
+      />
       <div className="flex min-w-0 flex-1 flex-col">{children}</div>
     </div>
   );

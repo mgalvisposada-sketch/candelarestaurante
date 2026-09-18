@@ -7,6 +7,7 @@ import {
   StatCard,
 } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
+import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO } from "@/lib/dates";
@@ -23,6 +24,7 @@ import {
 export default async function TesoreriaPage() {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
+  requireModuleAccess(ctx, "tesoreria");
 
   if (!ctx.organization) {
     return (

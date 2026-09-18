@@ -1,6 +1,7 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Card, PageIntro } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
+import { requireModuleAccess } from "@/lib/permissions";
 import { formatDateCO } from "@/lib/dates";
 import { redirect } from "next/navigation";
 import { OrganizationForm } from "./organization-form";
@@ -8,6 +9,7 @@ import { OrganizationForm } from "./organization-form";
 export default async function EmpresaPage() {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
+  requireModuleAccess(ctx, "empresa");
 
   return (
     <>

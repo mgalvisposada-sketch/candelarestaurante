@@ -5,11 +5,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { OrgContext } from "@/lib/org-context";
 import { getOrgContext } from "@/lib/org-context";
-import { isSuperAdmin } from "@/types/domain";
+import { ROLE_DEFAULT_PERMISSIONS } from "@/lib/permissions-catalog";
+import { isSuperAdmin, type AppRole } from "@/types/domain";
 import {
   createSystemUserSchema,
   updateSystemUserSchema,
 } from "@/validations/users";
+import { saveUserPermissionsSchema } from "@/validations/permissions";
 import type { ActionResult } from "../empresa/actions";
 
 type AdminCtx = OrgContext & {
@@ -33,6 +35,30 @@ async function requireSuperAdmin(): Promise<
     ok: true,
     ctx: ctx as AdminCtx,
   };
+}
+
+async function seedMembershipPermissions(opts: {
+  organizationId: string;
+  membershipId: string;
+  role: AppRole;
+  actorId: string;
+}) {
+  const keys = ROLE_DEFAULT_PERMISSIONS[opts.role] ?? [];
+  if (keys.length === 0) return;
+
+  const supabase = await createClient();
+  const rows = keys.map((permission_key) => ({
+    organization_id: opts.organizationId,
+    membership_id: opts.membershipId,
+    permission_key,
+    created_by: opts.actorId,
+    updated_by: opts.actorId,
+  }));
+
+  const { error } = await supabase.from("user_module_permissions").insert(rows);
+  if (error) {
+    console.error("seedMembershipPermissions:", error.message);
+  }
 }
 
 export async function createSystemUserAction(
@@ -115,6 +141,13 @@ export async function createSystemUserAction(
     await admin.auth.admin.deleteUser(userId);
     return { ok: false, error: membershipError.message };
   }
+
+  await seedMembershipPermissions({
+    organizationId: ctx.organization.id,
+    membershipId: membership.id,
+    role: v.role,
+    actorId: ctx.userId,
+  });
 
   await supabase.from("audit_logs").insert({
     organization_id: ctx.organization.id,
@@ -340,4 +373,83 @@ export async function deactivateSystemUserAction(
 
   revalidatePath("/configuracion");
   return { ok: true, id: membershipId };
+}
+
+export async function saveUserPermissionsAction(
+  membershipId: string,
+  permissionKeys: string[],
+): Promise<ActionResult> {
+  const gate = await requireSuperAdmin();
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const { ctx } = gate;
+
+  const parsed = saveUserPermissionsSchema.safeParse({
+    membership_id: membershipId,
+    permission_keys: permissionKeys,
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+    };
+  }
+
+  const supabase = await createClient();
+  const { data: membership, error: loadError } = await supabase
+    .from("organization_users")
+    .select("id, user_id, role")
+    .eq("id", parsed.data.membership_id)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (loadError || !membership) {
+    return { ok: false, error: loadError?.message ?? "Usuario no encontrado" };
+  }
+
+  const uniqueKeys = [...new Set(parsed.data.permission_keys)];
+  if (!uniqueKeys.includes("inicio")) uniqueKeys.push("inicio");
+  if (!uniqueKeys.includes("inicio.resumen")) uniqueKeys.push("inicio.resumen");
+
+  if (uniqueKeys.length === 0) {
+    return {
+      ok: false,
+      error: "Debe asignar al menos un módulo (por ejemplo Inicio)",
+    };
+  }
+
+  const { error: deleteError } = await supabase
+    .from("user_module_permissions")
+    .delete()
+    .eq("membership_id", membership.id)
+    .eq("organization_id", ctx.organization.id);
+
+  if (deleteError) return { ok: false, error: deleteError.message };
+
+  const rows = uniqueKeys.map((permission_key) => ({
+    organization_id: ctx.organization.id,
+    membership_id: membership.id,
+    permission_key,
+    created_by: ctx.userId,
+    updated_by: ctx.userId,
+  }));
+  const { error: insertError } = await supabase
+    .from("user_module_permissions")
+    .insert(rows);
+  if (insertError) return { ok: false, error: insertError.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "UPDATE",
+    entity: "user_module_permissions",
+    entity_id: membership.id,
+    new_values: {
+      target_user_id: membership.user_id,
+      permission_keys: uniqueKeys,
+    },
+  });
+
+  revalidatePath("/configuracion");
+  return { ok: true, id: membership.id };
 }

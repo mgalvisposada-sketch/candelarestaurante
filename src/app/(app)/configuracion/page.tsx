@@ -2,12 +2,17 @@ import { AppHeader } from "@/components/layout/app-header";
 import { Card, PageIntro } from "@/components/ui/primitives";
 import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
+import { resolveEffectivePermissions, ctxCanAccess } from "@/lib/permissions";
 import { isSuperAdmin, ROLE_LABELS, type AppRole } from "@/types/domain";
 import {
   CreateSystemUserForm,
   SystemUsersTable,
   type SystemUserRow,
 } from "./users-client";
+import {
+  PermissionsManager,
+  type PermissionUserOption,
+} from "./permissions-client";
 
 export default async function ConfiguracionPage() {
   const ctx = await getOrgContext();
@@ -28,6 +33,25 @@ export default async function ConfiguracionPage() {
       </>
     );
   }
+
+  if (!ctxCanAccess(ctx, "configuracion")) {
+    return (
+      <>
+        <AppHeader title="Configuración" subtitle="Acceso restringido" />
+        <main className="p-8">
+          <Card>
+            <p className="font-medium">No tienes permiso para este módulo</p>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Solicita acceso a un super admin de la organización.
+            </p>
+          </Card>
+        </main>
+      </>
+    );
+  }
+
+  const canManageUsers = isSuperAdmin(ctx.role);
+  const canManagePermissions = isSuperAdmin(ctx.role);
 
   const supabase = await createClient();
   const { data: memberships } = await supabase
@@ -54,44 +78,80 @@ export default async function ConfiguracionPage() {
     };
   });
 
-  const canManageUsers = isSuperAdmin(ctx.role);
+  let permissionUsers: PermissionUserOption[] = [];
+  if (canManagePermissions) {
+    const membershipIds = users.map((u) => u.membership_id);
+    const { data: permRows } = membershipIds.length
+      ? await supabase
+          .from("user_module_permissions")
+          .select("membership_id, permission_key")
+          .eq("organization_id", ctx.organization.id)
+          .in("membership_id", membershipIds)
+      : { data: [] as { membership_id: string; permission_key: string }[] };
+
+    const byMembership = new Map<string, string[]>();
+    for (const row of permRows ?? []) {
+      const list = byMembership.get(row.membership_id) ?? [];
+      list.push(row.permission_key);
+      byMembership.set(row.membership_id, list);
+    }
+
+    permissionUsers = users.map((u) => ({
+      membership_id: u.membership_id,
+      user_id: u.user_id,
+      full_name: u.full_name,
+      email: u.email,
+      role: u.role,
+      permission_keys: resolveEffectivePermissions({
+        role: u.role,
+        storedKeys: byMembership.get(u.membership_id) ?? [],
+      }),
+    }));
+  }
 
   return (
     <>
       <AppHeader
         title="Configuración"
-        subtitle="Usuarios, roles y parámetros de la organización"
+        subtitle="Usuarios, roles, permisos y parámetros de la organización"
       />
-      <main className="space-y-8 p-8">
-        <section className="space-y-4">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <PageIntro
-              title="Usuarios del sistema"
-              description={
-                canManageUsers
-                  ? "Cree accesos, asigne roles y actualice contraseñas. Solo visible y editable para super admin."
-                  : "Solo un super admin puede crear o modificar usuarios y contraseñas."
-              }
-            />
-            {canManageUsers ? <CreateSystemUserForm /> : null}
-          </div>
+      <main className="space-y-10 p-8">
+        {canManageUsers ? (
+          <section className="space-y-4">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <PageIntro
+                title="Usuarios del sistema"
+                description="Cree accesos, asigne roles y actualice contraseñas."
+              />
+              <CreateSystemUserForm />
+            </div>
 
-          {canManageUsers ? (
             <SystemUsersTable users={users} currentUserId={ctx.userId} />
-          ) : (
-            <Card>
-              <h3 className="font-medium">Tu acceso</h3>
-              <p className="mt-2 text-sm text-[var(--muted)]">
-                {ctx.email ?? "Sin correo"} ·{" "}
-                {ctx.role ? ROLE_LABELS[ctx.role] : "Sin rol"}
-              </p>
-              <p className="mt-3 text-sm text-[var(--muted)]">
-                Para altas, cambios de rol o contraseñas, solicítelo a un super
-                admin de la organización.
-              </p>
-            </Card>
-          )}
-        </section>
+          </section>
+        ) : null}
+
+        {canManagePermissions ? (
+          <section className="space-y-4">
+            <PageIntro
+              title="Permisos por módulo"
+              description="Define a qué módulos y submódulos puede entrar cada usuario. El super admin siempre tiene acceso total."
+            />
+            <PermissionsManager users={permissionUsers} />
+          </section>
+        ) : null}
+
+        {!canManageUsers && !canManagePermissions ? (
+          <Card>
+            <h3 className="font-medium">Tu acceso</h3>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              {ctx.email ?? "Sin correo"} ·{" "}
+              {ctx.role ? ROLE_LABELS[ctx.role] : "Sin rol"}
+            </p>
+            <p className="mt-3 text-sm text-[var(--muted)]">
+              No tienes permisos de administración en este módulo.
+            </p>
+          </Card>
+        ) : null}
 
         <section className="grid gap-4 md:grid-cols-2">
           <Card>
@@ -103,13 +163,13 @@ export default async function ConfiguracionPage() {
                     {ROLE_LABELS[role]}
                   </span>
                   {role === "SUPER_ADMIN"
-                    ? " — usuarios y configuración crítica"
+                    ? " — usuarios, permisos y configuración crítica"
                     : role === "GESTION"
-                      ? " — operación diaria"
+                      ? " — operación diaria (sin admin de usuarios)"
                       : role === "SOCIO"
-                        ? " — lectura de gobierno societario"
+                        ? " — gobierno societario"
                         : role === "CONTADOR"
-                          ? " — lectura financiera / tributaria"
+                          ? " — financiero / tributario"
                           : " — solo consulta"}
                 </li>
               ))}
@@ -118,10 +178,10 @@ export default async function ConfiguracionPage() {
           <Card>
             <h3 className="font-medium">Seguridad</h3>
             <ul className="mt-3 space-y-2 text-sm text-[var(--muted)]">
+              <li>Permisos por módulo y submódulo por usuario</li>
               <li>Supabase Auth + RLS multi-tenant</li>
-              <li>Alta de usuarios con service role solo en servidor</li>
               <li>Cambios de acceso auditados</li>
-              <li>Cierre de sesión disponible en el menú lateral</li>
+              <li>Cierre de sesión en el menú lateral</li>
             </ul>
           </Card>
         </section>

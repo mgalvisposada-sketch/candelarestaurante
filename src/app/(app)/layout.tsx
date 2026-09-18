@@ -9,7 +9,11 @@ export default async function AuthenticatedLayout({
   const ctx = await getOrgContext();
 
   return (
-    <AppShell userEmail={ctx?.email ?? null} role={ctx?.role ?? null}>
+    <AppShell
+      userEmail={ctx?.email ?? null}
+      role={ctx?.role ?? null}
+      permissions={ctx?.permissions ?? []}
+    >
       {children}
     </AppShell>
   );

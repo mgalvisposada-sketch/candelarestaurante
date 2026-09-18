@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { BrandLogo } from "@/components/brand/logo";
 import { SignOutButton } from "@/components/layout/sign-out-button";
+import { canAccessModuleHref } from "@/lib/permissions-catalog";
 import { NAV_ITEMS, ROLE_LABELS, type AppRole } from "@/types/domain";
 import { cn } from "@/lib/utils";
 
@@ -15,11 +16,15 @@ export function AppSidebar({
   pathname,
   userEmail,
   role,
+  permissions = [],
 }: {
   pathname: string;
   userEmail?: string | null;
   role?: AppRole | null;
+  permissions?: string[];
 }) {
+  const isAdmin = role === "SUPER_ADMIN";
+
   return (
     <aside className="flex w-64 shrink-0 flex-col bg-[var(--sidebar)] text-[var(--sidebar-text)]">
       <div className="border-b border-white/10 px-4 py-5">
@@ -38,20 +43,30 @@ export function AppSidebar({
           const active =
             pathname === item.href || pathname.startsWith(`${item.href}/`);
           const enabled = ENABLED_HREFS.has(item.href);
+          const allowed =
+            enabled &&
+            canAccessModuleHref(permissions, item.href, {
+              isSuperAdmin: isAdmin,
+            });
+
+          if (!allowed && enabled) {
+            return null;
+          }
+
           return (
             <Link
               key={item.href}
-              href={enabled ? item.href : "#"}
-              aria-disabled={!enabled}
+              href={allowed ? item.href : "#"}
+              aria-disabled={!allowed}
               className={cn(
                 "flex items-center justify-between rounded-md px-3 py-2 text-sm transition",
                 active &&
                   "bg-[var(--sidebar-active)] text-white shadow-[inset_3px_0_0_0_var(--accent)]",
-                !active && enabled && "hover:bg-[var(--sidebar-hover)]",
-                !enabled && "cursor-not-allowed opacity-40",
+                !active && allowed && "hover:bg-[var(--sidebar-hover)]",
+                !allowed && "cursor-not-allowed opacity-40",
               )}
               onClick={(e) => {
-                if (!enabled) e.preventDefault();
+                if (!allowed) e.preventDefault();
               }}
             >
               <span>{item.label}</span>

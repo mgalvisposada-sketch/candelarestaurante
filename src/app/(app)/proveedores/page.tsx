@@ -1,6 +1,7 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Card, EmptyState, PageIntro, StatCard } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
+import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { formatCOP, apDocumentBalance, money } from "@/lib/money";
 import { summarizeApAging } from "@/lib/accounts-payable";
@@ -18,6 +19,7 @@ import {
 export default async function ProveedoresPage() {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
+  requireModuleAccess(ctx, "proveedores");
   if (!ctx.organization) {
     return (
       <>

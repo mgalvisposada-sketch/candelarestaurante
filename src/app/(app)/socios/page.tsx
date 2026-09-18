@@ -1,6 +1,7 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Badge, Card, EmptyState, PageIntro } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
+import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { participationWarning } from "@/lib/handover";
 import { sumParticipation } from "@/lib/shareholders";
@@ -17,6 +18,7 @@ import {
 export default async function SociosPage() {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
+  requireModuleAccess(ctx, "socios");
 
   if (!ctx.organization) {
     return (

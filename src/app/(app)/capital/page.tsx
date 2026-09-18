@@ -1,6 +1,7 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Card, EmptyState, PageIntro, StatCard } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
+import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { formatCOP, money } from "@/lib/money";
 import { computeFundingBag } from "@/lib/loans";
@@ -16,6 +17,7 @@ import {
 export default async function CapitalPage() {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
+  requireModuleAccess(ctx, "capital");
   if (!ctx.organization) {
     return (
       <>

@@ -1,6 +1,7 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Card, EmptyState, PageIntro, StatCard } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
+import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { todayInBogota } from "@/lib/dates";
 import { redirect } from "next/navigation";
@@ -14,6 +15,7 @@ import {
 export default async function ContratosPage() {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
+  requireModuleAccess(ctx, "contratos");
   if (!ctx.organization) {
     return (
       <>

@@ -1,6 +1,7 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Card, PageIntro, StatCard } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
+import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO } from "@/lib/dates";
@@ -11,6 +12,7 @@ import { SstForm, type SstRow } from "./sst-client";
 export default async function SstPage() {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
+  requireModuleAccess(ctx, "sst");
   if (!ctx.organization) {
     return (
       <>

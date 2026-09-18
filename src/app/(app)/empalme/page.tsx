@@ -1,6 +1,7 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Card } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
+import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { summarizeHandoverQuality } from "@/lib/handover";
 import { formatCOP } from "@/lib/money";
@@ -18,6 +19,7 @@ import {
 export default async function EmpalmePage() {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
+  requireModuleAccess(ctx, "empalme");
 
   if (!ctx.organization) {
     return (
