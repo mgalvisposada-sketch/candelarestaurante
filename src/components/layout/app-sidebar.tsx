@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { BrandLogo } from "@/components/brand/logo";
 import { SignOutButton } from "@/components/layout/sign-out-button";
-import { canAccessModuleHref } from "@/lib/permissions-catalog";
+import { canAccessModuleHref, firstAllowedHref } from "@/lib/permissions-catalog";
 import { NAV_ITEMS, ROLE_LABELS, type AppRole } from "@/types/domain";
 import { cn } from "@/lib/utils";
 
@@ -24,12 +24,14 @@ export function AppSidebar({
   permissions?: string[];
 }) {
   const isAdmin = role === "SUPER_ADMIN";
+  const homeHref =
+    firstAllowedHref(permissions, { isSuperAdmin: isAdmin }) ?? "/login";
 
   return (
     <aside className="flex w-64 shrink-0 flex-col bg-[var(--sidebar)] text-[var(--sidebar-text)]">
       <div className="border-b border-white/10 px-4 py-5">
         <Link
-          href="/inicio"
+          href={homeHref}
           className="flex flex-col items-center gap-2.5 text-center"
         >
           <BrandLogo size="md" priority className="shrink-0 drop-shadow-sm" />

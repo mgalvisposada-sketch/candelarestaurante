@@ -1,11 +1,16 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   createOrganizationAction,
   updateOrganizationAction,
 } from "./actions";
 import type { OrganizationRow } from "@/lib/org-context";
+import {
+  useDebouncedCallback,
+  autosaveLabel,
+  type AutosaveState,
+} from "@/lib/autosave";
 
 const fields: Array<{
   name: string;
@@ -43,12 +48,36 @@ export function OrganizationForm({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [autosave, setAutosave] = useState<AutosaveState>("idle");
   const [pending, startTransition] = useTransition();
+  const formRef = useRef<HTMLFormElement>(null);
+  const readyRef = useRef(false);
 
-  function valueFor(name: string): string {
-    if (!organization) return "";
-    const raw = organization[name as keyof OrganizationRow];
-    return raw == null ? "" : String(raw);
+  const scheduleAutosave = useDebouncedCallback(() => {
+    if (!organization || !formRef.current) return;
+    const fd = new FormData(formRef.current);
+    setAutosave("saving");
+    setError(null);
+    startTransition(async () => {
+      const result = await updateOrganizationAction(organization.id, fd);
+      if (!result.ok) {
+        setError(result.error ?? "Error al guardar");
+        setAutosave("error");
+        return;
+      }
+      setAutosave("saved");
+      setSuccess(null);
+    });
+  }, 800);
+
+  useEffect(() => {
+    readyRef.current = true;
+  }, []);
+
+  function onFieldChange() {
+    if (!organization || !readyRef.current) return;
+    setAutosave("dirty");
+    scheduleAutosave();
   }
 
   function onSubmit(formData: FormData) {
@@ -62,16 +91,17 @@ export function OrganizationForm({
         setError(result.error ?? "Error al guardar");
         return;
       }
+      setAutosave("saved");
       setSuccess(
         organization
-          ? "Empresa actualizada correctamente."
+          ? "Empresa actualizada. Puedes seguir editando cuando quieras."
           : "Empresa creada. Ya puedes continuar con el empalme.",
       );
     });
   }
 
   return (
-    <form action={onSubmit} className="space-y-6">
+    <form ref={formRef} action={onSubmit} className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2">
         {fields.map((field) => (
           <label
@@ -86,7 +116,14 @@ export function OrganizationForm({
               name={field.name}
               type={field.type ?? "text"}
               required={field.required}
-              defaultValue={valueFor(field.name)}
+              defaultValue={
+                organization
+                  ? organization[field.name as keyof OrganizationRow] == null
+                    ? ""
+                    : String(organization[field.name as keyof OrganizationRow])
+                  : ""
+              }
+              onChange={onFieldChange}
               className="w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 outline-none ring-[var(--accent)] focus:ring-2"
             />
           </label>
@@ -108,6 +145,9 @@ export function OrganizationForm({
           {success}
         </p>
       ) : null}
+      {organization && autosaveLabel(autosave) ? (
+        <p className="text-sm text-[var(--muted)]">{autosaveLabel(autosave)}</p>
+      ) : null}
 
       <button
         type="submit"
@@ -117,9 +157,15 @@ export function OrganizationForm({
         {pending
           ? "Guardando…"
           : organization
-            ? "Guardar cambios"
+            ? "Guardar ahora"
             : "Crear empresa"}
       </button>
+      {organization ? (
+        <p className="text-xs text-[var(--muted)]">
+          Autoguardado activo: lo que escribas se replica en el sistema para
+          validación. Seguir editando después de guardar es normal.
+        </p>
+      ) : null}
     </form>
   );
 }

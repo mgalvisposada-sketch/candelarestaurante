@@ -1,7 +1,7 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Card } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
-import { requireModuleAccess } from "@/lib/permissions";
+import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { summarizeHandoverQuality } from "@/lib/handover";
 import { formatCOP } from "@/lib/money";
@@ -143,6 +143,7 @@ export default async function EmpalmePage() {
               pending: quality.pending,
             }}
             summaryLines={summaryLines}
+            canClose={ctxCanAccess(ctx, "empalme.cerrar")}
           />
         )}
       </main>

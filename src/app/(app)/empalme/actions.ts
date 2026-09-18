@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
+import { ctxCanAccess } from "@/lib/permissions";
 import {
   DEFAULT_HANDOVER_ITEMS,
   isRetiredHandoverItem,
@@ -264,14 +265,17 @@ export async function updateHandoverItemAction(
 
   if (error) return { ok: false, error: error.message };
 
-  await supabase.from("audit_logs").insert({
-    organization_id: ctx.organization.id,
-    user_id: ctx.userId,
-    action: status === "CONFIRMADO" ? "VALIDATE" : "UPDATE",
-    entity: "handover_items",
-    entity_id: itemId,
-    new_values: parsed.data,
-  });
+  const silent = formData.get("_silent") === "1";
+  if (!silent) {
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organization.id,
+      user_id: ctx.userId,
+      action: status === "CONFIRMADO" ? "VALIDATE" : "UPDATE",
+      entity: "handover_items",
+      entity_id: itemId,
+      new_values: parsed.data,
+    });
+  }
 
   revalidatePath("/empalme");
   return { ok: true, id: itemId };
@@ -498,6 +502,13 @@ export async function closeHandoverAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+
+  if (!ctxCanAccess(ctx, "empalme.cerrar")) {
+    return {
+      ok: false,
+      error: "No tienes permiso para cerrar el empalme",
+    };
+  }
 
   const notes = String(formData.get("closing_notes") || "") || null;
   const supabase = await createClient();

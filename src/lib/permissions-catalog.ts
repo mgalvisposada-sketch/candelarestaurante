@@ -36,6 +36,11 @@ export const APP_MODULES: AppModuleDef[] = [
     submodules: [
       { key: "empalme.sesion", label: "Sesión de empalme" },
       { key: "empalme.items", label: "Ítems y verificación" },
+      {
+        key: "empalme.cerrar",
+        label: "Cerrar empalme",
+        description: "Permite congelar / cerrar la sesión de empalme",
+      },
     ],
   },
   {
@@ -262,10 +267,7 @@ export function hasPermission(
   if (opts?.isSuperAdmin) return true;
   const set = granted instanceof Set ? granted : new Set(granted);
   if (set.has(key)) return true;
-  // Tener el módulo padre implica acceso a submódulos
-  const parent = key.includes(".") ? key.split(".")[0] : null;
-  if (parent && set.has(parent)) return true;
-  // Tener cualquier submódulo implica poder entrar al módulo padre
+  // Entrar al módulo: basta con cualquier submódulo concedido
   if (!key.includes(".")) {
     for (const g of set) {
       if (g.startsWith(`${key}.`)) return true;
@@ -282,4 +284,16 @@ export function canAccessModuleHref(
   const mod = APP_MODULES.find((m) => m.href === href);
   if (!mod) return false;
   return hasPermission(granted, mod.key, opts);
+}
+
+/** Primera ruta permitida (MVP ≤ 3), o null si no hay ninguna. */
+export function firstAllowedHref(
+  granted: ReadonlySet<string> | readonly string[],
+  opts?: { isSuperAdmin?: boolean },
+): string | null {
+  for (const mod of APP_MODULES) {
+    if (mod.mvp > 3) continue;
+    if (canAccessModuleHref(granted, mod.href, opts)) return mod.href;
+  }
+  return null;
 }

@@ -408,13 +408,11 @@ export async function saveUserPermissionsAction(
   }
 
   const uniqueKeys = [...new Set(parsed.data.permission_keys)];
-  if (!uniqueKeys.includes("inicio")) uniqueKeys.push("inicio");
-  if (!uniqueKeys.includes("inicio.resumen")) uniqueKeys.push("inicio.resumen");
 
   if (uniqueKeys.length === 0) {
     return {
       ok: false,
-      error: "Debe asignar al menos un módulo (por ejemplo Inicio)",
+      error: "Debe asignar al menos un módulo",
     };
   }
 

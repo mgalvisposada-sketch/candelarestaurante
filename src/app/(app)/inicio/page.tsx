@@ -3,6 +3,7 @@ import { Badge, Card, PageIntro, StatCard } from "@/components/ui/primitives";
 import { formatCOP, money, apDocumentBalance } from "@/lib/money";
 import { formatDateCO } from "@/lib/dates";
 import { getOrgContext } from "@/lib/org-context";
+import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { summarizeHandoverQuality } from "@/lib/handover";
 import { sumOpeningBalances } from "@/lib/treasury";
@@ -13,6 +14,7 @@ import Link from "next/link";
 export default async function InicioPage() {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
+  requireModuleAccess(ctx, "inicio");
 
   let quality = {
     pctConfirmed: 0,

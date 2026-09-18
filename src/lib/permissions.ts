@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import {
   canAccessModuleHref,
+  firstAllowedHref,
   hasPermission,
   moduleKeyFromPath,
   ROLE_DEFAULT_PERMISSIONS,
@@ -21,18 +22,13 @@ export function resolveEffectivePermissions(opts: {
   if (isSuperAdmin(opts.role)) {
     return ROLE_DEFAULT_PERMISSIONS.SUPER_ADMIN;
   }
-  let keys: string[];
   if (opts.storedKeys && opts.storedKeys.length > 0) {
-    keys = [...opts.storedKeys];
-  } else if (opts.role && ROLE_DEFAULT_PERMISSIONS[opts.role]) {
-    keys = [...ROLE_DEFAULT_PERMISSIONS[opts.role]];
-  } else {
-    keys = [...ROLE_DEFAULT_PERMISSIONS.LECTURA];
+    return [...opts.storedKeys];
   }
-  // Inicio siempre disponible como landing seguro
-  if (!keys.includes("inicio")) keys.push("inicio");
-  if (!keys.includes("inicio.resumen")) keys.push("inicio.resumen");
-  return keys;
+  if (opts.role && ROLE_DEFAULT_PERMISSIONS[opts.role]) {
+    return [...ROLE_DEFAULT_PERMISSIONS[opts.role]];
+  }
+  return [...ROLE_DEFAULT_PERMISSIONS.LECTURA];
 }
 
 export function ctxCanAccess(
@@ -53,14 +49,23 @@ export function ctxCanAccessHref(
   });
 }
 
-/** Redirige a /inicio si el usuario no tiene el módulo. */
+export function ctxFirstAllowedHref(
+  ctx: Pick<OrgContext, "role" | "permissions">,
+): string | null {
+  return firstAllowedHref(ctx.permissions ?? [], {
+    isSuperAdmin: isSuperAdmin(ctx.role),
+  });
+}
+
+/** Redirige al primer módulo permitido si el usuario no tiene acceso. */
 export function requireModuleAccess(
   ctx: Pick<OrgContext, "role" | "permissions"> | null,
   moduleKey: string,
 ): asserts ctx is NonNullable<typeof ctx> {
   if (!ctx) redirect("/login");
   if (!ctxCanAccess(ctx, moduleKey)) {
-    redirect("/inicio");
+    const fallback = ctxFirstAllowedHref(ctx);
+    redirect(fallback && fallback !== `/${moduleKey}` ? fallback : "/login");
   }
 }
 

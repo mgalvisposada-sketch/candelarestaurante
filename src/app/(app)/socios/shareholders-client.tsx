@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   addShareholderTransactionAction,
   createShareholderAction,
@@ -16,6 +16,11 @@ import {
   shareholderBalanceLabel,
 } from "@/lib/shareholders";
 import type { VerificationStatus } from "@/types/domain";
+import {
+  useDebouncedCallback,
+  autosaveLabel,
+  type AutosaveState,
+} from "@/lib/autosave";
 
 export type ShareholderRow = {
   id: string;
@@ -264,7 +269,36 @@ export function ShareholderCard({
 }) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [autosave, setAutosave] = useState<AutosaveState>("idle");
   const [pending, startTransition] = useTransition();
+  const formRef = useRef<HTMLFormElement>(null);
+  const readyRef = useRef(false);
+
+  const scheduleAutosave = useDebouncedCallback(() => {
+    if (!formRef.current) return;
+    const fd = new FormData(formRef.current);
+    setAutosave("saving");
+    setError(null);
+    startTransition(async () => {
+      const result = await updateShareholderAction(shareholder.id, fd);
+      if (!result.ok) {
+        setError(result.error ?? "Error");
+        setAutosave("error");
+      } else {
+        setAutosave("saved");
+      }
+    });
+  }, 800);
+
+  useEffect(() => {
+    if (editing) readyRef.current = true;
+  }, [editing]);
+
+  function onFieldChange() {
+    if (!readyRef.current) return;
+    setAutosave("dirty");
+    scheduleAutosave();
+  }
 
   const balance = account
     ? computeShareholderAccountBalance({
@@ -349,25 +383,42 @@ export function ShareholderCard({
 
       {editing ? (
         <form
+          ref={formRef}
           className="mt-4 space-y-4 border-t border-[var(--line)] pt-4"
+          onChange={onFieldChange}
           action={(fd) => {
             setError(null);
             startTransition(async () => {
               const result = await updateShareholderAction(shareholder.id, fd);
               if (!result.ok) setError(result.error ?? "Error");
-              else setEditing(false);
+              else setAutosave("saved");
             });
           }}
         >
           <ShareholderFields shareholder={shareholder} />
-          <button
-            type="submit"
-            disabled={pending}
-            className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
-          >
-            {pending ? "Guardando…" : "Guardar cambios"}
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="submit"
+              disabled={pending}
+              className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
+            >
+              {pending ? "Guardando…" : "Guardar ahora"}
+            </button>
+            {autosaveLabel(autosave) ? (
+              <span className="text-xs text-[var(--muted)]">
+                {autosaveLabel(autosave)}
+              </span>
+            ) : (
+              <span className="text-xs text-[var(--muted)]">
+                Autoguarda al editar · puedes corregir después
+              </span>
+            )}
+          </div>
         </form>
+      ) : null}
+
+      {error ? (
+        <p className="mt-3 text-sm text-red-700">{error}</p>
       ) : null}
 
       {account ? (

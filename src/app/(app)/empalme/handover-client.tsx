@@ -49,6 +49,11 @@ import {
 import type { VerificationStatus } from "@/types/domain";
 import { cn } from "@/lib/utils";
 import {
+  useDebouncedCallback,
+  autosaveLabel,
+  type AutosaveState,
+} from "@/lib/autosave";
+import {
   Check,
   ChevronDown,
   FileCheck2,
@@ -313,9 +318,38 @@ export function CreateHandoverForm({
 
 export function SessionMetaForm({ session }: { session: HandoverSession }) {
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [autosave, setAutosave] = useState<AutosaveState>("idle");
   const [pending, startTransition] = useTransition();
+  const formRef = useRef<HTMLFormElement>(null);
+  const readyRef = useRef(false);
   const readOnly = session.status === "CERRADO";
+
+  const scheduleSave = useDebouncedCallback(() => {
+    const form = formRef.current;
+    if (!form || readOnly) return;
+    const fd = new FormData(form);
+    setAutosave("saving");
+    setError(null);
+    startTransition(async () => {
+      const result = await updateHandoverSessionAction(session.id, fd);
+      if (!result.ok) {
+        setError(result.error ?? "Error");
+        setAutosave("error");
+      } else {
+        setAutosave("saved");
+      }
+    });
+  }, 700);
+
+  useEffect(() => {
+    readyRef.current = true;
+  }, []);
+
+  function onFieldChange() {
+    if (!readyRef.current) return;
+    setAutosave("dirty");
+    scheduleSave();
+  }
 
   if (readOnly) {
     return (
@@ -337,18 +371,7 @@ export function SessionMetaForm({ session }: { session: HandoverSession }) {
   }
 
   return (
-    <form
-      className="space-y-3"
-      action={(fd) => {
-        setError(null);
-        setSaved(false);
-        startTransition(async () => {
-          const result = await updateHandoverSessionAction(session.id, fd);
-          if (!result.ok) setError(result.error ?? "Error");
-          else setSaved(true);
-        });
-      }}
-    >
+    <form ref={formRef} className="space-y-3" onSubmit={(e) => e.preventDefault()}>
       <div className="grid gap-4 md:grid-cols-2">
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">Fecha de corte</span>
@@ -357,6 +380,7 @@ export function SessionMetaForm({ session }: { session: HandoverSession }) {
             name="cutoff_date"
             required
             defaultValue={session.cutoff_date}
+            onChange={onFieldChange}
             className={inputClass}
           />
         </label>
@@ -366,6 +390,7 @@ export function SessionMetaForm({ session }: { session: HandoverSession }) {
           <input
             name="delivered_by_name"
             defaultValue={session.delivered_by_name ?? ""}
+            onChange={onFieldChange}
             className={inputClass}
           />
         </label>
@@ -374,6 +399,7 @@ export function SessionMetaForm({ session }: { session: HandoverSession }) {
           <input
             name="received_by_name"
             defaultValue={session.received_by_name ?? ""}
+            onChange={onFieldChange}
             className={inputClass}
           />
         </label>
@@ -385,19 +411,19 @@ export function SessionMetaForm({ session }: { session: HandoverSession }) {
             name="notes"
             rows={2}
             defaultValue={session.notes ?? ""}
+            onChange={onFieldChange}
             className={inputClass}
           />
         </label>
       </div>
-      <div className="flex items-center gap-3">
-        <Button type="submit" variant="secondary" disabled={pending} className="px-3 py-1.5 text-xs">
-          {pending ? "Guardando…" : "Guardar"}
-        </Button>
-        {saved ? (
-          <span className="text-xs text-emerald-700">Guardado</span>
+      <p className="text-xs text-[var(--muted)]">
+        {pending || autosave !== "idle"
+          ? autosaveLabel(autosave) ?? (pending ? "Autoguardando…" : null)
+          : "Se autoguarda al escribir · puedes editar cuando quieras"}
+        {error ? (
+          <span className="ml-2 text-red-700">{error}</span>
         ) : null}
-        {error ? <span className="text-xs text-red-700">{error}</span> : null}
-      </div>
+      </p>
     </form>
   );
 }
@@ -558,8 +584,10 @@ export function HandoverItemCard({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [autosave, setAutosave] = useState<AutosaveState>("idle");
   const [pending, startTransition] = useTransition();
   const advanceRef = useRef(false);
+  const readyRef = useRef(false);
   const [status, setStatus] = useState<VerificationStatus>(
     item.verification_status,
   );
@@ -574,6 +602,9 @@ export function HandoverItemCard({
   const cleanComments = sanitizeItemComments(item.item_key, item.comments);
   const [source, setSource] = useState(item.source ?? "");
   const [comments, setComments] = useState(cleanComments);
+  const [amount, setAmount] = useState(
+    item.amount != null ? String(item.amount) : "",
+  );
   const [detailsOpen, setDetailsOpen] = useState(
     () => Boolean(item.source?.trim()) || Boolean(cleanComments),
   );
@@ -592,26 +623,27 @@ export function HandoverItemCard({
           ? "Total (suma de la lista)"
           : "Monto (COP)";
   const cardRef = useRef<HTMLDivElement>(null);
-  const amountPreview =
-    item.amount != null
-      ? formatCOP(item.amount)
-      : linesSum != null
-        ? formatCOP(linesSum)
-        : null;
-  const lineCount = (
-    initialLines.length > 0 ? initialLines : lines
-  ).filter((l) => l.name.trim()).length;
+  const amountPreview = (() => {
+    if (!prefersList && amount.trim() !== "") {
+      const n = Number(amount.replace(/,/g, "").trim());
+      if (!Number.isNaN(n)) return formatCOP(n);
+    }
+    if (item.amount != null) return formatCOP(item.amount);
+    if (linesSum != null) return formatCOP(linesSum);
+    return null;
+  })();
+  const lineCount = lines.filter((l) => l.name.trim()).length;
 
   useEffect(() => {
     if (!highlighted && !expanded) return;
     cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [highlighted, expanded]);
 
-  function submitItem(fd: FormData) {
-    setError(null);
-    setSaved(false);
-    const andAdvance = advanceRef.current;
-    advanceRef.current = false;
+  useEffect(() => {
+    readyRef.current = true;
+  }, []);
+
+  function buildItemFormData(): FormData {
     const cleaned = lines
       .map((line) => ({
         ...line,
@@ -619,14 +651,43 @@ export function HandoverItemCard({
         note: line.note?.trim() || undefined,
       }))
       .filter((line) => line.name.length > 0);
+    const fd = new FormData();
+    fd.set("label", item.label);
+    fd.set("domain", item.domain);
+    fd.set("item_key", item.item_key);
+    fd.set("verification_status", status);
+    fd.set("source", source);
+    fd.set("comments", comments);
     fd.set(
       "metadata_json",
       JSON.stringify(buildHandoverItemMetadata(cleaned)),
     );
+    if (prefersList) {
+      fd.set("amount", linesSum != null ? String(linesSum) : "");
+    } else {
+      fd.set("amount", amount);
+    }
+    return fd;
+  }
+
+  function persistItem(opts: { advance: boolean; silent: boolean }) {
+    setError(null);
+    if (!opts.silent) setSaved(false);
+    if (opts.silent) setAutosave("saving");
+    const fd = buildItemFormData();
+    if (opts.silent) fd.set("_silent", "1");
+    const cleaned = lines
+      .map((line) => ({
+        ...line,
+        name: line.name.trim(),
+        note: line.note?.trim() || undefined,
+      }))
+      .filter((line) => line.name.length > 0);
     startTransition(async () => {
       const result = await updateHandoverItemAction(item.id, fd);
       if (!result.ok) {
         setError(result.error ?? "Error");
+        if (opts.silent) setAutosave("error");
       } else {
         setLines(
           cleaned.length > 0
@@ -636,9 +697,26 @@ export function HandoverItemCard({
               : [],
         );
         setSaved(true);
-        if (andAdvance) onSaveSuccess?.();
+        if (opts.silent) setAutosave("saved");
+        if (opts.advance) onSaveSuccess?.();
       }
     });
+  }
+
+  const scheduleAutosave = useDebouncedCallback(() => {
+    if (readOnly || !readyRef.current) return;
+    persistItem({ advance: false, silent: true });
+  }, 900);
+
+  function markDirtyAndAutosave() {
+    if (!readyRef.current || readOnly) return;
+    setAutosave("dirty");
+    scheduleAutosave();
+  }
+
+  function submitItem(advance: boolean) {
+    advanceRef.current = false;
+    persistItem({ advance, silent: false });
   }
 
   return (
@@ -805,12 +883,20 @@ export function HandoverItemCard({
               <p>Notas: {cleanComments || "—"}</p>
             </div>
           ) : (
-            <form className="space-y-3" action={(fd) => submitItem(fd)}>
-              <input type="hidden" name="label" value={item.label} />
-              <input type="hidden" name="domain" value={item.domain} />
-              <input type="hidden" name="item_key" value={item.item_key} />
-
-              <StatusChooser value={status} onChange={setStatus} />
+            <form
+              className="space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitItem(advanceRef.current);
+              }}
+            >
+              <StatusChooser
+                value={status}
+                onChange={(next) => {
+                  setStatus(next);
+                  markDirtyAndAutosave();
+                }}
+              />
 
               {status === "PENDIENTE" ? (
                 <div className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--bg)]/60 px-3 py-3 text-sm text-[var(--muted)]">
@@ -842,7 +928,10 @@ export function HandoverItemCard({
                   <BreakdownEditor
                     mode={mode}
                     lines={lines}
-                    setLines={setLines}
+                    setLines={(updater) => {
+                      setLines(updater);
+                      markDirtyAndAutosave();
+                    }}
                     domain={item.domain}
                   />
                 </div>
@@ -856,9 +945,11 @@ export function HandoverItemCard({
                   <input
                     name="amount"
                     inputMode="decimal"
-                    defaultValue={
-                      item.amount != null ? String(item.amount) : ""
-                    }
+                    value={amount}
+                    onChange={(e) => {
+                      setAmount(e.target.value);
+                      markDirtyAndAutosave();
+                    }}
                     placeholder="Monto"
                     className={cn(inputClass, "tabular-nums")}
                   />
@@ -866,19 +957,12 @@ export function HandoverItemCard({
               ) : null}
 
               {prefersList && linesSum != null ? (
-                <>
-                  <input type="hidden" name="amount" value={String(linesSum)} />
-                  <p className="text-sm text-[var(--muted)]">
-                    {amountLabel}:{" "}
-                    <span className="font-semibold tabular-nums text-[var(--ink)]">
-                      {formatCOP(linesSum)}
-                    </span>
-                  </p>
-                </>
-              ) : null}
-
-              {prefersList && linesSum == null ? (
-                <input type="hidden" name="amount" value="" />
+                <p className="text-sm text-[var(--muted)]">
+                  {amountLabel}:{" "}
+                  <span className="font-semibold tabular-nums text-[var(--ink)]">
+                    {formatCOP(linesSum)}
+                  </span>
+                </p>
               ) : null}
 
               {mode === "single" ? (
@@ -890,15 +974,16 @@ export function HandoverItemCard({
                     <BreakdownEditor
                       mode={mode}
                       lines={lines}
-                      setLines={setLines}
+                      setLines={(updater) => {
+                        setLines(updater);
+                        markDirtyAndAutosave();
+                      }}
                       domain={item.domain}
                     />
                   </div>
                 </details>
               ) : null}
 
-              <input type="hidden" name="source" value={source} />
-              <input type="hidden" name="comments" value={comments} />
               <div className="rounded-lg border border-[var(--line)]">
                 <button
                   type="button"
@@ -923,7 +1008,10 @@ export function HandoverItemCard({
                       </span>
                       <input
                         value={source}
-                        onChange={(e) => setSource(e.target.value)}
+                        onChange={(e) => {
+                          setSource(e.target.value);
+                          markDirtyAndAutosave();
+                        }}
                         placeholder="Extracto, Excel, oral…"
                         className={inputClass}
                       />
@@ -935,7 +1023,10 @@ export function HandoverItemCard({
                       <textarea
                         rows={2}
                         value={comments}
-                        onChange={(e) => setComments(e.target.value)}
+                        onChange={(e) => {
+                          setComments(e.target.value);
+                          markDirtyAndAutosave();
+                        }}
                         placeholder="Lo que respondió, contradicciones, qué quedó pendiente…"
                         className={inputClass}
                       />
@@ -968,29 +1059,16 @@ export function HandoverItemCard({
                     </Button>
                   </>
                 ) : (
-                  <>
-                    <Button
-                      type="submit"
-                      disabled={pending}
-                      className="px-4 py-2.5 text-sm"
-                      onClick={() => {
-                        advanceRef.current = true;
-                      }}
-                    >
-                      {pending ? "…" : "Guardar y seguir"}
-                    </Button>
-                    <Button
-                      type="submit"
-                      variant="secondary"
-                      disabled={pending}
-                      className="px-3 py-2.5 text-xs"
-                      onClick={() => {
-                        advanceRef.current = false;
-                      }}
-                    >
-                      {pending ? "…" : "Solo guardar"}
-                    </Button>
-                  </>
+                  <Button
+                    type="submit"
+                    disabled={pending}
+                    className="px-4 py-2.5 text-sm"
+                    onClick={() => {
+                      advanceRef.current = true;
+                    }}
+                  >
+                    {pending ? "…" : "Guardar y seguir"}
+                  </Button>
                 )}
                 <Button
                   type="button"
@@ -1009,10 +1087,26 @@ export function HandoverItemCard({
                 >
                   Quitar
                 </Button>
-                {saved ? (
+                {autosaveLabel(autosave) ? (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 text-xs",
+                      autosave === "error"
+                        ? "text-red-700"
+                        : autosave === "saved"
+                          ? "text-emerald-700"
+                          : "text-[var(--muted)]",
+                    )}
+                  >
+                    {autosave === "saved" ? (
+                      <Check className="size-3.5" />
+                    ) : null}
+                    {autosaveLabel(autosave)}
+                  </span>
+                ) : saved ? (
                   <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
                     <Check className="size-3.5" />
-                    Guardado
+                    Guardado · editable
                   </span>
                 ) : null}
                 {error ? (
@@ -1647,12 +1741,15 @@ export function EmpalmeMeetingView({
   items,
   quality,
   summaryLines,
+  canClose = false,
 }: {
   session: HandoverSession;
   items: HandoverItem[];
   quality: QualitySummary;
   summaryLines: Array<{ label: string; amount: string }>;
+  canClose?: boolean;
 }) {
+  const router = useRouter();
   const readOnly = session.status === "CERRADO";
   const reviewedCount = quality.confirmed + quality.declared;
   const pendingItems = useMemo(
@@ -1678,6 +1775,16 @@ export function EmpalmeMeetingView({
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [highlightItemId, setHighlightItemId] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Replica en vivo: el super admin (u otro usuario) ve lo que Ivan va guardando.
+  useEffect(() => {
+    if (readOnly) return;
+    const id = setInterval(() => {
+      router.refresh();
+    }, 20000);
+    return () => clearInterval(id);
+  }, [readOnly, router]);
+
   function persistFocus(domain: string | null, itemId: string | null) {
     if (typeof window === "undefined") return;
     if (!domain) {
@@ -1765,7 +1872,7 @@ export function EmpalmeMeetingView({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 max-w-xl">
             <p className="text-[11px] font-medium tracking-wide text-[var(--muted)]">
-              Modo indagación · tú preguntas · aquí capturas · corte{" "}
+              Autoguardado activo · editable · corte{" "}
               {formatDateCO(session.cutoff_date)}
             </p>
             <p className="font-display text-lg font-bold tabular-nums text-[var(--ink)]">
@@ -1876,17 +1983,19 @@ export function EmpalmeMeetingView({
         </Card>
       )}
 
-      <CollapsibleSection
-        title="Cerrar empalme"
-        subtitle="Solo cuando la reunión haya llegado lo suficientemente lejos"
-        defaultOpen={false}
-      >
-        <CloseHandoverForm
-          session={session}
-          pendingCount={pendingItems.length}
-          summaryLines={summaryLines}
-        />
-      </CollapsibleSection>
+      {canClose && !readOnly ? (
+        <CollapsibleSection
+          title="Cerrar empalme"
+          subtitle="Solo cuando la reunión haya llegado lo suficientemente lejos"
+          defaultOpen={false}
+        >
+          <CloseHandoverForm
+            session={session}
+            pendingCount={pendingItems.length}
+            summaryLines={summaryLines}
+          />
+        </CollapsibleSection>
+      ) : null}
     </div>
   );
 }
