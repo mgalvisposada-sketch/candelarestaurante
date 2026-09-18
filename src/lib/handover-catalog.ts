@@ -160,34 +160,34 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     domain: "documentos",
     item_key: "documentos_entregados",
     label: "Documentos entregados",
-    ask: "¿Qué papeles oficiales se entregan hoy — y cuáles faltan?",
+    ask: "¿Qué papeles oficiales se listan hoy — y cuáles aún faltan?",
     answerMode: "docs",
     expect:
       "Un renglón por documento: RUT, Cámara, estatutos, actas, poderes, contratos de arriendo… Monto 0.",
     answerHint:
-      "Lista también lo que NO se entrega hoy. Eso deja pendientes explícitos.",
+      "Cómo llenar: en la nota de cada renglón escribe entregado / falta / parcial. Si un documento no está, igual créalo y márcalo “falta”.",
   },
   {
     domain: "documentos",
     item_key: "accesos_claves",
     label: "Accesos y claves",
-    ask: "¿Qué accesos administrativos se entregan hoy?",
+    ask: "¿Qué accesos administrativos se registran hoy?",
     answerMode: "docs",
     expect:
       "Banco, correo empresa, DIAN, drive/cloud, pasarelas, apps de domicilio, POS admin si aplica. Monto 0.",
     answerHint:
-      "Sin esto, los socios siguen dependiendo de un solo puente.",
+      "Cómo llenar: un renglón por sistema. En la nota: quién lo tiene o “pendiente de entregar”. Si no aplica, “ninguno”.",
   },
   {
     domain: "documentos",
     item_key: "reportes_entregados",
     label: "Reportes y archivos de números",
-    ask: "¿Qué Excel, reportes o carpetas de números se entregan (aunque estén incompletos)?",
+    ask: "¿Qué Excel, reportes o carpetas de números se registran (aunque estén incompletos)?",
     answerMode: "docs",
     expect:
       "Presupuestos, flujos, listados de CxP, extractos, reportes de venta. Monto 0.",
     answerHint:
-      "Entregar lo que hay, aunque no esté perfecto, gana confianza.",
+      "Cómo llenar: lista el archivo aunque esté a medias. En la nota: completo / parcial / no disponible.",
   },
 
   // ——— 2. Activos ———
@@ -195,12 +195,12 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     domain: "activos",
     item_key: "activos_cocina_barra",
     label: "Equipos cocina y barra",
-    ask: "¿Qué equipos de cocina y de barra (tragos) se reciben?",
+    ask: "¿Qué equipos de cocina y de barra (tragos) se registran?",
     answerMode: "list",
     expect:
       "Solo máquinas/muebles de producir: plancha, freidora, neveras, estación de tragos… Monto opcional.",
     answerHint:
-      "No mezclar con mesas/datáfonos del salón — eso va en la siguiente pregunta.",
+      "Cómo llenar: solo cocina/barra. Mesas, sillas y datáfonos van en la siguiente pregunta. Monto opcional; estado en la nota (ok / regular / dañado).",
   },
   {
     domain: "activos",
@@ -210,7 +210,7 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     answerMode: "list",
     expect: "Mesas, sillas, TV, datáfonos, cámaras… Monto opcional.",
     answerHint:
-      "No mezclar con neveras/freidoras — eso va en cocina y barra.",
+      "Cómo llenar: solo salón/servicio. Neveras y freidoras van en cocina/barra.",
   },
 
   // ——— 3. Inventario ———
@@ -222,7 +222,8 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     answerMode: "single",
     expect:
       "Orden de magnitud en COP. Puedes anclarte en compras de la última semana.",
-    answerHint: "No es food cost: es foto de apertura para socios.",
+    answerHint:
+      "Cómo llenar: un estimado en pesos (no conteo SKU del POS). El alcohol va en “Licores”. Si no sabes el valor exacto, pon un aproximado y marca “Sin prueba”.",
   },
   {
     domain: "inventario",
@@ -233,7 +234,7 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     expect:
       "Ideal: renglones por categoría (tequila, mezcal, cerveza…). Si solo hay un total, úsalo.",
     answerHint:
-      "Distinto de equipos de barra (esas son máquinas). Aquí es el stock.",
+      "Cómo llenar: aquí es el stock (botellas), no las máquinas de barra. Puedes poner categorías o un solo total.",
   },
 
   // ——— 4. Contratos ———
@@ -245,7 +246,8 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     answerMode: "list",
     expect:
       "Arriendo, gas, internet, aseo, apps (Rappi/iFood/etc.), mantenimiento. Canon en monto; vencimiento en nota.",
-    answerHint: "Incluye lo de palabra si afecta operación o caja.",
+    answerHint:
+      "Cómo llenar: nombre del contrato + monto si hay. En la nota: con papel / de palabra, y fecha de vencimiento si la conoces.",
   },
 
   // ——— 5. Operación ———
@@ -253,23 +255,23 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     domain: "operacion",
     item_key: "ventas_por_canal",
     label: "Ventas por canal",
-    ask: "En el mes más reciente que recuerdes, ¿cuánto se vendió por canal?",
+    ask: "En el mes más reciente disponible, ¿cuánto se vendió por canal?",
     answerMode: "list",
     expect:
       "Un renglón por canal: salón, domicilio, Rappi/apps, tragos si se separa. Monto = venta del mes (o promedio).",
     answerHint:
-      "Si no hay reporte formal, declara estimado y anota la fuente.",
+      "Cómo llenar: un renglón por canal con el monto. Si es estimado, en Fuente escribe “estimado” o el nombre del reporte.",
   },
   {
     domain: "operacion",
     item_key: "acciones_comerciales",
     label: "Acciones para vender",
-    ask: "¿Qué acciones concretas se han hecho en los últimos 60–90 días para subir ventas?",
+    ask: "¿Qué acciones se han hecho en los últimos 60–90 días para mover ventas?",
     answerMode: "list",
     expect:
       "Promos, menú, redes, alianzas, horarios, eventos… Un renglón por acción. Monto = costo si hubo.",
     answerHint:
-      "Si la respuesta es “casi nada”, también es información valiosa.",
+      "Cómo llenar: una fila por acción. Si no hubo ninguna, deja un renglón “Ninguna en el período” con monto 0.",
   },
 
   // ——— 6. Personal ———
@@ -281,6 +283,8 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     answerMode: "list",
     expect:
       "Renglones por rol o turno (cocina, meseros, bartender…). Si solo hay un total, un renglón “operativo”.",
+    answerHint:
+      "Cómo llenar: solo gente del local. Admin/oficina no va aquí: eso se llena en «Desglose Holding» (bloque En qué se gasta).",
   },
   {
     domain: "personal",
@@ -289,7 +293,8 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     ask: "¿Hay pagos fijos, % o acuerdos fuera de la nómina formal?",
     answerMode: "list",
     expect: "Persona/rol + monto o % + frecuencia. Incluye acuerdos con chef/socios si aplican.",
-    answerHint: "Tema sensible: se lista para claridad, no para atacar.",
+    answerHint:
+      "Cómo llenar: persona o rol + monto o % + cada cuánto. Si no hay, renglón “Ninguno” con 0.",
   },
 
   // ——— 7. Gastos ———
@@ -302,7 +307,7 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     expect:
       "Arriendo, servicios, gas, internet, aseo, alarmas… Un renglón por concepto. No pongas insumos ni licores (eso es costo).",
     answerHint:
-      "Gasto = lo que se paga para operar el local (sin ser la mercancía que se vende).",
+      "Cómo llenar: un concepto = un renglón. No pongas insumos ni licores de reventa (son costo, no gasto).",
   },
   {
     domain: "gastos",
@@ -311,9 +316,9 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     ask: "En la línea Holding del presupuesto, ¿qué gastos exactos entran y por cuánto?",
     answerMode: "list",
     expect:
-      "Obligatorio desglosar: sueldos admin, honorarios, software, contador, “oficina”, otros.",
+      "Desglosar: sueldos admin, honorarios, software, contador, “oficina”, otros.",
     answerHint:
-      "Un total llamado Holding sin detalle es justo lo que genera alerta en socios.",
+      "Cómo llenar: separa el Holding en conceptos. Si solo conoces el total, pon un renglón “Holding (sin desglose)” y anótalo en la nota.",
   },
   {
     domain: "gastos",
@@ -324,7 +329,7 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     expect:
       "Un renglón por gasto: meta ads, diseñador, pauta, influencers… Monto + en la nota qué se vio a cambio.",
     answerHint:
-      "Si hubo plata pero no se ven acciones, anótalo: “pagado / sin evidencia”.",
+      "Cómo llenar: monto en la fila; en la nota escribe qué campaña o resultado se conoce (o “sin detalle”).",
   },
 
   // ——— 8. Presupuesto (enfoque: gastos, no costos) ———
@@ -337,7 +342,7 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     expect:
       "Solo gastos: Holding, Publicidad, arriendo, servicios, admin… Idealmente del mismo archivo que se entrega.",
     answerHint:
-      "Insumos, food cost y licores de reventa son costo (van con inventario/compras), no gasto. Si salen en el Excel, no los copies aquí: anota en nota “hay línea de costo aparte”.",
+      "Cómo llenar: copia solo líneas de gasto. Insumos/food cost/licores de reventa no van aquí (son costo). Si aparecen en el Excel, en notas escribe “hay líneas de costo aparte”.",
   },
 
   // ——— 9. CxC ———
@@ -349,6 +354,8 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     answerMode: "list",
     expect:
       "Un renglón por tercero. Incluye eventos, vales y cobros de palabra. Si no hay, “ninguno” con 0.",
+    answerHint:
+      "Cómo llenar: deudor + monto. Si no hay nadie, “Ninguno” con 0.",
   },
 
   // ——— 10. CxP ———
@@ -360,7 +367,8 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     answerMode: "list",
     expect:
       "Un renglón por proveedor. En la nota: urgente / de palabra / con factura.",
-    answerHint: "Continuidad del local, no juicio de la gestión.",
+    answerHint:
+      "Cómo llenar: proveedor + monto. En la nota marca: urgente / con factura / de palabra.",
   },
 
   // ——— 11. Tributario ———
@@ -372,6 +380,8 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     answerMode: "list",
     expect:
       "IVA, retefuente, sanciones, acuerdos… o renglón “contador” con nota de contacto.",
+    answerHint:
+      "Cómo llenar: un renglón por obligación. Si no lo maneja quien llena, pon “Preguntar a contador” y el contacto en la nota.",
   },
 
   // ——— 12. Tesorería ———
@@ -383,7 +393,7 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     answerMode: "list",
     expect: "Un renglón por cuenta. Ideal con extracto o captura.",
     answerHint:
-      "Si no hay extracto hoy, declara el saldo y anota la fuente.",
+      "Cómo llenar: banco/cuenta + saldo. Si no hay extracto, pon el saldo y en Fuente escribe de dónde salió el número.",
   },
   {
     domain: "tesoreria",
@@ -391,7 +401,9 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     label: "Caja del local",
     ask: "¿Cuánto efectivo hay hoy en caja / caja fuerte del restaurante?",
     answerMode: "single",
-    expect: "Conteo juntos o estimado. Si queda pendiente, anótalo.",
+    expect: "Conteo o estimado. Si queda pendiente, anótalo.",
+    answerHint:
+      "Cómo llenar: un solo monto del efectivo físico. Si aún no se contó, déjalo pendiente o estimado y dilo en notas.",
   },
   {
     domain: "tesoreria",
@@ -400,6 +412,8 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     ask: "¿Qué datáfonos o pasarelas tienen saldo por consignar?",
     answerMode: "list",
     expect: "Bold, PayU, datáfono banco, etc. Si no hay, “ninguno” con 0.",
+    answerHint:
+      "Cómo llenar: medio + saldo pendiente de consignar. Si no hay, “Ninguno” con 0.",
   },
 
   // ——— 13. Capital ———
@@ -412,7 +426,7 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     expect:
       "Un renglón por socio (Grupo A, Emilio, Steven, Persona X, Esteban…). Monto = lo efectivamente aportado.",
     answerHint:
-      "Si algún renglón es “no sé / solo me lo dijeron”, márcalo declarado.",
+      "Cómo llenar: un renglón por socio con el monto aportado. Si no estás seguro, pon el dato y marca el estado “Sin prueba”.",
   },
   {
     domain: "capital",
@@ -422,6 +436,8 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     answerMode: "list",
     expect:
       "Mismos socios. Monto = faltante. En nota: si estaba condicionado a reportes/claridad.",
+    answerHint:
+      "Cómo llenar: mismos socios que arriba. Monto = lo que falta. Condiciones en la nota si las hay.",
   },
   {
     domain: "capital",
@@ -432,7 +448,7 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     expect:
       "Un renglón por destino: proveedores, arriendo, nómina, Holding, publicidad, caja, deudas…",
     answerHint:
-      "Sin este desglose, pedir más capital suena a pozo sin fondo.",
+      "Cómo llenar: un destino = un renglón con monto. Si no hay desglose, un renglón “Sin desglose disponible” y explícalo en notas.",
   },
   {
     domain: "capital",
@@ -442,15 +458,19 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     answerMode: "single",
     expect:
       "Estimado anclado a CxP crítica / arriendo / caja. Incluye el colchón de las próximas semanas si aplica.",
+    answerHint:
+      "Cómo llenar: un estimado en COP. En notas puedes desglosar (CxP + arriendo + colchón).",
   },
   {
     domain: "capital",
     item_key: "claridad_para_refinanciar",
     label: "Qué falta para refinanciar con tranquilidad",
-    ask: "¿Qué información o soportes faltan para que un socio pueda refinanciar con tranquilidad?",
+    ask: "¿Qué información o soportes faltan para poder revisar una refinanciación con claridad?",
     answerMode: "list",
     expect:
       "Un renglón por requisito: extractos, CxP, desglose Holding, evidencia de publicidad… Monto 0.",
+    answerHint:
+      "Cómo llenar: checklist (monto 0). Cada renglón = un soporte o dato que aún falta.",
   },
 
   // ——— 14. Préstamos ———
@@ -462,7 +482,8 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     answerMode: "list",
     expect:
       "Socio/acreedor + monto + en nota: préstamo / banco / carácter aún ambiguo. Si no hay, “ninguno” con 0.",
-    answerHint: "Listarlo protege a quien puso la plata.",
+    answerHint:
+      "Cómo llenar: acreedor + monto. En la nota: préstamo / banco / aún sin clasificar. No confundir con el % de participación.",
   },
 
   // ——— 15. Socios ———
@@ -470,34 +491,36 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     domain: "socios",
     item_key: "composicion_accionaria",
     label: "Participación",
-    ask: "Confirmemos juntos: ¿quiénes son los socios y con qué %?",
+    ask: "Según acta o Cámara: ¿quiénes son los socios y con qué %?",
     answerMode: "list",
     expect:
       "Renglones esperados: Grupo A 20%, Emilio 20%, Steven 30%, Persona X 20%, Esteban 10% (ajustar si el acta dice otra cosa). % en la nota; monto 0.",
     answerHint:
-      "Contrastar con acta/Cámara. Si no cuadra, se anota sin pelearlo hoy.",
+      "Cómo llenar: socio + % en la nota (monto 0). Si el acta dice distinto, usa el del acta y coméntalo en notas.",
   },
   {
     domain: "socios",
     item_key: "informacion_solo_puente",
-    label: "Información que solo llega por un puente",
-    ask: "¿Qué datos de socios o aportes hoy solo se conocen porque Emilio los dice?",
+    label: "Datos que aún no están documentados",
+    ask: "¿Qué datos de socios o aportes aún no tienen soporte compartido (solo se conocen de forma oral)?",
     answerMode: "list",
     expect:
-      "Ej. “si Grupo A ya puso”, “extractos que solo él tiene”. Monto 0; detalle en nota.",
+      "Ej. confirmación de aportes, extractos pendientes de compartir. Monto 0; detalle en nota.",
     answerHint:
-      "El objetivo no es acusar: es dejar de depender de un solo puente.",
+      "Cómo llenar: lista qué falta documentar o compartir. El objetivo es completar papeles/accesos, no señalar a nadie.",
   },
 
   // ——— 16. Otros ———
   {
     domain: "otros",
     item_key: "otros_riesgos",
-    label: "Riesgos, promesas y contactos delicados",
-    ask: "¿Hay algo (riesgo, promesa o contacto) que la nueva admin deba saber para no sorprenderse?",
+    label: "Avisos operativos y contactos clave",
+    ask: "¿Hay algo (aviso, promesa o contacto) que convenga registrar para la continuidad del local?",
     answerMode: "list",
     expect:
-      "Riesgos, promesas, proveedores/arrendador delicados. Monto 0 si no hay plata.",
+      "Avisos, promesas, contactos de proveedores/arrendador. Monto 0 si no hay plata.",
+    answerHint:
+      "Cómo llenar: un renglón por aviso o contacto. Si no hay nada, “Ninguno” con 0.",
   },
 ];
 
@@ -882,72 +905,72 @@ export function isRetiredHandoverItem(item: {
 }
 
 /**
- * Notas aclaratorias con ejemplos básicos (lenguaje de restaurante, no jerga).
- * Sirven para que el facilitador y quien responde no mezclen temas.
+ * Ejemplos de llenado (capacitación): cómo completar cada pregunta
+ * sin mezclar temas y con lenguaje neutro.
  */
 export const HANDOVER_EXAMPLES: Record<string, string> = {
   documentos_entregados:
-    "Ejemplo: RUT → entregado; estatutos → faltan. En la nota de cada renglón escribe entregado / falta / parcial. No es lista de equipos ni de plata.",
+    "Ejemplo: RUT → entregado; estatutos → falta. En cada nota escribe entregado / falta / parcial. Aquí no van equipos ni montos de plata.",
   accesos_claves:
-    "Ejemplo: banca en línea, correo @candela, drive de Excel, admin de Rappi. Si solo Emilio tiene el acceso, anótalo: así dejan de depender de un solo puente.",
+    "Ejemplo: banca en línea, correo, drive, admin de Rappi. En la nota: quién lo tiene o “pendiente”.",
   reportes_entregados:
-    "Ejemplo: Excel del presupuesto, listado de deudas a proveedores, extracto del banco. Aunque esté incompleto o 'a medias', se lista.",
+    "Ejemplo: Excel de presupuesto, listado CxP, extracto bancario. Aunque esté incompleto, se lista y se marca parcial.",
   activos_cocina_barra:
-    "Solo lo que cocina o prepara tragos. Ejemplo: plancha, freidora, nevera, estación de barra, licuadora. No pongas mesas, sillas ni datáfonos (eso es la otra pregunta de este bloque).",
+    "Ejemplo: plancha, freidora, nevera, estación de barra. No pongas mesas ni datáfonos (eso es salón).",
   activos_salon_otros:
-    "Solo salón y servicio al cliente. Ejemplo: mesas, sillas, TV, datáfonos, cámaras. No pongas neveras ni freidoras (eso es cocina/barra).",
+    "Ejemplo: mesas, sillas, TV, datáfonos, cámaras. No pongas neveras ni freidoras (eso es cocina/barra).",
   inventario_alimentos:
-    "Valor aproximado de lo que hay hoy para cocinar + soft drinks/aguas. Ejemplo: 'unos $X de la última compra'. No es conteo SKU del POS. El alcohol va en licores.",
+    "Ejemplo: un estimado en COP de lo que hay para cocinar + soft drinks. No es conteo SKU. El alcohol va en licores.",
   inventario_licores:
-    "Botellas y stock de barra. Ejemplo: tequila, mezcal, cerveza. Es distinto de 'equipos de barra' (esas son máquinas/muebles).",
+    "Ejemplo: tequila, mezcal, cerveza (stock). Las máquinas de barra van en equipos, no aquí.",
   compromisos_contratos:
-    "Papeles o acuerdos vivos del local. Ejemplo: arriendo, gas, internet, contrato con Rappi. Si es de palabra, igual se lista.",
+    "Ejemplo: arriendo, gas, internet, Rappi. En la nota: con papel o de palabra; vencimiento si se conoce.",
   ventas_por_canal:
-    "Cuánto entró por cada forma de vender. Ejemplo: salón $X, Rappi $Y, tragos $Z. No es el inventario ni el gasto de publicidad.",
+    "Ejemplo: salón $X, Rappi $Y, tragos $Z. En Fuente indica el reporte o si es estimado.",
   acciones_comerciales:
-    "Cosas concretas hechas para vender más. Ejemplo: promo 2x1, pauta en Instagram, cambio de carta. Si no se hizo casi nada, también se anota.",
+    "Ejemplo: promo 2x1, pauta Instagram, cambio de carta. Si no hubo acciones, renglón “Ninguna” con 0.",
   costo_personal_operativo:
-    "Solo gente del local día a día. Ejemplo: cocina, meseros, bartender. El costo de admin/oficina NO va aquí: más adelante, en el bloque «En qué se gasta», pregunta «Desglose Holding».",
+    "Ejemplo: cocina, meseros, bartender. Admin/oficina se llena después en Desglose Holding.",
   acuerdos_personales:
-    "Pagos especiales fuera de nómina formal. Ejemplo: % al chef, fijo a un socio. Si no hay, marca ninguno.",
+    "Ejemplo: % al chef, fijo mensual a un rol. Si no hay, “Ninguno” con 0.",
   gasto_fijos_local:
-    "Gasto fijo del local, no mercancía. Ejemplo: arriendo, luz, gas, internet. Insumos/tortillas/licores de reventa NO van aquí (son costo). Holding y publicidad tienen su propia pregunta.",
+    "Ejemplo: arriendo, luz, gas, internet. No insumos ni licores de reventa (son costo).",
   gasto_holding:
-    "Desglose de la línea Holding del presupuesto (gasto admin). Ejemplo: sueldo admin, contador, software. Si solo hay un total sin detalle, anótalo: eso es justo lo que genera desconfianza.",
+    "Ejemplo: sueldo admin, contador, software. Si solo hay total, un renglón “Holding (sin desglose)” + nota.",
   gasto_publicidad:
-    "Gasto en pauta/diseño y qué se vio a cambio. Ejemplo: Meta Ads $X — sí hubo campaña / no se vio resultado. No es Holding ni food cost.",
+    "Ejemplo: Meta Ads $X — en la nota la campaña o “sin detalle”. No mezclar con Holding.",
   presupuesto_lineas:
-    "Aquí solo gastos del presupuesto. Ejemplo: Holding $X, Publicidad $Y, Arriendo $Z. Insumos / food cost / licores de reventa = costo (no los listes aquí; ya se ven en inventario o compras).",
+    "Ejemplo: Holding $X, Publicidad $Y, Arriendo $Z. No copies insumos/food cost aquí.",
   cuentas_por_cobrar:
-    "Quién le debe a Candela. Ejemplo: un evento, un convenio, cobro de palabra. No es lo que Candela debe a proveedores.",
+    "Ejemplo: evento $X, convenio $Y. Si no hay, “Ninguno” con 0.",
   cuentas_por_pagar:
-    "A quién le debe Candela. Ejemplo: proveedor de tortilla, de licores. En la nota marca si urge o si es solo de palabra.",
+    "Ejemplo: proveedor tortillas $X. En la nota: urgente / con factura / de palabra.",
   obligaciones_tributarias:
-    "Impuestos, sanciones o acuerdos. Ejemplo: IVA, retefuente. Si no lo maneja quien entrega, anota 'preguntar a contador'.",
+    "Ejemplo: IVA, retefuente. Si no se maneja aquí, “Preguntar a contador” + contacto en nota.",
   bancos:
-    "Saldos en cuentas bancarias a la fecha de corte. Ejemplo: Bancolombia ahorros $X. Ideal con extracto o captura.",
+    "Ejemplo: Bancolombia ahorros $X. Si no hay extracto, anota la fuente del número.",
   caja:
-    "Efectivo físico del local hoy. Ejemplo: lo contado en caja fuerte. No es el saldo del banco.",
+    "Ejemplo: efectivo contado en caja fuerte $X. Distinto del saldo del banco.",
   pasarelas:
-    "Plata en datáfonos/pasarelas por consignar. Ejemplo: Bold, datáfono banco. Si no hay, ninguno.",
+    "Ejemplo: Bold $X por consignar. Si no hay, “Ninguno” con 0.",
   capital_inyectado_por_socio:
-    "Cuánto puso cada socio de verdad. Ejemplo: Steven $X con transferencia. Distinto de 'préstamo a devolver' y de la participación %.",
+    "Ejemplo: un renglón por socio con el monto aportado. Distinto de préstamo y del % de participación.",
   capital_pendiente_por_socio:
-    "Cuánto falta por inyectar de lo comprometido. Ejemplo: Grupo A falta $Y (condicionado a claridad).",
+    "Ejemplo: Socio A falta $Y. Condiciones (si hay) en la nota.",
   capital_destino_inyeccion:
-    "A dónde se fue el capital que sí entró. Ejemplo: $ a proveedores, $ a Holding, $ a publicidad.",
+    "Ejemplo: $ a proveedores, $ a Holding, $ a publicidad. Un destino por renglón.",
   capital_saneamiento:
-    "Plata que hace falta ahora para apagar incendios y operar unas semanas. Ejemplo: CxP crítica + arriendo + colchón corto.",
+    "Ejemplo: estimado para poner al día lo urgente + colchón corto. Detalle en notas.",
   claridad_para_refinanciar:
-    "Checklist de lo que falta para que un socio financie con tranquilidad. Ejemplo: extractos, desglose Holding, evidencia de publicidad. Monto 0.",
+    "Ejemplo: extractos, CxP, desglose Holding (monto 0; es checklist de lo que falta).",
   deuda_socios:
-    "Plata a devolver (préstamo, banco) o aporte aún ambiguo capital vs préstamo. Ejemplo: Emilio prestó $X. No confundir con % de participación.",
+    "Ejemplo: préstamo de un socio $X. En nota: préstamo / banco / sin clasificar. No es el %.",
   composicion_accionaria:
-    "Quién es socio y con qué %. Ejemplo: Steven 30%, Emilio 20%… Contrastar con acta. No es cuánto dinero inyectaron.",
+    "Ejemplo: socio + % en la nota (monto 0). Usa lo del acta si está disponible.",
   informacion_solo_puente:
-    "Datos que hoy solo se saben porque Emilio los cuenta. Ejemplo: 'si Grupo A ya puso'. El objetivo es volverlos documento o acceso compartido.",
+    "Ejemplo: “confirmación de aporte pendiente de documento”, “extracto por compartir”. Lista qué falta documentar.",
   otros_riesgos:
-    "Algo que pueda sorprender a la nueva admin. Ejemplo: promesa a un proveedor, arrendador delicado, riesgo de corte de servicio.",
+    "Ejemplo: aviso a un proveedor, contacto del arrendador. Si no hay, “Ninguno”.",
 };
 
 export function itemExample(itemKey: string): string | null {

@@ -187,7 +187,7 @@ function StatusChooser({
   return (
     <fieldset className="space-y-2">
       <legend className="text-sm font-medium text-[var(--ink)]">
-        ¿Cómo dejas esta pregunta?
+        Estado de esta respuesta
       </legend>
       <input type="hidden" name={name} value={value} />
       <div className="grid gap-2 sm:grid-cols-3">
@@ -766,7 +766,7 @@ export function HandoverItemCard({
         <div className="border-t border-[var(--line)] px-3.5 py-4 sm:px-5">
           <div className="mb-4 rounded-2xl bg-[var(--ink)] px-4 py-4 text-white">
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/55">
-              Pregunta en voz alta
+              Qué debes completar
             </p>
             <p className="mt-1.5 font-display text-lg font-bold leading-snug tracking-tight sm:text-xl">
               {ask}
@@ -776,7 +776,7 @@ export function HandoverItemCard({
           {example ? (
             <div className="mb-4 rounded-xl border border-dashed border-[var(--ink)]/15 bg-[var(--bg)] px-3.5 py-3">
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
-                Nota aclaratoria · ejemplo
+                Ejemplo de llenado
               </p>
               <p className="mt-1.5 text-sm leading-relaxed text-[var(--ink)]">
                 {example}
@@ -799,7 +799,7 @@ export function HandoverItemCard({
               {answerHint ? (
                 <div className="rounded-xl bg-[var(--gold-soft)] px-3 py-2.5">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--warn)]">
-                    Tip de indagación
+                    Tip de llenado
                   </p>
                   <p className="mt-1 text-xs leading-relaxed text-[var(--ink)]">
                     {answerHint}
