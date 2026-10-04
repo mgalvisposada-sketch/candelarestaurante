@@ -125,8 +125,14 @@ export const APP_MODULES: AppModuleDef[] = [
     href: "/personal",
     mvp: 3,
     submodules: [
-      { key: "personal.maestro", label: "Personal administrativo" },
-      { key: "personal.contratos", label: "Contratos laborales" },
+      { key: "personal.empleados", label: "Empleados" },
+      { key: "personal.novedades", label: "Novedades en turno" },
+      { key: "personal.novedades.aprobar", label: "Aprobar novedades" },
+      { key: "personal.liquidacion", label: "Liquidación quincenal" },
+      { key: "personal.parametros", label: "Parámetros de nómina" },
+      { key: "personal.simulacion", label: "Simulación quincenal" },
+      { key: "personal.maestro", label: "Personal administrativo (legado)" },
+      { key: "personal.contratos", label: "Contratos laborales (legado)" },
     ],
   },
   {
@@ -202,6 +208,8 @@ const ALL_EXCEPT_CONFIG_ADMIN = ALL_PERMISSION_KEYS.filter(
 export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
   SUPER_ADMIN: [...ALL_PERMISSION_KEYS],
   GESTION: [...ALL_EXCEPT_CONFIG_ADMIN, "configuracion"],
+  /** Administrador operativo del local: solo reportar novedades de turno. */
+  ADMIN_LOCAL: ["personal", "personal.novedades"],
   SOCIO: [
     "inicio",
     "inicio.resumen",

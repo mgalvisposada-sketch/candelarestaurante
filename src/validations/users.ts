@@ -3,6 +3,7 @@ import { z } from "zod";
 export const APP_ROLES = [
   "SUPER_ADMIN",
   "GESTION",
+  "ADMIN_LOCAL",
   "SOCIO",
   "CONTADOR",
   "LECTURA",

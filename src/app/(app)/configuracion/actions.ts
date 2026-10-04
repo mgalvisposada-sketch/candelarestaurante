@@ -42,11 +42,21 @@ async function seedMembershipPermissions(opts: {
   membershipId: string;
   role: AppRole;
   actorId: string;
+  replace?: boolean;
 }) {
   const keys = ROLE_DEFAULT_PERMISSIONS[opts.role] ?? [];
-  if (keys.length === 0) return;
-
   const supabase = await createClient();
+
+  if (opts.replace) {
+    await supabase
+      .from("user_module_permissions")
+      .delete()
+      .eq("organization_id", opts.organizationId)
+      .eq("membership_id", opts.membershipId);
+  }
+
+  if (keys.length === 0 || opts.role === "SUPER_ADMIN") return;
+
   const rows = keys.map((permission_key) => ({
     organization_id: opts.organizationId,
     membership_id: opts.membershipId,
@@ -162,7 +172,7 @@ export async function createSystemUserAction(
     },
   });
 
-  revalidatePath("/configuracion");
+  // El cliente hace router.refresh(); evita doble refresh que deja el botón colgado.
   return { ok: true, id: membership.id };
 }
 
@@ -283,6 +293,16 @@ export async function updateSystemUserAction(
 
   if (membershipError) return { ok: false, error: membershipError.message };
 
+  if (membership.role !== v.role) {
+    await seedMembershipPermissions({
+      organizationId: ctx.organization.id,
+      membershipId: v.membership_id,
+      role: v.role,
+      actorId: ctx.userId,
+      replace: true,
+    });
+  }
+
   await supabase.from("audit_logs").insert({
     organization_id: ctx.organization.id,
     user_id: ctx.userId,
@@ -295,10 +315,10 @@ export async function updateSystemUserAction(
       is_active: v.is_active !== "false",
       password_changed: Boolean(v.password),
       target_user_id: v.user_id,
+      permissions_reset: membership.role !== v.role,
     },
   });
 
-  revalidatePath("/configuracion");
   return { ok: true, id: v.membership_id };
 }
 

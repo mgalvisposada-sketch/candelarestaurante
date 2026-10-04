@@ -166,11 +166,13 @@ export default async function ConfiguracionPage() {
                     ? " — usuarios, permisos y configuración crítica"
                     : role === "GESTION"
                       ? " — operación diaria (sin admin de usuarios)"
-                      : role === "SOCIO"
-                        ? " — gobierno societario"
-                        : role === "CONTADOR"
-                          ? " — financiero / tributario"
-                          : " — solo consulta"}
+                      : role === "ADMIN_LOCAL"
+                        ? " — administrador del local: solo reportar novedades"
+                        : role === "SOCIO"
+                          ? " — gobierno societario"
+                          : role === "CONTADOR"
+                            ? " — financiero / tributario"
+                            : " — solo consulta"}
                 </li>
               ))}
             </ul>

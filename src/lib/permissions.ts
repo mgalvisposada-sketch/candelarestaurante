@@ -69,6 +69,22 @@ export function requireModuleAccess(
   }
 }
 
+/**
+ * Submódulo de Personal. Si no tiene el permiso puntual pero sí novedades,
+ * manda a /personal/novedades (caso Admin del local).
+ */
+export function requirePersonalSubAccess(
+  ctx: Pick<OrgContext, "role" | "permissions"> | null,
+  permissionKey: string,
+): asserts ctx is NonNullable<typeof ctx> {
+  if (!ctx) redirect("/login");
+  if (ctxCanAccess(ctx, permissionKey)) return;
+  if (ctxCanAccess(ctx, "personal.novedades")) {
+    redirect("/personal/novedades");
+  }
+  requireModuleAccess(ctx, "personal");
+}
+
 export function requirePathModuleAccess(
   ctx: Pick<OrgContext, "role" | "permissions"> | null,
   pathname: string,

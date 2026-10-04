@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
   createSystemUserAction,
@@ -25,6 +26,7 @@ const inputClass =
 const ROLES: AppRole[] = [
   "SUPER_ADMIN",
   "GESTION",
+  "ADMIN_LOCAL",
   "SOCIO",
   "CONTADOR",
   "LECTURA",
@@ -54,6 +56,7 @@ function RoleSelect({
 }
 
 export function CreateSystemUserForm() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -73,12 +76,24 @@ export function CreateSystemUserForm() {
   return (
     <form
       className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
-      action={(fd) => {
+      onSubmit={(e) => {
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
         setError(null);
         startTransition(async () => {
-          const r = await createSystemUserAction(fd);
-          if (!r.ok) setError(r.error ?? "Error");
-          else setOpen(false);
+          try {
+            const r = await createSystemUserAction(fd);
+            if (!r.ok) {
+              setError(r.error ?? "Error");
+              return;
+            }
+            setOpen(false);
+            router.refresh();
+          } catch (err) {
+            setError(
+              err instanceof Error ? err.message : "Error inesperado al crear",
+            );
+          }
         });
       }}
     >
@@ -142,6 +157,7 @@ export function SystemUsersTable({
   users: SystemUserRow[];
   currentUserId: string;
 }) {
+  const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -177,12 +193,26 @@ export function SystemUsersTable({
                   {isEditing ? (
                     <form
                       className="space-y-3 py-1"
-                      action={(fd) => {
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const fd = new FormData(e.currentTarget);
                         setError(null);
                         startTransition(async () => {
-                          const r = await updateSystemUserAction(fd);
-                          if (!r.ok) setError(r.error ?? "Error");
-                          else setEditingId(null);
+                          try {
+                            const r = await updateSystemUserAction(fd);
+                            if (!r.ok) {
+                              setError(r.error ?? "Error");
+                              return;
+                            }
+                            setEditingId(null);
+                            router.refresh();
+                          } catch (err) {
+                            setError(
+                              err instanceof Error
+                                ? err.message
+                                : "Error inesperado al guardar",
+                            );
+                          }
                         });
                       }}
                     >

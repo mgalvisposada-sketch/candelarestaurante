@@ -1,6 +1,7 @@
 export type AppRole =
   | "SUPER_ADMIN"
   | "GESTION"
+  | "ADMIN_LOCAL"
   | "SOCIO"
   | "CONTADOR"
   | "LECTURA";
@@ -32,6 +33,7 @@ export const WRITE_ROLES: AppRole[] = ["SUPER_ADMIN", "GESTION"];
 export const ROLE_LABELS: Record<AppRole, string> = {
   SUPER_ADMIN: "Super admin",
   GESTION: "Gestión",
+  ADMIN_LOCAL: "Admin del local",
   SOCIO: "Socio",
   CONTADOR: "Contador",
   LECTURA: "Solo lectura",

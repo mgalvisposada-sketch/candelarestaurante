@@ -1,52 +1,67 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
-import {
-  createEmployeeAction,
-  createEmployeeContractAction,
-  softDeleteEmployeeAction,
-} from "./actions";
+import { createEmployeeAction, softDeleteEmployeeAction } from "./actions";
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP } from "@/lib/money";
-import { formatDateCO, todayInBogota } from "@/lib/dates";
+import { formatDateCO } from "@/lib/dates";
+import { formatTimeHm, scheduleDiffSummary } from "@/lib/payroll";
+import type { PayrollScheduleInput } from "@/lib/payroll";
+import { EMPLOYMENT_TYPES } from "@/validations/hr";
 
 export type EmployeeRow = {
   id: string;
   full_name: string;
   id_number: string | null;
+  email: string | null;
+  phone: string | null;
   position_title: string | null;
   hire_date: string | null;
+  contract_end_date: string | null;
   employment_type: string;
+  basic_salary: number | string | null;
   salary_or_fee: number | string | null;
   monthly_company_cost: number | string | null;
   eps: string | null;
   arl: string | null;
+  ordinary_entry_time: string | null;
+  ordinary_exit_time: string | null;
+  break_minutes: number | null;
+  uses_custom_schedule: boolean;
   is_active: boolean;
 };
 
-export type ContractRow = {
-  id: string;
-  employee_id: string;
-  start_date: string | null;
-  end_date: string | null;
-  notes: string | null;
+const EMPLOYMENT_LABELS: Record<string, string> = {
+  INDEFINIDO: "Indefinido",
+  TERMINO_FIJO: "Término fijo",
+  OBRA_LABOR: "Obra o labor",
+  APRENDIZAJE: "Aprendizaje",
+  PRESTACION_SERVICIOS: "Prestación de servicios",
+  MEDIO_TIEMPO: "Medio tiempo",
+  LABORAL: "Laboral",
+  TEMPORAL: "Temporal",
+  OTRO: "Otro",
 };
 
 const inputClass =
   "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
 
-function daysUntil(date: string | null) {
-  if (!date) return null;
-  const today = todayInBogota();
-  const t = new Date(`${today}T12:00:00`);
-  const d = new Date(`${date}T12:00:00`);
-  return Math.round((d.getTime() - t.getTime()) / (1000 * 60 * 60 * 24));
-}
+export type JobPositionOption = {
+  id: string;
+  name: string;
+  arl_risk_level: string;
+};
 
-export function CreateEmployeeForm() {
+export function CreateEmployeeForm({
+  positions = [],
+}: {
+  positions?: JobPositionOption[];
+}) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [arl, setArl] = useState("I");
   if (!open) {
     return (
       <button
@@ -54,7 +69,7 @@ export function CreateEmployeeForm() {
         onClick={() => setOpen(true)}
         className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white"
       >
-        Nueva persona
+        Nuevo empleado
       </button>
     );
   }
@@ -71,11 +86,18 @@ export function CreateEmployeeForm() {
       }}
     >
       <div className="flex justify-between">
-        <h3 className="font-medium">Personal administrativo</h3>
-        <button type="button" className="text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
+        <h3 className="font-medium">Nuevo empleado</h3>
+        <button
+          type="button"
+          className="text-sm text-[var(--muted)]"
+          onClick={() => setOpen(false)}
+        >
           Cancelar
         </button>
       </div>
+      <p className="text-sm text-[var(--muted)]">
+        Hereda el Horario Candela vigente. Puede personalizarlo en su carpeta.
+      </p>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="block text-sm md:col-span-2">
           <span className="mb-1.5 block text-[var(--muted)]">Nombre</span>
@@ -86,29 +108,80 @@ export function CreateEmployeeForm() {
           <input name="id_number" className={inputClass} />
         </label>
         <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Cargo</span>
+          <span className="mb-1.5 block text-[var(--muted)]">Cargo Candela</span>
+          <select
+            name="position_id"
+            className={inputClass}
+            defaultValue=""
+            onChange={(e) => {
+              const pos = positions.find((p) => p.id === e.target.value);
+              if (pos) setArl(pos.arl_risk_level);
+            }}
+          >
+            <option value="">Sin cargo maestro…</option>
+            {positions.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} (ARL {p.arl_risk_level})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1.5 block text-[var(--muted)]">Cargo (texto)</span>
           <input name="position_title" className={inputClass} />
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1.5 block text-[var(--muted)]">Email</span>
+          <input name="email" type="email" className={inputClass} />
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1.5 block text-[var(--muted)]">Teléfono</span>
+          <input name="phone" className={inputClass} />
         </label>
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">Fecha ingreso</span>
           <input type="date" name="hire_date" className={inputClass} />
         </label>
         <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Tipo vínculo</span>
-          <select name="employment_type" defaultValue="LABORAL" className={inputClass}>
-            <option value="LABORAL">Laboral</option>
-            <option value="PRESTACION_SERVICIOS">Prestación de servicios</option>
-            <option value="TEMPORAL">Temporal</option>
-            <option value="OTRO">Otro</option>
+          <span className="mb-1.5 block text-[var(--muted)]">Fin de contrato</span>
+          <input type="date" name="contract_end_date" className={inputClass} />
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1.5 block text-[var(--muted)]">Tipo de contrato</span>
+          <select name="employment_type" defaultValue="INDEFINIDO" className={inputClass}>
+            {EMPLOYMENT_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {EMPLOYMENT_LABELS[t] ?? t}
+              </option>
+            ))}
           </select>
         </label>
         <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Salario / honorarios</span>
-          <input name="salary_or_fee" className={inputClass} />
+          <span className="mb-1.5 block text-[var(--muted)]">Salario básico</span>
+          <input name="basic_salary" required className={inputClass} />
         </label>
         <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Costo empresa / mes</span>
-          <input name="monthly_company_cost" className={inputClass} />
+          <span className="mb-1.5 block text-[var(--muted)]">Nivel riesgo ARL</span>
+          <select
+            name="arl_risk_level"
+            value={arl}
+            onChange={(e) => setArl(e.target.value)}
+            className={inputClass}
+          >
+            {["I", "II", "III", "IV", "V"].map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1.5 block text-[var(--muted)]">Auxilio transporte</span>
+          <select name="receives_transport_aid" defaultValue="auto" className={inputClass}>
+            <option value="auto">Automático (≤ 2 SMMLV)</option>
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>
         </label>
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">EPS</span>
@@ -119,8 +192,14 @@ export function CreateEmployeeForm() {
           <input name="arl" className={inputClass} />
         </label>
       </div>
-      {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
-      <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white">
+      {error ? (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white"
+      >
         {pending ? "Guardando…" : "Guardar"}
       </button>
     </form>
@@ -129,79 +208,100 @@ export function CreateEmployeeForm() {
 
 export function EmployeeCard({
   employee,
-  contracts,
+  candelaSchedule,
 }: {
   employee: EmployeeRow;
-  contracts: ContractRow[];
+  candelaSchedule: PayrollScheduleInput | null;
 }) {
-  const [adding, setAdding] = useState(false);
   const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-
-  const alerts = contracts
-    .map((c) => ({ c, days: daysUntil(c.end_date) }))
-    .filter((x) => x.days !== null && x.days <= 60);
+  const salary = employee.basic_salary ?? employee.salary_or_fee;
+  const custom = employee.uses_custom_schedule;
+  const diff =
+    custom && candelaSchedule
+      ? scheduleDiffSummary(
+          {
+            ordinary_entry_time: employee.ordinary_entry_time ?? "10:00",
+            ordinary_exit_time: employee.ordinary_exit_time ?? "22:00",
+            break_minutes: employee.break_minutes ?? 0,
+            uses_custom_schedule: true,
+          },
+          candelaSchedule,
+        )
+      : null;
 
   return (
     <article className="rounded-xl border border-[var(--line)] bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="font-medium">{employee.full_name}</h3>
+          <h3 className="font-medium">
+            <Link
+              href={`/personal/${employee.id}`}
+              className="hover:text-[var(--accent)]"
+            >
+              {employee.full_name}
+            </Link>
+          </h3>
           <p className="text-sm text-[var(--muted)]">
-            {employee.position_title || "Sin cargo"} · {employee.employment_type}
-            {employee.hire_date ? ` · ingreso ${formatDateCO(employee.hire_date)}` : ""}
+            {employee.position_title || "Sin cargo"} ·{" "}
+            {EMPLOYMENT_LABELS[employee.employment_type] ??
+              employee.employment_type}
+            {employee.hire_date
+              ? ` · ingreso ${formatDateCO(employee.hire_date)}`
+              : ""}
+            {employee.contract_end_date
+              ? ` · hasta ${formatDateCO(employee.contract_end_date)}`
+              : ""}
           </p>
+          {(employee.email || employee.phone) && (
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              {[employee.email, employee.phone].filter(Boolean).join(" · ")}
+            </p>
+          )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Badge tone={employee.is_active ? "ok" : "neutral"}>
             {employee.is_active ? "Activo" : "Inactivo"}
           </Badge>
-          {alerts.length > 0 ? <Badge tone="warn">Contrato por vencer</Badge> : null}
+          {custom ? <Badge tone="info">Horario personalizado</Badge> : null}
         </div>
       </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-2 text-sm">
+
+      <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
         <div>
-          Salario/fee:{" "}
-          <strong>
-            {employee.salary_or_fee != null ? formatCOP(employee.salary_or_fee) : "—"}
-          </strong>
+          Salario básico:{" "}
+          <strong>{salary != null ? formatCOP(salary) : "—"}</strong>
         </div>
         <div>
-          Costo empresa:{" "}
+          Turno:{" "}
           <strong>
-            {employee.monthly_company_cost != null
-              ? formatCOP(employee.monthly_company_cost)
-              : "—"}
+            {formatTimeHm(employee.ordinary_entry_time)} –{" "}
+            {formatTimeHm(employee.ordinary_exit_time)}
           </strong>
+          {employee.break_minutes
+            ? ` · descanso ${employee.break_minutes} min`
+            : ""}
         </div>
       </div>
-      {contracts.length > 0 ? (
-        <ul className="mt-3 space-y-1 text-sm text-[var(--muted)]">
-          {contracts.map((c) => (
-            <li key={c.id}>
-              Contrato {c.start_date ? formatDateCO(c.start_date) : "?"} →{" "}
-              {c.end_date ? formatDateCO(c.end_date) : "indefinido"}
-              {daysUntil(c.end_date) !== null && (daysUntil(c.end_date) as number) <= 60
-                ? ` (${daysUntil(c.end_date)} días)`
-                : ""}
-            </li>
-          ))}
-        </ul>
+
+      {diff ? (
+        <p className="mt-2 text-xs text-[var(--muted)]" title={diff}>
+          Cambia frente al general: {diff}
+        </p>
       ) : null}
-      <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
-          onClick={() => setAdding((v) => !v)}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Link
+          href={`/personal/${employee.id}`}
+          className="rounded-lg bg-[var(--ink)] px-3 py-1.5 text-sm text-white"
         >
-          Contrato
-        </button>
+          Abrir carpeta
+        </Link>
         <button
           type="button"
           className="rounded-lg px-3 py-1.5 text-sm text-red-700"
           disabled={pending}
           onClick={() => {
-            if (!confirm("¿Desactivar persona?")) return;
+            if (!confirm("¿Desactivar empleado?")) return;
             startTransition(async () => {
               await softDeleteEmployeeAction(employee.id);
             });
@@ -210,38 +310,6 @@ export function EmployeeCard({
           Desactivar
         </button>
       </div>
-      {adding ? (
-        <form
-          className="mt-4 grid gap-3 border-t border-[var(--line)] pt-4 md:grid-cols-2"
-          action={(fd) => {
-            fd.set("employee_id", employee.id);
-            setError(null);
-            startTransition(async () => {
-              const r = await createEmployeeContractAction(fd);
-              if (!r.ok) setError(r.error ?? "Error");
-              else setAdding(false);
-            });
-          }}
-        >
-          <input type="hidden" name="employee_id" value={employee.id} />
-          <label className="block text-sm">
-            <span className="mb-1.5 block text-[var(--muted)]">Inicio</span>
-            <input type="date" name="start_date" className={inputClass} />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1.5 block text-[var(--muted)]">Fin</span>
-            <input type="date" name="end_date" className={inputClass} />
-          </label>
-          <label className="block text-sm md:col-span-2">
-            <span className="mb-1.5 block text-[var(--muted)]">Notas</span>
-            <input name="notes" className={inputClass} />
-          </label>
-          {error ? <p className="text-sm text-red-700 md:col-span-2">{error}</p> : null}
-          <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white md:col-span-2">
-            Guardar contrato
-          </button>
-        </form>
-      ) : null}
     </article>
   );
 }
