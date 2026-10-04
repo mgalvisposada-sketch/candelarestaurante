@@ -203,7 +203,10 @@ export function calendarDaysInclusive(startIso: string, endIso: string): number 
 
 export function contractGrantsVacations(employmentType: string | null): boolean {
   if (!employmentType) return true;
-  return employmentType !== "PRESTACION_SERVICIOS";
+  return (
+    employmentType !== "PRESTACION_SERVICIOS" &&
+    employmentType !== "POR_TURNO"
+  );
 }
 
 /** Causación proporcional: días_trabajados × 15 / 360. */
@@ -289,7 +292,10 @@ export function computeVacationEntitlement(
   if (!contractGrantsVacations(input.employmentType)) {
     return {
       ...empty,
-      reason: "La prestación de servicios no causa vacaciones del CST.",
+      reason:
+        input.employmentType === "POR_TURNO"
+          ? "Por turno/día (prestador) no causa vacaciones del CST."
+          : "La prestación de servicios no causa vacaciones del CST.",
     };
   }
   if (!hireDate) {

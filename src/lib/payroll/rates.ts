@@ -51,8 +51,14 @@ export function arlPctForLevel(
 export function isLaborContract(employmentType: string): boolean {
   return (
     employmentType !== "PRESTACION_SERVICIOS" &&
+    employmentType !== "POR_TURNO" &&
     employmentType !== "OTRO"
   );
+}
+
+/** Prestador pagado por día/turno (sin nómina laboral). */
+export function isShiftDayContractor(employmentType: string): boolean {
+  return employmentType === "POR_TURNO";
 }
 
 export function transportAidApplies(

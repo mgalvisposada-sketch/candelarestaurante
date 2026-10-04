@@ -29,7 +29,8 @@ export function contractRequiresEndDate(employmentType: string): boolean {
     employmentType === "TERMINO_FIJO" ||
     employmentType === "OBRA_LABOR" ||
     employmentType === "APRENDIZAJE" ||
-    employmentType === "TEMPORAL"
+    employmentType === "TEMPORAL" ||
+    employmentType === "POR_TURNO"
   );
 }
 

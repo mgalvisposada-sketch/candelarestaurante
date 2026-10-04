@@ -48,7 +48,7 @@ export default async function NovedadesPage() {
       .limit(200),
     supabase
       .from("employees")
-      .select("id, full_name")
+      .select("id, full_name, employment_type, basic_salary, salary_or_fee")
       .eq("organization_id", ctx.organization.id)
       .eq("is_active", true)
       .is("deleted_at", null)
@@ -62,6 +62,12 @@ export default async function NovedadesPage() {
   }));
 
   const canApprove = ctxCanAccess(ctx, "personal.novedades.aprobar");
+  const employeeOptions = (empRows ?? []).map((e) => ({
+    id: e.id as string,
+    full_name: e.full_name as string,
+    employment_type: (e.employment_type as string | null) ?? null,
+    daily_rate: Number(e.basic_salary ?? e.salary_or_fee ?? 0) || null,
+  }));
 
   return (
     <>
@@ -73,11 +79,11 @@ export default async function NovedadesPage() {
         />
         <PageIntro
           title="Novedades"
-          description="Registro operativo del local (tardanzas, permisos, extras, anticipos). Solo las aprobadas impactan la liquidación quincenal."
+          description="Registro operativo del local (tardanzas, permisos, extras, turnos de prestadores, anticipos). Solo las aprobadas impactan la liquidación quincenal."
         />
         <NovedadesClient
           novelties={novelties}
-          employees={empRows ?? []}
+          employees={employeeOptions}
           canApprove={canApprove}
         />
       </main>

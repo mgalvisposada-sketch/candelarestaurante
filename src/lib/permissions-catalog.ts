@@ -111,6 +111,18 @@ export const APP_MODULES: AppModuleDef[] = [
     ],
   },
   {
+    key: "solicitudes-pago",
+    label: "Solicitudes de pago",
+    href: "/solicitudes-pago",
+    mvp: 2,
+    submodules: [
+      { key: "solicitudes-pago.bandeja", label: "Bandeja de solicitudes" },
+      { key: "solicitudes-pago.crear", label: "Crear solicitudes" },
+      { key: "solicitudes-pago.aprobar", label: "Aprobar / rechazar" },
+      { key: "solicitudes-pago.pagar", label: "Ejecutar pagos" },
+    ],
+  },
+  {
     key: "presupuesto",
     label: "Presupuesto",
     href: "/presupuesto",
@@ -234,6 +246,9 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "proveedores.cxp",
     "gastos",
     "gastos.registro",
+    "solicitudes-pago",
+    "solicitudes-pago.bandeja",
+    "solicitudes-pago.pagar",
     "presupuesto",
     "presupuesto.lineas",
     "tributario",

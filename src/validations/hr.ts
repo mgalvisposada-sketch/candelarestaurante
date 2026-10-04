@@ -6,6 +6,7 @@ export const EMPLOYMENT_TYPES = [
   "OBRA_LABOR",
   "APRENDIZAJE",
   "PRESTACION_SERVICIOS",
+  "POR_TURNO",
   "MEDIO_TIEMPO",
 ] as const;
 

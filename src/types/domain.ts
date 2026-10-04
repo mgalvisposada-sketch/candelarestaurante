@@ -18,6 +18,7 @@ export const NAV_ITEMS = [
   { href: "/prestamos", label: "Préstamos", mvp: 1 },
   { href: "/capital", label: "Capital", mvp: 1 },
   { href: "/gastos", label: "Gastos", mvp: 2 },
+  { href: "/solicitudes-pago", label: "Solicitudes de pago", mvp: 2 },
   { href: "/presupuesto", label: "Presupuesto", mvp: 2 },
   { href: "/personal", label: "Personal", mvp: 3 },
   { href: "/tributario", label: "Tributario", mvp: 3 },

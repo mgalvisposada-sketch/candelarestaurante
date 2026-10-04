@@ -47,6 +47,8 @@ export type NoveltyImpact = {
   unpaidTimeDiscount: number;
   overtimeMinutes: number;
   overtimePay: number;
+  shiftDays: number;
+  shiftPay: number;
   occasionalBonuses: number;
   advances: number;
   authorizedDiscounts: number;
@@ -61,6 +63,8 @@ export function computeNoveltyImpact(
   let unpaidMinutes = 0;
   let overtimeMinutes = 0;
   let overtimePay = money(0);
+  let shiftDays = 0;
+  let shiftPay = money(0);
   let occasionalBonuses = money(0);
   let advances = money(0);
   let authorizedDiscounts = money(0);
@@ -69,6 +73,12 @@ export function computeNoveltyImpact(
   for (const n of novelties) {
     if (n.novelty_type === "PERMISO_REMUNERADO") {
       notes.push(`Permiso remunerado ${n.novelty_date} (sin descuento).`);
+      continue;
+    }
+
+    if (n.novelty_type === "TURNO_LABORADO") {
+      shiftDays += 1;
+      shiftPay = shiftPay.plus(n.amount ?? 0);
       continue;
     }
 
@@ -125,12 +135,19 @@ export function computeNoveltyImpact(
   if (overtimeMinutes > 0) {
     notes.push(`${overtimeMinutes} min de hora extra liquidados.`);
   }
+  if (shiftDays > 0) {
+    notes.push(
+      `${shiftDays} turno(s)/día(s) laborado(s) por $${shiftPay.toDecimalPlaces(2).toNumber()}.`,
+    );
+  }
 
   return {
     unpaidMinutes,
     unpaidTimeDiscount,
     overtimeMinutes,
     overtimePay: overtimePay.toDecimalPlaces(2).toNumber(),
+    shiftDays,
+    shiftPay: shiftPay.toDecimalPlaces(2).toNumber(),
     occasionalBonuses: occasionalBonuses.toDecimalPlaces(2).toNumber(),
     advances: advances.toDecimalPlaces(2).toNumber(),
     authorizedDiscounts: authorizedDiscounts.toDecimalPlaces(2).toNumber(),

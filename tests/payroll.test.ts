@@ -241,6 +241,52 @@ describe("simulateBiweekly", () => {
     expect(sim.earnings.unpaidTimeDiscount).toBeGreaterThan(0);
   });
 
+  it("liquida prestador POR_TURNO solo por turnos aprobados", () => {
+    const sim = simulateBiweekly({
+      year: 2026,
+      month: 1,
+      half: 1,
+      basicSalary: 80_000, // tarifa día/turno
+      employmentType: "POR_TURNO",
+      receivesTransportAid: null,
+      arlRiskLevel: "I",
+      schedule: {
+        ordinary_entry_time: "10:00",
+        ordinary_exit_time: "18:00",
+        break_minutes: 60,
+        uses_custom_schedule: false,
+      },
+      candelaSchedule: candelaClosedSunday,
+      legal: legalBase,
+      bonuses: [],
+      novelties: [
+        {
+          novelty_type: "TURNO_LABORADO",
+          novelty_date: "2026-01-05",
+          amount: 80_000,
+        },
+        {
+          novelty_type: "TURNO_LABORADO",
+          novelty_date: "2026-01-06",
+          amount: 80_000,
+        },
+        {
+          novelty_type: "ANTICIPO",
+          novelty_date: "2026-01-07",
+          amount: 20_000,
+        },
+      ],
+    });
+    expect(sim.novelties.shiftDays).toBe(2);
+    expect(sim.earnings.shiftPay).toBe(160_000);
+    expect(sim.earnings.basicSalary).toBe(0);
+    expect(sim.earnings.total).toBe(160_000);
+    expect(sim.deductions.advances).toBe(20_000);
+    expect(sim.netPay).toBe(140_000);
+    expect(sim.employer.totalContributions).toBe(0);
+    expect(sim.provisions.total).toBe(0);
+  });
+
   it("marca horario personalizado en notas", () => {
     const sim = simulateBiweekly({
       year: 2026,

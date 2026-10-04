@@ -10,10 +10,16 @@ import {
 } from "../actions";
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP } from "@/lib/money";
-import { formatTimeHm, scheduleDiffSummary, simulateBiweekly } from "@/lib/payroll";
+import {
+  biweeklyRange,
+  formatTimeHm,
+  scheduleDiffSummary,
+  simulateBiweekly,
+} from "@/lib/payroll";
 import type {
   BiweeklySimulation,
   LegalParamsInput,
+  NoveltyInput,
   PayrollScheduleInput,
 } from "@/lib/payroll";
 import { EMPLOYMENT_TYPES } from "@/validations/hr";
@@ -34,6 +40,7 @@ const EMPLOYMENT_LABELS: Record<string, string> = {
   OBRA_LABOR: "Obra o labor",
   APRENDIZAJE: "Aprendizaje",
   PRESTACION_SERVICIOS: "Prestación de servicios",
+  POR_TURNO: "Por turno / día (prestador)",
   MEDIO_TIEMPO: "Medio tiempo",
 };
 
@@ -84,6 +91,15 @@ function Line({ label, value }: { label: string; value: number }) {
   );
 }
 
+export type ApprovedNoveltyRow = {
+  novelty_type: string;
+  novelty_date: string;
+  minutes: number | null;
+  amount: number | string | null;
+  start_time: string | null;
+  end_time: string | null;
+};
+
 export function EmployeeFolderClient({
   employee,
   bonuses,
@@ -92,6 +108,7 @@ export function EmployeeFolderClient({
   positions = [],
   documents = [],
   vacations = [],
+  approvedNovelties = [],
 }: {
   employee: FolderEmployee;
   bonuses: BonusRow[];
@@ -100,6 +117,7 @@ export function EmployeeFolderClient({
   positions?: Array<{ id: string; name: string; arl_risk_level: string }>;
   documents?: EmployeeDocRow[];
   vacations?: VacationRow[];
+  approvedNovelties?: ApprovedNoveltyRow[];
 }) {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -107,6 +125,7 @@ export function EmployeeFolderClient({
   const [custom, setCustom] = useState(employee.uses_custom_schedule);
   const [employmentType, setEmploymentType] = useState(employee.employment_type);
   const indefinite = isIndefiniteContract(employmentType);
+  const byShift = employmentType === "POR_TURNO";
 
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -115,6 +134,20 @@ export function EmployeeFolderClient({
 
   const salary = Number(employee.basic_salary ?? employee.salary_or_fee ?? 0);
 
+  const periodNovelties: NoveltyInput[] = useMemo(() => {
+    const { startIso, endIso } = biweeklyRange(year, month, half);
+    return approvedNovelties
+      .filter((n) => n.novelty_date >= startIso && n.novelty_date <= endIso)
+      .map((n) => ({
+        novelty_type: n.novelty_type as NoveltyInput["novelty_type"],
+        novelty_date: n.novelty_date,
+        minutes: n.minutes,
+        amount: n.amount != null ? Number(n.amount) : null,
+        start_time: n.start_time,
+        end_time: n.end_time,
+      }));
+  }, [approvedNovelties, year, month, half]);
+
   const simulation: BiweeklySimulation | null = useMemo(() => {
     if (!salary || !legal.smmlv) return null;
     return simulateBiweekly({
@@ -122,7 +155,7 @@ export function EmployeeFolderClient({
       month,
       half,
       basicSalary: salary,
-      employmentType: employee.employment_type as never,
+      employmentType: employmentType as never,
       receivesTransportAid: employee.receives_transport_aid,
       arlRiskLevel: employee.arl_risk_level,
       schedule: {
@@ -145,8 +178,20 @@ export function EmployeeFolderClient({
         is_active: b.is_active,
       })),
       includeGoalBonuses: true,
+      novelties: periodNovelties,
     });
-  }, [employee, bonuses, candelaSchedule, legal, year, month, half, salary]);
+  }, [
+    employee,
+    bonuses,
+    candelaSchedule,
+    legal,
+    year,
+    month,
+    half,
+    salary,
+    employmentType,
+    periodNovelties,
+  ]);
 
   const diff = scheduleDiffSummary(
     {
@@ -297,8 +342,15 @@ export function EmployeeFolderClient({
             )}
           </label>
           <label className="block text-sm">
-            <span className="mb-1.5 block text-[var(--muted)]">Salario básico</span>
+            <span className="mb-1.5 block text-[var(--muted)]">
+              {byShift ? "Valor por turno / día" : "Salario básico"}
+            </span>
             <input name="basic_salary" defaultValue={salary || ""} className={inputClass} />
+            {byShift ? (
+              <span className="mt-1 block text-xs text-[var(--muted)]">
+                Cada turno se reporta en Novedades (tipo «Turno / día laborado»).
+              </span>
+            ) : null}
           </label>
           <label className="block text-sm">
             <span className="mb-1.5 block text-[var(--muted)]">Auxilio transporte</span>
@@ -606,15 +658,32 @@ export function EmployeeFolderClient({
                 <h3 className="text-sm font-medium uppercase tracking-wide text-[var(--muted)]">
                   Devengos
                 </h3>
-                <Line label="Salario básico quincenal" value={simulation.earnings.basicSalary} />
-                <Line label="Recargo nocturno" value={simulation.earnings.nightSurcharge} />
-                <Line label="Recargo dominical" value={simulation.earnings.sundaySurcharge} />
-                <Line label="Bonos fijos" value={simulation.earnings.fixedBonuses} />
-                <Line label="Bonos por meta (est.)" value={simulation.earnings.goalBonuses} />
-                <Line label="Horas extra" value={simulation.earnings.overtime} />
+                {byShift ? (
+                  <Line
+                    label={`Turnos laborados (${simulation.novelties.shiftDays})`}
+                    value={simulation.earnings.shiftPay}
+                  />
+                ) : (
+                  <Line
+                    label="Salario básico quincenal"
+                    value={simulation.earnings.basicSalary}
+                  />
+                )}
+                {!byShift ? (
+                  <>
+                    <Line label="Recargo nocturno" value={simulation.earnings.nightSurcharge} />
+                    <Line label="Recargo dominical" value={simulation.earnings.sundaySurcharge} />
+                    <Line label="Bonos fijos" value={simulation.earnings.fixedBonuses} />
+                    <Line label="Bonos por meta (est.)" value={simulation.earnings.goalBonuses} />
+                    <Line label="Horas extra" value={simulation.earnings.overtime} />
+                    <Line
+                      label="Desc. tiempo no laborado"
+                      value={-simulation.earnings.unpaidTimeDiscount}
+                    />
+                    <Line label="Auxilio transporte" value={simulation.earnings.transportAid} />
+                  </>
+                ) : null}
                 <Line label="Bonos ocasionales" value={simulation.earnings.occasionalBonuses} />
-                <Line label="Desc. tiempo no laborado" value={-simulation.earnings.unpaidTimeDiscount} />
-                <Line label="Auxilio transporte" value={simulation.earnings.transportAid} />
                 <Line label="Total devengos" value={simulation.earnings.total} />
               </div>
               <div className="space-y-2">

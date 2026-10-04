@@ -13,6 +13,7 @@ import { isSuperAdmin } from "@/types/domain";
 import { PersonalNav } from "../personal-nav";
 import {
   EmployeeFolderClient,
+  type ApprovedNoveltyRow,
   type BonusRow,
   type FolderEmployee,
 } from "./employee-folder-client";
@@ -56,6 +57,7 @@ export default async function EmployeeFolderPage({
     { data: positions },
     { data: documents },
     { data: vacations },
+    { data: noveltyRows },
   ] = await Promise.all([
     supabase
       .from("employees")
@@ -115,6 +117,17 @@ export default async function EmployeeFolderPage({
       .eq("employee_id", employeeId)
       .is("deleted_at", null)
       .order("start_date", { ascending: false }),
+    supabase
+      .from("shift_novelties")
+      .select(
+        "novelty_type, novelty_date, minutes, amount, start_time, end_time",
+      )
+      .eq("organization_id", ctx.organization.id)
+      .eq("employee_id", employeeId)
+      .eq("status", "APROBADA")
+      .is("deleted_at", null)
+      .order("novelty_date", { ascending: false })
+      .limit(200),
   ]);
 
   if (!emp) notFound();
@@ -160,6 +173,7 @@ export default async function EmployeeFolderPage({
           positions={positions ?? []}
           documents={(documents ?? []) as EmployeeDocRow[]}
           vacations={(vacations ?? []) as VacationRow[]}
+          approvedNovelties={(noveltyRows ?? []) as ApprovedNoveltyRow[]}
         />
       </main>
     </>

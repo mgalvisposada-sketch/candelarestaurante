@@ -139,12 +139,36 @@ export async function createNoveltyAction(
 
   const minutesRaw = emptyToNull(parsed.data.minutes);
   const minutes = minutesRaw != null ? Number(minutesRaw) : null;
-  const amount = parseMoney(parsed.data.amount);
+  let amount = parseMoney(parsed.data.amount);
   const moneyTypes = ["ANTICIPO", "DESCUENTO_AUTORIZADO", "BONO_OCASIONAL"];
+  const isShiftDay = parsed.data.novelty_type === "TURNO_LABORADO";
+
+  const supabase = await createClient();
+
+  if (isShiftDay && amount == null) {
+    const { data: emp } = await supabase
+      .from("employees")
+      .select("basic_salary, salary_or_fee, employment_type")
+      .eq("id", parsed.data.employee_id)
+      .eq("organization_id", ctx.organization.id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    const rate = Number(emp?.basic_salary ?? emp?.salary_or_fee ?? 0);
+    if (!rate || Number.isNaN(rate)) {
+      return {
+        ok: false,
+        error:
+          "Indique el valor del turno o configure la tarifa día/turno en el empleado",
+      };
+    }
+    amount = rate;
+  }
+
   if (moneyTypes.includes(parsed.data.novelty_type) && amount == null) {
     return { ok: false, error: "Indique el monto" };
   }
   if (
+    !isShiftDay &&
     !moneyTypes.includes(parsed.data.novelty_type) &&
     parsed.data.novelty_type !== "PERMISO_REMUNERADO" &&
     (minutes == null || !Number.isFinite(minutes) || minutes <= 0) &&
@@ -153,7 +177,6 @@ export async function createNoveltyAction(
     return { ok: false, error: "Indique minutos u horario" };
   }
 
-  const supabase = await createClient();
   const { data, error } = await supabase
     .from("shift_novelties")
     .insert({
@@ -166,7 +189,7 @@ export async function createNoveltyAction(
       amount,
       start_time: emptyToNull(parsed.data.start_time),
       end_time: emptyToNull(parsed.data.end_time),
-      is_paid: parsed.data.novelty_type === "PERMISO_REMUNERADO",
+      is_paid: parsed.data.novelty_type === "PERMISO_REMUNERADO" || isShiftDay,
       notes: emptyToNull(parsed.data.notes),
       support_note: emptyToNull(parsed.data.support_note),
       reported_by: ctx.userId,

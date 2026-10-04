@@ -6,6 +6,7 @@ export type EmploymentContractType =
   | "OBRA_LABOR"
   | "APRENDIZAJE"
   | "PRESTACION_SERVICIOS"
+  | "POR_TURNO"
   | "MEDIO_TIEMPO"
   | "LABORAL"
   | "TEMPORAL"
@@ -86,6 +87,7 @@ export type ShiftNoveltyType =
   | "PERMISO_NO_REMUNERADO"
   | "AUSENCIA"
   | "HORA_EXTRA"
+  | "TURNO_LABORADO"
   | "ANTICIPO"
   | "DESCUENTO_AUTORIZADO"
   | "BONO_OCASIONAL";
@@ -137,6 +139,8 @@ export type BiweeklySimulation = {
   ordinaryHourValue: number;
   earnings: {
     basicSalary: number;
+    /** Suma de turnos/días laborados (prestador POR_TURNO). */
+    shiftPay: number;
     nightSurcharge: number;
     sundaySurcharge: number;
     fixedBonuses: number;
@@ -160,6 +164,8 @@ export type BiweeklySimulation = {
     unpaidMinutes: number;
     overtimeMinutes: number;
     overtimePay: number;
+    shiftDays: number;
+    shiftPay: number;
     occasionalBonuses: number;
     advances: number;
     authorizedDiscounts: number;

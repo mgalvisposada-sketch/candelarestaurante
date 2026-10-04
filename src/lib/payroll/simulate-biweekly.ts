@@ -7,6 +7,7 @@ import {
   arlPctForLevel,
   art1141ExemptionApplies,
   isLaborContract,
+  isShiftDayContractor,
   ordinaryHourValue,
   pctOf,
   roundMoney,
@@ -56,18 +57,28 @@ export function simulateBiweekly(
   );
 
   const labor = isLaborContract(input.employmentType);
-  if (!labor) {
+  const byShift = isShiftDayContractor(input.employmentType);
+  if (byShift) {
+    notes.push(
+      "Por turno/día (prestador): se paga solo turnos reportados y aprobados. Sin aportes, auxilio ni provisiones de nómina.",
+    );
+  } else if (!labor) {
     notes.push(
       "Prestación de servicios: se estiman honorarios quincenales sin aportes laborales ni provisiones de nómina.",
     );
   }
 
-  const basicBiweekly = money(input.basicSalary).div(2).toDecimalPlaces(2);
+  // POR_TURNO: basic_salary = tarifa por turno/día; el básico quincenal sale de turnos.
+  const basicBiweekly = byShift
+    ? money(0)
+    : money(input.basicSalary).div(2).toDecimalPlaces(2);
 
-  const nightSurcharge = money(hours.ordinaryNightHours)
-    .times(hourValue)
-    .times(input.legal.surcharge_night_ordinary)
-    .div(100);
+  const nightSurcharge = byShift
+    ? money(0)
+    : money(hours.ordinaryNightHours)
+        .times(hourValue)
+        .times(input.legal.surcharge_night_ordinary)
+        .div(100);
 
   const sundayBaseSurcharge = money(hours.sundayDayHours)
     .plus(hours.sundayNightHours)
@@ -78,18 +89,22 @@ export function simulateBiweekly(
     .times(hourValue)
     .times(input.legal.surcharge_night_ordinary)
     .div(100);
-  const sundaySurcharge = sundayBaseSurcharge.plus(sundayNightExtra);
+  const sundaySurcharge = byShift
+    ? money(0)
+    : sundayBaseSurcharge.plus(sundayNightExtra);
 
   const activeBonuses = input.bonuses.filter((b) => b.is_active);
   let fixedBonuses = money(0);
   let goalBonuses = money(0);
-  for (const b of activeBonuses) {
-    const amt = money(bonusAmount(b, input.basicSalary));
-    const biweekly = amt.div(2);
-    if (b.bonus_type === "FIJA") fixedBonuses = fixedBonuses.plus(biweekly);
-    else if (input.includeGoalBonuses !== false) {
-      goalBonuses = goalBonuses.plus(biweekly);
-      notes.push(`Bono por meta "${b.name}" incluido como estimado.`);
+  if (!byShift) {
+    for (const b of activeBonuses) {
+      const amt = money(bonusAmount(b, input.basicSalary));
+      const biweekly = amt.div(2);
+      if (b.bonus_type === "FIJA") fixedBonuses = fixedBonuses.plus(biweekly);
+      else if (input.includeGoalBonuses !== false) {
+        goalBonuses = goalBonuses.plus(biweekly);
+        notes.push(`Bono por meta "${b.name}" incluido como estimado.`);
+      }
     }
   }
 
@@ -114,13 +129,22 @@ export function simulateBiweekly(
   );
   notes.push(...noveltyImpact.notes);
 
-  const overtime = money(noveltyImpact.overtimePay);
+  const shiftPay = money(noveltyImpact.shiftPay);
+  const shiftDays = noveltyImpact.shiftDays;
+  const overtime = byShift ? money(0) : money(noveltyImpact.overtimePay);
   const occasionalBonuses = money(noveltyImpact.occasionalBonuses);
-  const unpaidDisc = money(noveltyImpact.unpaidTimeDiscount);
+  const unpaidDisc = byShift ? money(0) : money(noveltyImpact.unpaidTimeDiscount);
   const advances = money(noveltyImpact.advances);
   const authDisc = money(noveltyImpact.authorizedDiscounts);
 
+  if (byShift && shiftDays === 0) {
+    notes.push(
+      "Sin turnos laborados aprobados en la quincena: total en $0 (registre novedad «Turno laborado»).",
+    );
+  }
+
   let earningsTotal = basicBiweekly
+    .plus(shiftPay)
     .plus(nightSurcharge)
     .plus(sundaySurcharge)
     .plus(fixedBonuses)
@@ -132,14 +156,16 @@ export function simulateBiweekly(
   if (earningsTotal.lt(0)) earningsTotal = money(0);
 
   // IBC: sin auxilio; incluye extras/bonos ocasionales; resta tiempo no laborado
-  let ibcBase = basicBiweekly
-    .plus(nightSurcharge)
-    .plus(sundaySurcharge)
-    .plus(fixedBonuses)
-    .plus(goalBonuses)
-    .plus(overtime)
-    .plus(occasionalBonuses)
-    .minus(unpaidDisc);
+  let ibcBase = byShift
+    ? money(0)
+    : basicBiweekly
+        .plus(nightSurcharge)
+        .plus(sundaySurcharge)
+        .plus(fixedBonuses)
+        .plus(goalBonuses)
+        .plus(overtime)
+        .plus(occasionalBonuses)
+        .minus(unpaidDisc);
   if (ibcBase.lt(0)) ibcBase = money(0);
 
   const r = (n: number) => roundMoney(n, input.legal.round_to_peso);
@@ -244,7 +270,7 @@ export function simulateBiweekly(
   if (input.schedule.uses_custom_schedule) {
     notes.push("Horario personalizado del empleado (distinto al Horario Candela).");
   }
-  if ((input.novelties ?? []).length === 0) {
+  if ((input.novelties ?? []).length === 0 && !byShift) {
     notes.push("Liquidación ordinaria sin novedades de turno en el periodo.");
   }
 
@@ -256,6 +282,7 @@ export function simulateBiweekly(
     ordinaryHourValue: r(hourValue),
     earnings: {
       basicSalary: r(basicBiweekly.toNumber()),
+      shiftPay: r(shiftPay.toNumber()),
       nightSurcharge: r(nightSurcharge.toNumber()),
       sundaySurcharge: r(sundaySurcharge.toNumber()),
       fixedBonuses: r(fixedBonuses.toNumber()),
@@ -279,6 +306,8 @@ export function simulateBiweekly(
       unpaidMinutes: noveltyImpact.unpaidMinutes,
       overtimeMinutes: noveltyImpact.overtimeMinutes,
       overtimePay: r(overtime.toNumber()),
+      shiftDays,
+      shiftPay: r(shiftPay.toNumber()),
       occasionalBonuses: r(occasionalBonuses.toNumber()),
       advances: r(advances.toNumber()),
       authorizedDiscounts: r(authDisc.toNumber()),

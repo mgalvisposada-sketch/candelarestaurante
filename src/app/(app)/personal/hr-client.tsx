@@ -38,6 +38,7 @@ const EMPLOYMENT_LABELS: Record<string, string> = {
   OBRA_LABOR: "Obra o labor",
   APRENDIZAJE: "Aprendizaje",
   PRESTACION_SERVICIOS: "Prestación de servicios",
+  POR_TURNO: "Por turno / día (prestador)",
   MEDIO_TIEMPO: "Medio tiempo",
   LABORAL: "Laboral",
   TEMPORAL: "Temporal",
@@ -62,6 +63,8 @@ export function CreateEmployeeForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [arl, setArl] = useState("I");
+  const [employmentType, setEmploymentType] = useState("INDEFINIDO");
+  const byShift = employmentType === "POR_TURNO";
   if (!open) {
     return (
       <button
@@ -148,7 +151,12 @@ export function CreateEmployeeForm({
         </label>
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">Tipo de contrato</span>
-          <select name="employment_type" defaultValue="INDEFINIDO" className={inputClass}>
+          <select
+            name="employment_type"
+            value={employmentType}
+            onChange={(e) => setEmploymentType(e.target.value)}
+            className={inputClass}
+          >
             {EMPLOYMENT_TYPES.map((t) => (
               <option key={t} value={t}>
                 {EMPLOYMENT_LABELS[t] ?? t}
@@ -157,8 +165,16 @@ export function CreateEmployeeForm({
           </select>
         </label>
         <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Salario básico</span>
+          <span className="mb-1.5 block text-[var(--muted)]">
+            {byShift ? "Valor por turno / día" : "Salario básico"}
+          </span>
           <input name="basic_salary" required className={inputClass} />
+          {byShift ? (
+            <span className="mt-1 block text-xs text-[var(--muted)]">
+              Sin nómina laboral. Registre cada turno en Novedades → Turno/día
+              laborado.
+            </span>
+          ) : null}
         </label>
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">Nivel riesgo ARL</span>

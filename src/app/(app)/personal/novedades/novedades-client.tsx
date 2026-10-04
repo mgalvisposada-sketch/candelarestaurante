@@ -21,6 +21,7 @@ const TYPE_LABELS: Record<string, string> = {
   PERMISO_NO_REMUNERADO: "Permiso no remunerado",
   AUSENCIA: "Ausencia / falta",
   HORA_EXTRA: "Hora extra",
+  TURNO_LABORADO: "Turno / día laborado",
   ANTICIPO: "Anticipo",
   DESCUENTO_AUTORIZADO: "Descuento autorizado",
   BONO_OCASIONAL: "Bono ocasional",
@@ -55,13 +56,20 @@ export type NoveltyRow = {
   employee_name?: string;
 };
 
+export type NoveltyEmployeeOption = {
+  id: string;
+  full_name: string;
+  employment_type?: string | null;
+  daily_rate?: number | null;
+};
+
 export function NovedadesClient({
   novelties,
   employees,
   canApprove,
 }: {
   novelties: NoveltyRow[];
-  employees: Array<{ id: string; full_name: string }>;
+  employees: NoveltyEmployeeOption[];
   canApprove: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +77,7 @@ export function NovedadesClient({
   const [pending, startTransition] = useTransition();
   const [filter, setFilter] = useState<string>("ALL");
   const [type, setType] = useState<string>("LLEGADA_TARDE");
+  const [employeeId, setEmployeeId] = useState<string>("");
 
   const filtered = useMemo(() => {
     if (filter === "ALL") return novelties;
@@ -76,6 +85,9 @@ export function NovedadesClient({
   }, [novelties, filter]);
 
   const isMoney = MONEY_TYPES.has(type);
+  const isShiftDay = type === "TURNO_LABORADO";
+  const selectedEmp = employees.find((e) => e.id === employeeId);
+  const defaultShiftRate = selectedEmp?.daily_rate ?? null;
 
   return (
     <div className="space-y-6">
@@ -101,11 +113,20 @@ export function NovedadesClient({
         <div className="grid gap-3 md:grid-cols-3">
           <label className="block text-sm md:col-span-1">
             <span className="mb-1.5 block text-[var(--muted)]">Empleado</span>
-            <select name="employee_id" required className={inputClass}>
+            <select
+              name="employee_id"
+              required
+              value={employeeId}
+              onChange={(e) => setEmployeeId(e.target.value)}
+              className={inputClass}
+            >
               <option value="">Seleccione…</option>
               {employees.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.full_name}
+                  {e.employment_type === "POR_TURNO" && e.daily_rate
+                    ? ` · turno ${e.daily_rate}`
+                    : ""}
                 </option>
               ))}
             </select>
@@ -129,7 +150,24 @@ export function NovedadesClient({
               ))}
             </select>
           </label>
-          {isMoney ? (
+          {isShiftDay ? (
+            <label className="block text-sm md:col-span-2">
+              <span className="mb-1.5 block text-[var(--muted)]">
+                Valor del turno (opcional)
+              </span>
+              <input
+                name="amount"
+                defaultValue={defaultShiftRate ?? ""}
+                key={`shift-${employeeId}-${defaultShiftRate ?? "x"}`}
+                className={inputClass}
+                placeholder="Vacío = tarifa del empleado"
+              />
+              <span className="mt-1 block text-xs text-[var(--muted)]">
+                Para prestadores «Por turno / día». Luego el gerente aprueba y entra
+                a la liquidación.
+              </span>
+            </label>
+          ) : isMoney ? (
             <label className="block text-sm">
               <span className="mb-1.5 block text-[var(--muted)]">Monto</span>
               <input name="amount" required className={inputClass} />
