@@ -240,11 +240,12 @@ const ALL_EXCEPT_CONFIG_ADMIN = ALL_PERMISSION_KEYS.filter(
 export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
   SUPER_ADMIN: [...ALL_PERMISSION_KEYS],
   GESTION: [...ALL_EXCEPT_CONFIG_ADMIN, "configuracion"],
-  /** Administrador operativo del local: novedades y solicitudes de compra. */
+  /** Administrador operativo del local: novedades, inventario de compras y solicitudes. */
   ADMIN_LOCAL: [
     "personal",
     "personal.novedades",
     "compras",
+    "compras.inventario",
     "compras.solicitudes",
     "compras.solicitudes.crear",
     "compras.solicitudes.recibir",

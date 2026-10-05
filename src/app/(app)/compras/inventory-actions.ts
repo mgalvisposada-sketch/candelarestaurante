@@ -60,7 +60,16 @@ export async function createProductCategoryAction(
     .select("id")
     .single();
 
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    if (error.message.toLowerCase().includes("row-level security")) {
+      return {
+        ok: false,
+        error:
+          "No tiene permiso de base de datos para crear categorías. Use un usuario Gestión o actualice las políticas RLS.",
+      };
+    }
+    return { ok: false, error: error.message };
+  }
   revalidatePath("/compras/inventario");
   revalidatePath("/compras/proveedores");
   revalidatePath("/proveedores");
@@ -111,7 +120,16 @@ export async function createProductAction(
     .select("id")
     .single();
 
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    if (error.message.toLowerCase().includes("row-level security")) {
+      return {
+        ok: false,
+        error:
+          "Su rol no puede crear productos en base de datos. Si es Admin del local, aplique la última migración RLS o use un usuario Gestión.",
+      };
+    }
+    return { ok: false, error: error.message };
+  }
   revalidatePath("/compras/inventario");
   revalidatePath("/compras/solicitudes");
   return { ok: true, id: data.id };
