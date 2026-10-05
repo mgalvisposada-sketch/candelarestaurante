@@ -27,7 +27,12 @@ export async function createProductCategoryAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.inventario")) {
+  const canManageCategories =
+    ctxCanAccess(ctx, "compras.inventario") ||
+    ctxCanAccess(ctx, "compras.proveedores") ||
+    ctxCanAccess(ctx, "proveedores") ||
+    ctxCanAccess(ctx, "proveedores.maestro");
+  if (!canManageCategories) {
     return { ok: false, error: "Sin permiso" };
   }
 
@@ -57,6 +62,7 @@ export async function createProductCategoryAction(
   if (error) return { ok: false, error: error.message };
   revalidatePath("/compras/inventario");
   revalidatePath("/compras/proveedores");
+  revalidatePath("/proveedores");
   return { ok: true, id: data.id };
 }
 

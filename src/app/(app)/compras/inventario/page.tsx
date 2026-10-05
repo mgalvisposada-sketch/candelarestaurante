@@ -65,13 +65,20 @@ export default async function ComprasInventarioPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Inventario de compras"
-            description="Defina categorías y productos que el administrador del punto puede solicitar para reposición."
+            description="Asigne a cada producto una categoría del maestro único (el mismo de Proveedores). Así la sugerencia de proveedor coincide siempre por categoría."
           />
           <div className="flex flex-wrap gap-2">
             <CreateCategoryForm />
             <CreateProductForm categories={categories} />
           </div>
         </div>
+        <p className="text-sm text-[var(--muted)]">
+          Las categorías son un maestro único compartido con{" "}
+          <Link href="/proveedores" className="text-[var(--accent)]">
+            Proveedores & CxP
+          </Link>
+          .
+        </p>
         {categories.length === 0 && products.length === 0 ? (
           <EmptyState
             title="Sin inventario"

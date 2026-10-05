@@ -10,6 +10,7 @@ export const supplierSchema = z.object({
   bank_account_info: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
   is_active: z.enum(["true", "false"]).optional(),
+  is_purchase_supplier: z.enum(["true", "false"]).optional(),
 });
 
 export const apDocumentSchema = z.object({

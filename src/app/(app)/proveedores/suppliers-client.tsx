@@ -9,10 +9,17 @@ import {
   updateApDocumentAction,
   updateSupplierAction,
 } from "./actions";
+import { createProductCategoryAction } from "../compras/inventory-actions";
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP, money, apDocumentBalance } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
 import type { VerificationStatus } from "@/types/domain";
+
+export type ProductCategoryOption = {
+  id: string;
+  code: string;
+  name: string;
+};
 
 export type SupplierRow = {
   id: string;
@@ -25,6 +32,8 @@ export type SupplierRow = {
   bank_account_info: string | null;
   notes: string | null;
   is_active: boolean;
+  is_purchase_supplier: boolean;
+  category_ids: string[];
 };
 
 export type ApDocRow = {
@@ -60,7 +69,57 @@ function pTone(p: string) {
   return "neutral" as const;
 }
 
-export function CreateSupplierForm() {
+export function CreateCategoryMasterForm() {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm"
+      >
+        Nueva categoría
+      </button>
+    );
+  }
+  return (
+    <form
+      className="space-y-3 rounded-xl border border-[var(--line)] bg-white p-4"
+      action={(fd) => {
+        setError(null);
+        startTransition(async () => {
+          const r = await createProductCategoryAction(fd);
+          if (!r.ok) setError(r.error ?? "Error");
+          else setOpen(false);
+        });
+      }}
+    >
+      <p className="text-sm text-[var(--muted)]">
+        Maestro único de categorías (proveedores e inventario de compras).
+      </p>
+      <input name="code" placeholder="Código (ej. CARNES)" required className={inputClass} />
+      <input name="name" placeholder="Nombre" required className={inputClass} />
+      <input name="description" placeholder="Descripción" className={inputClass} />
+      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      <div className="flex gap-2">
+        <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-3 py-2 text-sm text-white">
+          Guardar categoría
+        </button>
+        <button type="button" className="text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
+          Cancelar
+        </button>
+      </div>
+    </form>
+  );
+}
+
+export function CreateSupplierForm({
+  categories,
+}: {
+  categories: ProductCategoryOption[];
+}) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -93,7 +152,7 @@ export function CreateSupplierForm() {
           Cancelar
         </button>
       </div>
-      <SupplierFields />
+      <SupplierFields categories={categories} />
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
       <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60">
         {pending ? "Guardando…" : "Guardar proveedor"}
@@ -102,7 +161,57 @@ export function CreateSupplierForm() {
   );
 }
 
-function SupplierFields({ s }: { s?: SupplierRow }) {
+function CategoryPicker({
+  categories,
+  selectedIds = [],
+}: {
+  categories: ProductCategoryOption[];
+  selectedIds?: string[];
+}) {
+  const selected = new Set(selectedIds);
+  if (categories.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-[var(--line)] px-3 py-3 text-sm text-[var(--muted)]">
+        No hay categorías maestras. Cree al menos una con “Nueva categoría” para asignarla al proveedor de insumos.
+      </div>
+    );
+  }
+  return (
+    <fieldset>
+      <legend className="mb-2 text-sm text-[var(--muted)]">
+        Categorías de insumo que comercializa *
+      </legend>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {categories.map((c) => (
+          <label
+            key={c.id}
+            className="flex items-center gap-2 rounded-lg border border-[var(--line)] px-3 py-2 text-sm"
+          >
+            <input
+              type="checkbox"
+              name="category_ids"
+              value={c.id}
+              defaultChecked={selected.has(c.id)}
+            />
+            <span>
+              <span className="font-medium">{c.code}</span> — {c.name}
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function SupplierFields({
+  s,
+  categories,
+}: {
+  s?: SupplierRow;
+  categories: ProductCategoryOption[];
+}) {
+  const [isPurchase, setIsPurchase] = useState(s?.is_purchase_supplier ?? false);
+
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <label className="block text-sm md:col-span-2">
@@ -114,13 +223,31 @@ function SupplierFields({ s }: { s?: SupplierRow }) {
         <input name="tax_id" defaultValue={s?.tax_id ?? ""} className={inputClass} />
       </label>
       <label className="block text-sm">
-        <span className="mb-1 block text-[var(--muted)]">Categoría</span>
-        <input name="category" defaultValue={s?.category ?? ""} placeholder="Arriendo, servicios, insumos…" className={inputClass} />
-      </label>
-      <label className="block text-sm">
         <span className="mb-1 block text-[var(--muted)]">Contacto</span>
         <input name="contact_name" defaultValue={s?.contact_name ?? ""} className={inputClass} />
       </label>
+      <label className="flex items-start gap-3 rounded-lg border border-[var(--line)] px-3 py-3 text-sm md:col-span-2">
+        <input
+          type="checkbox"
+          name="is_purchase_supplier"
+          value="true"
+          checked={isPurchase}
+          onChange={(e) => setIsPurchase(e.target.checked)}
+          className="mt-0.5"
+        />
+        <span>
+          <span className="font-medium">Proveedor de insumos (compras)</span>
+          <span className="mt-0.5 block text-[var(--muted)]">
+            Márquelo si vende productos de inventario. Servicios como seguridad o arriendo
+            déjelos sin marcar: no aparecerán en Compras.
+          </span>
+        </span>
+      </label>
+      {isPurchase ? (
+        <div className="md:col-span-2">
+          <CategoryPicker categories={categories} selectedIds={s?.category_ids ?? []} />
+        </div>
+      ) : null}
       <label className="block text-sm">
         <span className="mb-1 block text-[var(--muted)]">Teléfono</span>
         <input name="phone" defaultValue={s?.phone ?? ""} className={inputClass} />
@@ -273,9 +400,11 @@ function ApDocFields({
 export function SupplierCard({
   supplier,
   documents,
+  categories,
 }: {
   supplier: SupplierRow;
   documents: ApDocRow[];
+  categories: ProductCategoryOption[];
 }) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -284,6 +413,10 @@ export function SupplierCard({
     (acc, d) => acc.plus(apDocumentBalance(d.original_amount, d.paid_amount)),
     money(0),
   );
+  const categoryLabels = categories
+    .filter((c) => supplier.category_ids.includes(c.id))
+    .map((c) => c.name)
+    .join(", ");
 
   return (
     <div className="rounded-xl border border-[var(--line)] bg-white p-5">
@@ -291,7 +424,14 @@ export function SupplierCard({
         <div>
           <h3 className="font-display text-xl font-semibold">{supplier.name}</h3>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            {[supplier.tax_id, supplier.category, supplier.contact_name].filter(Boolean).join(" · ") || "Sin detalle"}
+            {[
+              supplier.tax_id,
+              supplier.is_purchase_supplier ? "Insumos" : "Administrativo / servicio",
+              categoryLabels || supplier.category,
+              supplier.contact_name,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "Sin detalle"}
           </p>
         </div>
         <div className="text-right">
@@ -332,7 +472,7 @@ export function SupplierCard({
             });
           }}
         >
-          <SupplierFields s={supplier} />
+          <SupplierFields s={supplier} categories={categories} />
           <button type="submit" disabled={pending} className="rounded-md bg-[var(--ink)] px-3 py-1.5 text-xs text-white">Guardar</button>
         </form>
       ) : null}

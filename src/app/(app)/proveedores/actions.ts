@@ -94,6 +94,101 @@ async function refreshDocumentPaid(
     .eq("organization_id", orgId);
 }
 
+function parseCategoryIds(formData: FormData): string[] {
+  return formData
+    .getAll("category_ids")
+    .map((v) => String(v).trim())
+    .filter((v) => /^[0-9a-f-]{36}$/i.test(v));
+}
+
+async function syncSupplierCategories(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  supplierId: string,
+  userId: string,
+  categoryIds: string[],
+): Promise<{ ok: true; label: string | null } | { ok: false; error: string }> {
+  const uniqueIds = [...new Set(categoryIds)];
+
+  let label: string | null = null;
+  if (uniqueIds.length > 0) {
+    const { data: cats, error: catError } = await supabase
+      .from("product_categories")
+      .select("id, name")
+      .eq("organization_id", orgId)
+      .is("deleted_at", null)
+      .in("id", uniqueIds);
+    if (catError) return { ok: false, error: catError.message };
+    if ((cats ?? []).length !== uniqueIds.length) {
+      return { ok: false, error: "Una o más categorías no son válidas" };
+    }
+    label = (cats ?? [])
+      .map((c) => c.name)
+      .sort((a, b) => a.localeCompare(b, "es"))
+      .join(", ");
+  }
+
+  const { data: existing } = await supabase
+    .from("supplier_product_categories")
+    .select("id, category_id, deleted_at")
+    .eq("organization_id", orgId)
+    .eq("supplier_id", supplierId);
+
+  const selected = new Set(uniqueIds);
+  const now = new Date().toISOString();
+
+  for (const row of existing ?? []) {
+    if (!selected.has(row.category_id)) {
+      if (!row.deleted_at) {
+        const { error } = await supabase
+          .from("supplier_product_categories")
+          .update({
+            deleted_at: now,
+            is_active: false,
+            updated_by: userId,
+          })
+          .eq("id", row.id)
+          .eq("organization_id", orgId);
+        if (error) return { ok: false, error: error.message };
+      }
+      continue;
+    }
+
+    const { error } = await supabase
+      .from("supplier_product_categories")
+      .update({
+        deleted_at: null,
+        is_active: true,
+        updated_by: userId,
+      })
+      .eq("id", row.id)
+      .eq("organization_id", orgId);
+    if (error) return { ok: false, error: error.message };
+    selected.delete(row.category_id);
+  }
+
+  for (const categoryId of selected) {
+    const { error } = await supabase.from("supplier_product_categories").insert({
+      organization_id: orgId,
+      supplier_id: supplierId,
+      category_id: categoryId,
+      is_active: true,
+      created_by: userId,
+      updated_by: userId,
+    });
+    if (error) return { ok: false, error: error.message };
+  }
+
+  return { ok: true, label };
+}
+
+function revalidateSupplierPaths() {
+  revalidatePath("/proveedores");
+  revalidatePath("/compras/proveedores");
+  revalidatePath("/compras/solicitudes");
+  revalidatePath("/inicio");
+}
+
 export async function createSupplierAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -110,9 +205,19 @@ export async function createSupplierAction(
     bank_account_info: formData.get("bank_account_info"),
     notes: formData.get("notes"),
     is_active: formData.get("is_active") || "true",
+    is_purchase_supplier: formData.get("is_purchase_supplier") || "false",
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const isPurchaseSupplier = parsed.data.is_purchase_supplier === "true";
+  const categoryIds = isPurchaseSupplier ? parseCategoryIds(formData) : [];
+  if (isPurchaseSupplier && categoryIds.length === 0) {
+    return {
+      ok: false,
+      error: "Un proveedor de insumos debe tener al menos una categoría",
+    };
   }
 
   const supabase = await createClient();
@@ -125,10 +230,11 @@ export async function createSupplierAction(
       contact_name: emptyToNull(parsed.data.contact_name),
       phone: emptyToNull(parsed.data.phone),
       email: emptyToNull(parsed.data.email),
-      category: emptyToNull(parsed.data.category),
+      category: null,
       bank_account_info: emptyToNull(parsed.data.bank_account_info),
       notes: emptyToNull(parsed.data.notes),
       is_active: parsed.data.is_active !== "false",
+      is_purchase_supplier: isPurchaseSupplier,
       created_by: ctx.userId,
       updated_by: ctx.userId,
     })
@@ -136,6 +242,24 @@ export async function createSupplierAction(
     .single();
 
   if (error) return { ok: false, error: error.message };
+
+  const synced = await syncSupplierCategories(
+    supabase,
+    ctx.organization.id,
+    data.id,
+    ctx.userId,
+    categoryIds,
+  );
+  if (!synced.ok) return { ok: false, error: synced.error };
+
+  await supabase
+    .from("suppliers")
+    .update({
+      category: isPurchaseSupplier ? synced.label : null,
+      updated_by: ctx.userId,
+    })
+    .eq("id", data.id)
+    .eq("organization_id", ctx.organization.id);
 
   await ensureAccountsPayable(
     supabase,
@@ -150,10 +274,10 @@ export async function createSupplierAction(
     action: "CREATE",
     entity: "suppliers",
     entity_id: data.id,
+    new_values: { category_ids: categoryIds },
   });
 
-  revalidatePath("/proveedores");
-  revalidatePath("/inicio");
+  revalidateSupplierPaths();
   return { ok: true, id: data.id };
 }
 
@@ -174,12 +298,31 @@ export async function updateSupplierAction(
     bank_account_info: formData.get("bank_account_info"),
     notes: formData.get("notes"),
     is_active: formData.get("is_active") || "true",
+    is_purchase_supplier: formData.get("is_purchase_supplier") || "false",
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
   }
 
+  const isPurchaseSupplier = parsed.data.is_purchase_supplier === "true";
+  const categoryIds = isPurchaseSupplier ? parseCategoryIds(formData) : [];
+  if (isPurchaseSupplier && categoryIds.length === 0) {
+    return {
+      ok: false,
+      error: "Un proveedor de insumos debe tener al menos una categoría",
+    };
+  }
+
   const supabase = await createClient();
+  const synced = await syncSupplierCategories(
+    supabase,
+    ctx.organization.id,
+    supplierId,
+    ctx.userId,
+    categoryIds,
+  );
+  if (!synced.ok) return { ok: false, error: synced.error };
+
   const { error } = await supabase
     .from("suppliers")
     .update({
@@ -188,17 +331,18 @@ export async function updateSupplierAction(
       contact_name: emptyToNull(parsed.data.contact_name),
       phone: emptyToNull(parsed.data.phone),
       email: emptyToNull(parsed.data.email),
-      category: emptyToNull(parsed.data.category),
+      category: isPurchaseSupplier ? synced.label : null,
       bank_account_info: emptyToNull(parsed.data.bank_account_info),
       notes: emptyToNull(parsed.data.notes),
       is_active: parsed.data.is_active !== "false",
+      is_purchase_supplier: isPurchaseSupplier,
       updated_by: ctx.userId,
     })
     .eq("id", supplierId)
     .eq("organization_id", ctx.organization.id);
 
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/proveedores");
+  revalidateSupplierPaths();
   return { ok: true, id: supplierId };
 }
 

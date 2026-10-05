@@ -64,6 +64,7 @@ export default async function CompraSolicitudDetailPage({
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
         .eq("is_active", true)
+        .eq("is_purchase_supplier", true)
         .order("name"),
       supabase
         .from("supplier_product_categories")
@@ -88,6 +89,13 @@ export default async function CompraSolicitudDetailPage({
     category_id: p.category_id,
     category_name: categories.get(p.category_id) ?? "Sin categoría",
   }));
+
+  const purchaseSupplierIds = new Set(
+    (linkRows ?? []).map((l) => l.supplier_id),
+  );
+  const purchaseSuppliers = ((supplierRows ?? []) as SupplierOption[]).filter((s) =>
+    purchaseSupplierIds.has(s.id),
+  );
 
   const items: ItemRow[] = ((itemRows ?? []) as ItemRow[]).map((item) => ({
     ...item,
@@ -126,7 +134,7 @@ export default async function CompraSolicitudDetailPage({
           request={request as RequestDetail}
           items={items}
           products={products}
-          suppliers={(supplierRows ?? []) as SupplierOption[]}
+          suppliers={purchaseSuppliers}
           links={(linkRows ?? []) as CategorySupplierLink[]}
           canCreate={ctxCanAccess(ctx, "compras.solicitudes.crear")}
           canApprove={ctxCanAccess(ctx, "compras.solicitudes.aprobar")}

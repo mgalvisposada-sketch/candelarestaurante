@@ -10,9 +10,11 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
   CreateApDocumentForm,
+  CreateCategoryMasterForm,
   CreateSupplierForm,
   SupplierCard,
   type ApDocRow,
+  type ProductCategoryOption,
   type SupplierRow,
 } from "./suppliers-client";
 
@@ -37,14 +39,45 @@ export default async function ProveedoresPage() {
   }
 
   const supabase = await createClient();
-  const { data: supplierRows } = await supabase
-    .from("suppliers")
-    .select("id, name, tax_id, contact_name, phone, email, category, bank_account_info, notes, is_active")
-    .eq("organization_id", ctx.organization.id)
-    .is("deleted_at", null)
-    .order("name");
+  const [{ data: supplierRows }, { data: categoryRows }, { data: linkRows }] =
+    await Promise.all([
+      supabase
+        .from("suppliers")
+        .select(
+          "id, name, tax_id, contact_name, phone, email, category, bank_account_info, notes, is_active, is_purchase_supplier",
+        )
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null)
+        .order("name"),
+      supabase
+        .from("product_categories")
+        .select("id, code, name")
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null)
+        .eq("is_active", true)
+        .order("code"),
+      supabase
+        .from("supplier_product_categories")
+        .select("supplier_id, category_id")
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null)
+        .eq("is_active", true),
+    ]);
 
-  const suppliers = (supplierRows ?? []) as SupplierRow[];
+  const categories = (categoryRows ?? []) as ProductCategoryOption[];
+  const linksBySupplier = new Map<string, string[]>();
+  for (const link of linkRows ?? []) {
+    const list = linksBySupplier.get(link.supplier_id) ?? [];
+    list.push(link.category_id);
+    linksBySupplier.set(link.supplier_id, list);
+  }
+
+  const suppliers = ((supplierRows ?? []) as Omit<SupplierRow, "category_ids">[]).map(
+    (s) => ({
+      ...s,
+      category_ids: linksBySupplier.get(s.id) ?? [],
+    }),
+  );
   const ids = suppliers.map((s) => s.id);
 
   let documents: ApDocRow[] = [];
@@ -96,13 +129,33 @@ export default async function ProveedoresPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Cuentas por pagar"
-            description="Carga facturas abiertas a la fecha de corte como saldo inicial. El saldo por proveedor se calcula solo. Prioridades y verificación para el empalme."
+            description="Carga facturas abiertas a la fecha de corte como saldo inicial. El saldo por proveedor se calcula solo. Prioridades y verificación para el empalme. Las categorías del proveedor vienen del maestro único (también usado en inventario de compras)."
           />
           <div className="flex flex-wrap gap-2">
-            <CreateSupplierForm />
+            <CreateCategoryMasterForm />
+            <CreateSupplierForm categories={categories} />
             <CreateApDocumentForm suppliers={suppliers.filter((s) => s.is_active)} />
           </div>
         </div>
+
+        {categories.length > 0 ? (
+          <Card>
+            <h3 className="font-medium">Maestro de categorías</h3>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Misma lista al asignar proveedores y al crear productos de inventario.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {categories.map((c) => (
+                <span
+                  key={c.id}
+                  className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
+                >
+                  <strong>{c.code}</strong> — {c.name}
+                </span>
+              ))}
+            </div>
+          </Card>
+        ) : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <StatCard label="Total CxP" value={formatCOP(total)} />
@@ -134,6 +187,7 @@ export default async function ProveedoresPage() {
               <SupplierCard
                 key={s.id}
                 supplier={s}
+                categories={categories}
                 documents={documents.filter((d) => d.supplier_id === s.id)}
               />
             ))}

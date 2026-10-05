@@ -71,8 +71,7 @@ function suppliersForCategory(
   const allowed = new Set(
     links.filter((l) => l.category_id === categoryId).map((l) => l.supplier_id),
   );
-  const matched = suppliers.filter((s) => allowed.has(s.id));
-  return matched.length > 0 ? matched : suppliers;
+  return suppliers.filter((s) => allowed.has(s.id));
 }
 
 export function AddItemForm({
@@ -155,8 +154,10 @@ export function AddItemForm({
       </div>
       {product ? (
         <p className="text-sm text-[var(--muted)]">
-          Categoría: {product.category_name}. Se listan proveedores que comercializan esa categoría
-          {options.length === suppliers.length ? " (o todos si aún no hay vínculos)." : "."}
+          Categoría: {product.category_name}.
+          {options.length === 0
+            ? " No hay proveedores de insumos con esa categoría asignada."
+            : " Solo se muestran proveedores de insumos con esa categoría."}
         </p>
       ) : null}
       {error ? <p className="text-sm text-red-700">{error}</p> : null}

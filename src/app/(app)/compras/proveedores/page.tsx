@@ -40,8 +40,9 @@ export default async function ComprasProveedoresPage() {
     await Promise.all([
       supabase
         .from("suppliers")
-        .select("id, name, category, lead_time_days, is_active")
+        .select("id, name, category, lead_time_days, is_active, is_purchase_supplier")
         .eq("organization_id", ctx.organization.id)
+        .eq("is_purchase_supplier", true)
         .is("deleted_at", null)
         .order("name"),
       supabase
@@ -59,7 +60,10 @@ export default async function ComprasProveedoresPage() {
         .eq("is_active", true),
     ]);
 
-  const suppliers = (supplierRows ?? []) as SupplierRow[];
+  const linkedSupplierIds = new Set((linkRows ?? []).map((l) => l.supplier_id));
+  const suppliers = ((supplierRows ?? []) as SupplierRow[]).filter((s) =>
+    linkedSupplierIds.has(s.id),
+  );
   const categories = (catRows ?? []) as CategoryOption[];
   const links = (linkRows ?? []) as LinkRow[];
 
@@ -73,10 +77,10 @@ export default async function ComprasProveedoresPage() {
         />
         <PageIntro
           title="Qué puede vender cada proveedor"
-          description="Vincule categorías de producto a proveedores y defina tiempos de entrega. El administrador del punto usará esto para sugerir proveedor al solicitar."
+          description="Aquí refine lead times por categoría. La asignación de categorías del maestro también se hace al crear/editar el proveedor."
         />
         <p className="text-sm text-[var(--muted)]">
-          El maestro base de proveedores (NIT, contacto, CxP) sigue en{" "}
+          Maestro de proveedores y categorías en{" "}
           <Link href="/proveedores" className="text-[var(--accent)]">
             Proveedores & CxP
           </Link>
@@ -84,8 +88,8 @@ export default async function ComprasProveedoresPage() {
         </p>
         {suppliers.length === 0 ? (
           <EmptyState
-            title="Sin proveedores"
-            description="Cree proveedores en Proveedores & CxP y luego vincule categorías aquí."
+            title="Sin proveedores de insumos"
+            description="En Proveedores & CxP marque “Proveedor de insumos” y asigne al menos una categoría. Solo esos aparecen aquí."
           />
         ) : categories.length === 0 ? (
           <EmptyState

@@ -13,6 +13,7 @@ export type SupplierRow = {
   category: string | null;
   lead_time_days: number | null;
   is_active: boolean;
+  is_purchase_supplier?: boolean;
 };
 export type CategoryOption = { id: string; code: string; name: string };
 export type LinkRow = {
