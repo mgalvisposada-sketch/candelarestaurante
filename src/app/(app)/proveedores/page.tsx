@@ -1,7 +1,7 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Card, EmptyState, PageIntro, StatCard } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
-import { requireModuleAccess } from "@/lib/permissions";
+import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { formatCOP, apDocumentBalance, money } from "@/lib/money";
 import { summarizeApAging } from "@/lib/accounts-payable";
@@ -15,6 +15,7 @@ import {
   SupplierCard,
   type ApDocRow,
   type ProductCategoryOption,
+  type ProveedoresCaps,
   type SupplierRow,
 } from "./suppliers-client";
 
@@ -37,6 +38,15 @@ export default async function ProveedoresPage() {
       </>
     );
   }
+
+  const caps: ProveedoresCaps = {
+    canCreateSupplier: ctxCanAccess(ctx, "proveedores.crear"),
+    canEditSupplier: ctxCanAccess(ctx, "proveedores.editar"),
+    canManageCategories: ctxCanAccess(ctx, "proveedores.categorias"),
+    canCreateAp: ctxCanAccess(ctx, "proveedores.cxp.crear"),
+    canEditAp: ctxCanAccess(ctx, "proveedores.cxp.editar"),
+    canPay: ctxCanAccess(ctx, "proveedores.cxp.pagar"),
+  };
 
   const supabase = await createClient();
   const [{ data: supplierRows }, { data: categoryRows }, { data: linkRows }] =
@@ -132,9 +142,15 @@ export default async function ProveedoresPage() {
             description="Carga facturas abiertas a la fecha de corte como saldo inicial. El saldo por proveedor se calcula solo. Prioridades y verificación para el empalme. Las categorías del proveedor vienen del maestro único (también usado en inventario de compras)."
           />
           <div className="flex flex-wrap gap-2">
-            <CreateCategoryMasterForm />
-            <CreateSupplierForm categories={categories} />
-            <CreateApDocumentForm suppliers={suppliers.filter((s) => s.is_active)} />
+            <CreateCategoryMasterForm canManage={caps.canManageCategories} />
+            <CreateSupplierForm
+              categories={categories}
+              canCreate={caps.canCreateSupplier}
+            />
+            <CreateApDocumentForm
+              suppliers={suppliers.filter((s) => s.is_active)}
+              canCreate={caps.canCreateAp}
+            />
           </div>
         </div>
 
@@ -189,6 +205,7 @@ export default async function ProveedoresPage() {
                 supplier={s}
                 categories={categories}
                 documents={documents.filter((d) => d.supplier_id === s.id)}
+                caps={caps}
               />
             ))}
           </div>

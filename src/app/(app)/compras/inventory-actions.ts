@@ -28,6 +28,7 @@ export async function createProductCategoryAction(
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
   const canManageCategories =
+    ctxCanAccess(ctx, "proveedores.categorias") ||
     ctxCanAccess(ctx, "compras.inventario") ||
     ctxCanAccess(ctx, "compras.proveedores") ||
     ctxCanAccess(ctx, "proveedores") ||

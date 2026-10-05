@@ -69,10 +69,24 @@ function pTone(p: string) {
   return "neutral" as const;
 }
 
-export function CreateCategoryMasterForm() {
+export type ProveedoresCaps = {
+  canCreateSupplier: boolean;
+  canEditSupplier: boolean;
+  canManageCategories: boolean;
+  canCreateAp: boolean;
+  canEditAp: boolean;
+  canPay: boolean;
+};
+
+export function CreateCategoryMasterForm({
+  canManage = true,
+}: {
+  canManage?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  if (!canManage) return null;
   if (!open) {
     return (
       <button
@@ -117,12 +131,15 @@ export function CreateCategoryMasterForm() {
 
 export function CreateSupplierForm({
   categories,
+  canCreate = true,
 }: {
   categories: ProductCategoryOption[];
+  canCreate?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  if (!canCreate) return null;
   if (!open) {
     return (
       <button
@@ -275,11 +292,17 @@ function SupplierFields({
   );
 }
 
-export function CreateApDocumentForm({ suppliers }: { suppliers: SupplierRow[] }) {
+export function CreateApDocumentForm({
+  suppliers,
+  canCreate = true,
+}: {
+  suppliers: SupplierRow[];
+  canCreate?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  if (suppliers.length === 0) return null;
+  if (!canCreate || suppliers.length === 0) return null;
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)} className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm font-medium">
@@ -401,10 +424,12 @@ export function SupplierCard({
   supplier,
   documents,
   categories,
+  caps,
 }: {
   supplier: SupplierRow;
   documents: ApDocRow[];
   categories: ProductCategoryOption[];
+  caps: ProveedoresCaps;
 }) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -440,27 +465,29 @@ export function SupplierCard({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" onClick={() => setEditing((v) => !v)} className="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-medium">
-          {editing ? "Cerrar" : "Editar proveedor"}
-        </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => {
-            if (!confirm("¿Desactivar proveedor?")) return;
-            startTransition(async () => {
-              const r = await softDeleteSupplierAction(supplier.id);
-              if (!r.ok) setError(r.error ?? "Error");
-            });
-          }}
-          className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700"
-        >
-          Desactivar
-        </button>
-      </div>
+      {caps.canEditSupplier ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" onClick={() => setEditing((v) => !v)} className="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-medium">
+            {editing ? "Cerrar" : "Editar proveedor"}
+          </button>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              if (!confirm("¿Desactivar proveedor?")) return;
+              startTransition(async () => {
+                const r = await softDeleteSupplierAction(supplier.id);
+                if (!r.ok) setError(r.error ?? "Error");
+              });
+            }}
+            className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700"
+          >
+            Desactivar
+          </button>
+        </div>
+      ) : null}
 
-      {editing ? (
+      {editing && caps.canEditSupplier ? (
         <form
           className="mt-4 space-y-3 border-t border-[var(--line)] pt-4"
           action={(fd) => {
@@ -483,7 +510,13 @@ export function SupplierCard({
           <p className="text-sm text-[var(--muted)]">Sin facturas. Agrega documentos CxP arriba.</p>
         ) : (
           documents.map((doc) => (
-            <ApDocCard key={doc.id} doc={doc} suppliers={[supplier]} />
+            <ApDocCard
+              key={doc.id}
+              doc={doc}
+              suppliers={[supplier]}
+              canEdit={caps.canEditAp}
+              canPay={caps.canPay}
+            />
           ))
         )}
       </div>
@@ -492,11 +525,22 @@ export function SupplierCard({
   );
 }
 
-function ApDocCard({ doc, suppliers }: { doc: ApDocRow; suppliers: SupplierRow[] }) {
+function ApDocCard({
+  doc,
+  suppliers,
+  canEdit = false,
+  canPay = false,
+}: {
+  doc: ApDocRow;
+  suppliers: SupplierRow[];
+  canEdit?: boolean;
+  canPay?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const balance = apDocumentBalance(doc.original_amount, doc.paid_amount);
+  const canMutate = canEdit || canPay;
 
   return (
     <div className="rounded-lg border border-[var(--line)] bg-slate-50 p-3">
@@ -520,44 +564,56 @@ function ApDocCard({ doc, suppliers }: { doc: ApDocRow; suppliers: SupplierRow[]
         <span>Pagado: {formatCOP(doc.paid_amount)}</span>
         <span className="font-medium">Saldo: {formatCOP(balance)}</span>
       </div>
-      <div className="mt-2 flex gap-2">
-        <button type="button" onClick={() => setOpen((v) => !v)} className="text-xs font-medium underline">
-          {open ? "Cerrar" : "Editar / pagar"}
-        </button>
-      </div>
-      {open ? (
+      {canMutate ? (
+        <div className="mt-2 flex gap-2">
+          <button type="button" onClick={() => setOpen((v) => !v)} className="text-xs font-medium underline">
+            {open
+              ? "Cerrar"
+              : canEdit && canPay
+                ? "Editar / pagar"
+                : canEdit
+                  ? "Editar"
+                  : "Registrar pago"}
+          </button>
+        </div>
+      ) : null}
+      {open && canMutate ? (
         <div className="mt-3 space-y-4 border-t border-[var(--line)] pt-3">
-          <form
-            className="space-y-2"
-            action={(fd) => {
-              setError(null);
-              startTransition(async () => {
-                const r = await updateApDocumentAction(doc.id, fd);
-                if (!r.ok) setError(r.error ?? "Error");
-              });
-            }}
-          >
-            <ApDocFields suppliers={suppliers} doc={doc} />
-            <button type="submit" disabled={pending} className="rounded-md bg-[var(--ink)] px-3 py-1.5 text-xs text-white">Guardar documento</button>
-          </form>
-          <form
-            className="grid gap-2 rounded-md bg-white p-3 md:grid-cols-3"
-            action={(fd) => {
-              setError(null);
-              startTransition(async () => {
-                const r = await registerApPaymentAction(doc.id, fd);
-                if (!r.ok) setError(r.error ?? "Error");
-              });
-            }}
-          >
-            <p className="text-xs text-[var(--muted)] md:col-span-3">Registrar pago</p>
-            <input type="date" name="payment_date" required defaultValue={todayInBogota()} className={inputClass} />
-            <input name="amount" required placeholder="Monto" className={inputClass} />
-            <input name="reference" placeholder="Referencia" className={inputClass} />
-            <button type="submit" disabled={pending} className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs text-white md:col-span-3">
-              Aplicar pago
-            </button>
-          </form>
+          {canEdit ? (
+            <form
+              className="space-y-2"
+              action={(fd) => {
+                setError(null);
+                startTransition(async () => {
+                  const r = await updateApDocumentAction(doc.id, fd);
+                  if (!r.ok) setError(r.error ?? "Error");
+                });
+              }}
+            >
+              <ApDocFields suppliers={suppliers} doc={doc} />
+              <button type="submit" disabled={pending} className="rounded-md bg-[var(--ink)] px-3 py-1.5 text-xs text-white">Guardar documento</button>
+            </form>
+          ) : null}
+          {canPay ? (
+            <form
+              className="grid gap-2 rounded-md bg-white p-3 md:grid-cols-3"
+              action={(fd) => {
+                setError(null);
+                startTransition(async () => {
+                  const r = await registerApPaymentAction(doc.id, fd);
+                  if (!r.ok) setError(r.error ?? "Error");
+                });
+              }}
+            >
+              <p className="text-xs text-[var(--muted)] md:col-span-3">Registrar pago</p>
+              <input type="date" name="payment_date" required defaultValue={todayInBogota()} className={inputClass} />
+              <input name="amount" required placeholder="Monto" className={inputClass} />
+              <input name="reference" placeholder="Referencia" className={inputClass} />
+              <button type="submit" disabled={pending} className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs text-white md:col-span-3">
+                Aplicar pago
+              </button>
+            </form>
+          ) : null}
           {error ? <p className="text-xs text-red-700">{error}</p> : null}
         </div>
       ) : null}

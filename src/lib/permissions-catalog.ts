@@ -78,8 +78,14 @@ export const APP_MODULES: AppModuleDef[] = [
     href: "/proveedores",
     mvp: 1,
     submodules: [
-      { key: "proveedores.maestro", label: "Proveedores" },
-      { key: "proveedores.cxp", label: "Cuentas por pagar" },
+      { key: "proveedores.maestro", label: "Ver proveedores" },
+      { key: "proveedores.crear", label: "Crear proveedores" },
+      { key: "proveedores.editar", label: "Editar / desactivar proveedores" },
+      { key: "proveedores.categorias", label: "Gestionar categorías" },
+      { key: "proveedores.cxp", label: "Ver cuentas por pagar" },
+      { key: "proveedores.cxp.crear", label: "Crear documentos CxP" },
+      { key: "proveedores.cxp.editar", label: "Editar documentos CxP" },
+      { key: "proveedores.cxp.pagar", label: "Registrar pagos CxP" },
     ],
   },
   {

@@ -2,13 +2,31 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { getOrgContext } from "@/lib/org-context";
+import { getOrgContext, type OrgContext } from "@/lib/org-context";
+import { ctxCanAccess } from "@/lib/permissions";
 import {
   apDocumentSchema,
   apPaymentSchema,
   supplierSchema,
 } from "@/validations/suppliers";
 import type { ActionResult } from "../empresa/actions";
+
+type OrgCtx = OrgContext & {
+  organization: NonNullable<OrgContext["organization"]>;
+};
+
+async function requireProveedoresPerm(
+  permissionKey: string,
+): Promise<{ ok: true; ctx: OrgCtx } | { ok: false; error: string }> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) {
+    return { ok: false, error: "Sin organización" };
+  }
+  if (!ctxCanAccess(ctx, permissionKey)) {
+    return { ok: false, error: "No tienes permiso para esta acción" };
+  }
+  return { ok: true, ctx: ctx as OrgCtx };
+}
 
 function emptyToNull(value: string | null | undefined) {
   if (value === undefined || value === null || String(value).trim() === "")
@@ -192,8 +210,9 @@ function revalidateSupplierPaths() {
 export async function createSupplierAction(
   formData: FormData,
 ): Promise<ActionResult> {
-  const ctx = await getOrgContext();
-  if (!ctx?.organization) return { ok: false, error: "Primero configura la empresa" };
+  const gate = await requireProveedoresPerm("proveedores.crear");
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const { ctx } = gate;
 
   const parsed = supplierSchema.safeParse({
     name: formData.get("name"),
@@ -285,8 +304,9 @@ export async function updateSupplierAction(
   supplierId: string,
   formData: FormData,
 ): Promise<ActionResult> {
-  const ctx = await getOrgContext();
-  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  const gate = await requireProveedoresPerm("proveedores.editar");
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const { ctx } = gate;
 
   const parsed = supplierSchema.safeParse({
     name: formData.get("name"),
@@ -349,8 +369,9 @@ export async function updateSupplierAction(
 export async function createApDocumentAction(
   formData: FormData,
 ): Promise<ActionResult> {
-  const ctx = await getOrgContext();
-  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  const gate = await requireProveedoresPerm("proveedores.cxp.crear");
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const { ctx } = gate;
 
   const parsed = apDocumentSchema.safeParse({
     supplier_id: formData.get("supplier_id"),
@@ -455,8 +476,9 @@ export async function updateApDocumentAction(
   documentId: string,
   formData: FormData,
 ): Promise<ActionResult> {
-  const ctx = await getOrgContext();
-  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  const gate = await requireProveedoresPerm("proveedores.cxp.editar");
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const { ctx } = gate;
 
   const parsed = apDocumentSchema.safeParse({
     supplier_id: formData.get("supplier_id"),
@@ -518,8 +540,9 @@ export async function registerApPaymentAction(
   documentId: string,
   formData: FormData,
 ): Promise<ActionResult> {
-  const ctx = await getOrgContext();
-  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  const gate = await requireProveedoresPerm("proveedores.cxp.pagar");
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const { ctx } = gate;
 
   const parsed = apPaymentSchema.safeParse({
     payment_date: formData.get("payment_date"),
@@ -566,8 +589,9 @@ export async function registerApPaymentAction(
 export async function softDeleteSupplierAction(
   supplierId: string,
 ): Promise<ActionResult> {
-  const ctx = await getOrgContext();
-  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  const gate = await requireProveedoresPerm("proveedores.editar");
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const { ctx } = gate;
   const supabase = await createClient();
   const { error } = await supabase
     .from("suppliers")
