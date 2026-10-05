@@ -1,0 +1,724 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+import { getOrgContext } from "@/lib/org-context";
+import { ctxCanAccess } from "@/lib/permissions";
+import { todayInBogota } from "@/lib/dates";
+import {
+  acceptInvoiceSchema,
+  approvePurchaseItemSchema,
+  createPurchaseRequestSchema,
+  purchaseRequestItemSchema,
+  receivePurchaseItemSchema,
+  rejectPurchaseRequestSchema,
+} from "@/validations/purchases";
+import type { ActionResult } from "../empresa/actions";
+
+function emptyToNull(value: string | null | undefined) {
+  if (value === undefined || value === null || String(value).trim() === "")
+    return null;
+  return String(value).trim();
+}
+
+function parseNumber(raw: string | null | undefined, fallback?: number) {
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return fallback === undefined ? null : fallback;
+  }
+  const n = Number(String(raw).replace(/,/g, "").trim());
+  if (Number.isNaN(n)) return null;
+  return n;
+}
+
+function revalidateCompras(requestId?: string) {
+  revalidatePath("/compras");
+  revalidatePath("/compras/solicitudes");
+  if (requestId) revalidatePath(`/compras/solicitudes/${requestId}`);
+  revalidatePath("/compras/inventario");
+  revalidatePath("/solicitudes-pago");
+  revalidatePath("/proveedores");
+}
+
+function addDays(isoDate: string, days: number) {
+  const d = new Date(`${isoDate}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+async function ensureAccountsPayable(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  supplierId: string,
+  userId: string,
+) {
+  const { data: existing } = await supabase
+    .from("accounts_payable")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("supplier_id", supplierId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (existing) return existing.id;
+
+  const { data, error } = await supabase
+    .from("accounts_payable")
+    .insert({
+      organization_id: orgId,
+      supplier_id: supplierId,
+      priority: "NORMAL",
+      created_by: userId,
+      updated_by: userId,
+    })
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+  return data.id as string;
+}
+
+export async function createPurchaseRequestAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.crear")) {
+    return { ok: false, error: "Sin permiso para crear solicitudes" };
+  }
+
+  const parsed = createPurchaseRequestSchema.safeParse({
+    title: formData.get("title"),
+    notes: formData.get("notes"),
+    location_label: formData.get("location_label"),
+    requested_at: formData.get("requested_at") || todayInBogota(),
+    needed_by: formData.get("needed_by"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("purchase_requests")
+    .insert({
+      organization_id: ctx.organization.id,
+      status: "BORRADOR",
+      title: parsed.data.title.trim(),
+      notes: emptyToNull(parsed.data.notes),
+      location_label: emptyToNull(parsed.data.location_label),
+      requested_at: parsed.data.requested_at,
+      needed_by: emptyToNull(parsed.data.needed_by),
+      requested_by: ctx.userId,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+
+  if (error) return { ok: false, error: error.message };
+  revalidateCompras(data.id);
+  return { ok: true, id: data.id };
+}
+
+export async function addPurchaseRequestItemAction(
+  requestId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.crear")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const parsed = purchaseRequestItemSchema.safeParse({
+    product_id: formData.get("product_id"),
+    quantity_requested: formData.get("quantity_requested"),
+    suggested_supplier_id: formData.get("suggested_supplier_id"),
+    unit_cost_estimate: formData.get("unit_cost_estimate"),
+    notes: formData.get("notes"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const qty = parseNumber(parsed.data.quantity_requested);
+  if (qty === null || qty <= 0) return { ok: false, error: "Cantidad inválida" };
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (request.status !== "BORRADOR") {
+    return { ok: false, error: "Solo se editan borradores" };
+  }
+
+  const { data: product } = await supabase
+    .from("products")
+    .select("id, category_id, unit")
+    .eq("id", parsed.data.product_id)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!product) return { ok: false, error: "Producto no encontrado" };
+
+  let suggested = emptyToNull(parsed.data.suggested_supplier_id);
+  if (!suggested) {
+    const { data: links } = await supabase
+      .from("supplier_product_categories")
+      .select("supplier_id")
+      .eq("organization_id", ctx.organization.id)
+      .eq("category_id", product.category_id)
+      .eq("is_active", true)
+      .is("deleted_at", null)
+      .limit(1);
+    suggested = links?.[0]?.supplier_id ?? null;
+  }
+
+  const { count } = await supabase
+    .from("purchase_request_items")
+    .select("id", { count: "exact", head: true })
+    .eq("purchase_request_id", requestId)
+    .is("deleted_at", null);
+
+  const { data, error } = await supabase
+    .from("purchase_request_items")
+    .insert({
+      organization_id: ctx.organization.id,
+      purchase_request_id: requestId,
+      product_id: product.id,
+      category_id: product.category_id,
+      quantity_requested: qty,
+      unit: product.unit,
+      suggested_supplier_id: suggested,
+      unit_cost_estimate: parseNumber(parsed.data.unit_cost_estimate),
+      notes: emptyToNull(parsed.data.notes),
+      sort_order: count ?? 0,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+
+  if (error) return { ok: false, error: error.message };
+  revalidateCompras(requestId);
+  return { ok: true, id: data.id };
+}
+
+export async function removePurchaseRequestItemAction(
+  requestId: string,
+  itemId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.crear")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .maybeSingle();
+  if (!request || request.status !== "BORRADOR") {
+    return { ok: false, error: "Solo se editan borradores" };
+  }
+
+  const { error } = await supabase
+    .from("purchase_request_items")
+    .update({
+      deleted_at: new Date().toISOString(),
+      status: "CANCELADO",
+      updated_by: ctx.userId,
+    })
+    .eq("id", itemId)
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id);
+
+  if (error) return { ok: false, error: error.message };
+  revalidateCompras(requestId);
+  return { ok: true, id: itemId };
+}
+
+export async function submitPurchaseRequestAction(
+  requestId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.crear")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const supabase = await createClient();
+  const { data: items } = await supabase
+    .from("purchase_request_items")
+    .select("id")
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  if (!items?.length) {
+    return { ok: false, error: "Agregue al menos un producto" };
+  }
+
+  const { error } = await supabase
+    .from("purchase_requests")
+    .update({
+      status: "ENVIADA",
+      submitted_at: new Date().toISOString(),
+      updated_by: ctx.userId,
+    })
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .eq("status", "BORRADOR");
+
+  if (error) return { ok: false, error: error.message };
+  revalidateCompras(requestId);
+  return { ok: true, id: requestId };
+}
+
+export async function approvePurchaseRequestAction(
+  requestId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.aprobar")) {
+    return { ok: false, error: "Sin permiso para aprobar compras" };
+  }
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (request.status !== "ENVIADA") {
+    return { ok: false, error: "Solo se aprueban solicitudes enviadas" };
+  }
+
+  const { data: items } = await supabase
+    .from("purchase_request_items")
+    .select("id, suggested_supplier_id, quantity_requested, category_id")
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  if (!items?.length) return { ok: false, error: "Sin ítems" };
+
+  const supplierIds = [
+    ...new Set(
+      items
+        .map((i) => i.suggested_supplier_id)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+
+  const { data: suppliers } = supplierIds.length
+    ? await supabase
+        .from("suppliers")
+        .select("id, lead_time_days")
+        .in("id", supplierIds)
+    : { data: [] as { id: string; lead_time_days: number | null }[] };
+
+  const { data: links } = await supabase
+    .from("supplier_product_categories")
+    .select("supplier_id, category_id, lead_time_days")
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .eq("is_active", true);
+
+  const supplierLead = new Map(
+    (suppliers ?? []).map((s) => [s.id, s.lead_time_days]),
+  );
+  const today = todayInBogota();
+
+  for (const item of items) {
+    const prefix = `item_${item.id}_`;
+    const parsed = approvePurchaseItemSchema.safeParse({
+      item_id: item.id,
+      approved_supplier_id:
+        formData.get(`${prefix}approved_supplier_id`) ||
+        item.suggested_supplier_id,
+      quantity_approved:
+        formData.get(`${prefix}quantity_approved`) ||
+        String(item.quantity_requested),
+      expected_delivery_date: formData.get(`${prefix}expected_delivery_date`),
+      unit_cost_estimate: formData.get(`${prefix}unit_cost_estimate`),
+    });
+    if (!parsed.success) {
+      return {
+        ok: false,
+        error: parsed.error.issues[0]?.message ?? "Ítem inválido",
+      };
+    }
+
+    const qty = parseNumber(parsed.data.quantity_approved);
+    if (qty === null || qty < 0) return { ok: false, error: "Cantidad aprobada inválida" };
+
+    let expected = emptyToNull(parsed.data.expected_delivery_date);
+    if (!expected) {
+      const linkLead = (links ?? []).find(
+        (l) =>
+          l.supplier_id === parsed.data.approved_supplier_id &&
+          l.category_id === item.category_id,
+      )?.lead_time_days;
+      const days =
+        linkLead ?? supplierLead.get(parsed.data.approved_supplier_id) ?? 3;
+      expected = addDays(today, Number(days));
+    }
+
+    const { error } = await supabase
+      .from("purchase_request_items")
+      .update({
+        approved_supplier_id: parsed.data.approved_supplier_id,
+        quantity_approved: qty,
+        expected_delivery_date: expected,
+        unit_cost_estimate: parseNumber(parsed.data.unit_cost_estimate),
+        status: "APROBADO",
+        updated_by: ctx.userId,
+      })
+      .eq("id", item.id)
+      .eq("organization_id", ctx.organization.id);
+
+    if (error) return { ok: false, error: error.message };
+  }
+
+  const { error } = await supabase
+    .from("purchase_requests")
+    .update({
+      status: "PEDIDA",
+      approved_at: new Date().toISOString(),
+      ordered_at: new Date().toISOString(),
+      approved_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id);
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "APPROVE",
+    entity: "purchase_requests",
+    entity_id: requestId,
+  });
+
+  revalidateCompras(requestId);
+  return { ok: true, id: requestId };
+}
+
+export async function rejectPurchaseRequestAction(
+  requestId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.aprobar")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const parsed = rejectPurchaseRequestSchema.safeParse({
+    rejection_reason: formData.get("rejection_reason"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("purchase_requests")
+    .update({
+      status: "RECHAZADA",
+      rejection_reason: parsed.data.rejection_reason.trim(),
+      approved_by: ctx.userId,
+      approved_at: new Date().toISOString(),
+      updated_by: ctx.userId,
+    })
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .eq("status", "ENVIADA");
+
+  if (error) return { ok: false, error: error.message };
+  revalidateCompras(requestId);
+  return { ok: true, id: requestId };
+}
+
+export async function receivePurchaseItemsAction(
+  requestId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.recibir")) {
+    return { ok: false, error: "Sin permiso para recibir" };
+  }
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (!["PEDIDA", "RECIBIDA_PARCIAL"].includes(request.status)) {
+    return { ok: false, error: "La solicitud no está pendiente de recepción" };
+  }
+
+  const { data: items } = await supabase
+    .from("purchase_request_items")
+    .select(
+      "id, product_id, quantity_approved, quantity_requested, quantity_received",
+    )
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  if (!items?.length) return { ok: false, error: "Sin ítems" };
+
+  for (const item of items) {
+    const raw = formData.get(`item_${item.id}_quantity_received`);
+    if (raw === null || raw === undefined || String(raw).trim() === "") continue;
+
+    const parsed = receivePurchaseItemSchema.safeParse({
+      item_id: item.id,
+      quantity_received: String(raw),
+    });
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.issues[0]?.message ?? "Cantidad inválida" };
+    }
+
+    const receivedNow = parseNumber(parsed.data.quantity_received);
+    if (receivedNow === null || receivedNow < 0) {
+      return { ok: false, error: "Cantidad recibida inválida" };
+    }
+
+    const previous = Number(item.quantity_received || 0);
+    const totalReceived = previous + receivedNow;
+    const target = Number(item.quantity_approved ?? item.quantity_requested);
+    const status =
+      totalReceived <= 0
+        ? "PEDIDO"
+        : totalReceived >= target
+          ? "RECIBIDO"
+          : "RECIBIDO_PARCIAL";
+
+    const { error } = await supabase
+      .from("purchase_request_items")
+      .update({
+        quantity_received: totalReceived,
+        status,
+        updated_by: ctx.userId,
+      })
+      .eq("id", item.id)
+      .eq("organization_id", ctx.organization.id);
+    if (error) return { ok: false, error: error.message };
+
+    if (receivedNow > 0) {
+      const { data: product } = await supabase
+        .from("products")
+        .select("current_stock")
+        .eq("id", item.product_id)
+        .eq("organization_id", ctx.organization.id)
+        .maybeSingle();
+      if (product) {
+        await supabase
+          .from("products")
+          .update({
+            current_stock: Number(product.current_stock || 0) + receivedNow,
+            updated_by: ctx.userId,
+          })
+          .eq("id", item.product_id);
+      }
+    }
+  }
+
+  const { data: refreshed } = await supabase
+    .from("purchase_request_items")
+    .select("quantity_approved, quantity_requested, quantity_received, status")
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  const allReceived = (refreshed ?? []).every(
+    (i) =>
+      i.status === "RECIBIDO" ||
+      Number(i.quantity_received || 0) >=
+        Number(i.quantity_approved ?? i.quantity_requested),
+  );
+  const anyReceived = (refreshed ?? []).some(
+    (i) => Number(i.quantity_received || 0) > 0,
+  );
+
+  const nextStatus = allReceived
+    ? "RECIBIDA"
+    : anyReceived
+      ? "RECIBIDA_PARCIAL"
+      : request.status;
+
+  await supabase
+    .from("purchase_requests")
+    .update({
+      status: nextStatus,
+      received_at: allReceived ? new Date().toISOString() : null,
+      updated_by: ctx.userId,
+    })
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id);
+
+  revalidateCompras(requestId);
+  return { ok: true, id: requestId };
+}
+
+export async function acceptPurchaseInvoiceAction(
+  requestId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (
+    !ctxCanAccess(ctx, "compras.solicitudes.aprobar") &&
+    !ctxCanAccess(ctx, "compras.solicitudes.recibir")
+  ) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const parsed = acceptInvoiceSchema.safeParse({
+    supplier_id: formData.get("supplier_id"),
+    amount: formData.get("amount"),
+    document_number: formData.get("document_number"),
+    document_type: formData.get("document_type") || "FACTURA",
+    issue_date: formData.get("issue_date") || todayInBogota(),
+    due_date: formData.get("due_date"),
+    concept: formData.get("concept"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const amount = parseNumber(parsed.data.amount);
+  if (amount === null || amount <= 0) return { ok: false, error: "Monto inválido" };
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status, title")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (!["RECIBIDA", "RECIBIDA_PARCIAL"].includes(request.status)) {
+    return { ok: false, error: "Primero registre la recepción de mercancía" };
+  }
+
+  let apId: string;
+  try {
+    apId = await ensureAccountsPayable(
+      supabase,
+      ctx.organization.id,
+      parsed.data.supplier_id,
+      ctx.userId,
+    );
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Error CxP" };
+  }
+
+  const concept =
+    emptyToNull(parsed.data.concept) || `Compra: ${request.title}`;
+
+  const { data: doc, error: docError } = await supabase
+    .from("accounts_payable_documents")
+    .insert({
+      organization_id: ctx.organization.id,
+      accounts_payable_id: apId,
+      supplier_id: parsed.data.supplier_id,
+      document_type: parsed.data.document_type || "FACTURA",
+      document_number: emptyToNull(parsed.data.document_number),
+      issue_date: emptyToNull(parsed.data.issue_date),
+      due_date: emptyToNull(parsed.data.due_date),
+      concept,
+      original_amount: amount,
+      paid_amount: 0,
+      status: "ABIERTA",
+      priority: "NORMAL",
+      verification_status: "CONFIRMADO",
+      source: "compras",
+      validated_by: ctx.userId,
+      validated_at: new Date().toISOString(),
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+
+  if (docError) return { ok: false, error: docError.message };
+
+  const { data: payReq, error: payError } = await supabase
+    .from("payment_requests")
+    .insert({
+      organization_id: ctx.organization.id,
+      source: "FACTURA_PROVEEDOR",
+      status: "EN_COLA_PAGO",
+      priority: "NORMAL",
+      concept,
+      amount,
+      requested_at: todayInBogota(),
+      due_date: emptyToNull(parsed.data.due_date),
+      supplier_id: parsed.data.supplier_id,
+      ap_document_id: doc.id,
+      document_type: parsed.data.document_type || "FACTURA",
+      document_number: emptyToNull(parsed.data.document_number),
+      issue_date: emptyToNull(parsed.data.issue_date),
+      notes: `Desde compra ${requestId}`,
+      requested_by: ctx.userId,
+      approved_by: ctx.userId,
+      approved_at: new Date().toISOString(),
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+
+  if (payError) return { ok: false, error: payError.message };
+
+  const { error } = await supabase
+    .from("purchase_requests")
+    .update({
+      status: "FACTURA_ACEPTADA",
+      invoice_accepted_at: new Date().toISOString(),
+      ap_document_id: doc.id,
+      payment_request_id: payReq.id,
+      updated_by: ctx.userId,
+    })
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id);
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "INVOICE_ACCEPT",
+    entity: "purchase_requests",
+    entity_id: requestId,
+    new_values: { ap_document_id: doc.id, payment_request_id: payReq.id },
+  });
+
+  revalidateCompras(requestId);
+  return { ok: true, id: requestId };
+}

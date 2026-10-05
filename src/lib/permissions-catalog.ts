@@ -123,6 +123,20 @@ export const APP_MODULES: AppModuleDef[] = [
     ],
   },
   {
+    key: "compras",
+    label: "Compras",
+    href: "/compras",
+    mvp: 2,
+    submodules: [
+      { key: "compras.inventario", label: "Inventario (maestro)" },
+      { key: "compras.proveedores", label: "Proveedores por categoría" },
+      { key: "compras.solicitudes", label: "Solicitudes de compra" },
+      { key: "compras.solicitudes.crear", label: "Crear solicitudes de compra" },
+      { key: "compras.solicitudes.aprobar", label: "Aprobar compras" },
+      { key: "compras.solicitudes.recibir", label: "Recibir mercancía" },
+    ],
+  },
+  {
     key: "presupuesto",
     label: "Presupuesto",
     href: "/presupuesto",
@@ -220,8 +234,15 @@ const ALL_EXCEPT_CONFIG_ADMIN = ALL_PERMISSION_KEYS.filter(
 export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
   SUPER_ADMIN: [...ALL_PERMISSION_KEYS],
   GESTION: [...ALL_EXCEPT_CONFIG_ADMIN, "configuracion"],
-  /** Administrador operativo del local: solo reportar novedades de turno. */
-  ADMIN_LOCAL: ["personal", "personal.novedades"],
+  /** Administrador operativo del local: novedades y solicitudes de compra. */
+  ADMIN_LOCAL: [
+    "personal",
+    "personal.novedades",
+    "compras",
+    "compras.solicitudes",
+    "compras.solicitudes.crear",
+    "compras.solicitudes.recibir",
+  ],
   SOCIO: [
     "inicio",
     "inicio.resumen",
@@ -249,6 +270,10 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "solicitudes-pago",
     "solicitudes-pago.bandeja",
     "solicitudes-pago.pagar",
+    "compras",
+    "compras.inventario",
+    "compras.proveedores",
+    "compras.solicitudes",
     "presupuesto",
     "presupuesto.lineas",
     "tributario",
