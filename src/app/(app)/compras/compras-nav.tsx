@@ -16,7 +16,21 @@ const LINKS = [
     href: "/compras/inventario",
     label: "Inventario",
     permission: "compras.inventario",
-    active: (pathname: string) => pathname.startsWith("/compras/inventario"),
+    active: (pathname: string) =>
+      pathname.startsWith("/compras/inventario") &&
+      !pathname.startsWith("/compras/inventario-fisico"),
+  },
+  {
+    href: "/compras/sugeridos",
+    label: "Sugeridos",
+    permission: "compras.sugeridos",
+    active: (pathname: string) => pathname.startsWith("/compras/sugeridos"),
+  },
+  {
+    href: "/compras/inventario-fisico",
+    label: "Inv. físico",
+    permission: "compras.inventario-fisico",
+    active: (pathname: string) => pathname.startsWith("/compras/inventario-fisico"),
   },
   {
     href: "/compras/proveedores",

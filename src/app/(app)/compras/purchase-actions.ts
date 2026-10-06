@@ -12,7 +12,12 @@ import {
   purchaseRequestItemSchema,
   receivePurchaseItemSchema,
   rejectPurchaseRequestSchema,
+  updatePurchaseRequestItemSchema,
 } from "@/validations/purchases";
+import {
+  suggestedPurchaseQty,
+  weightedAverageUnitCost,
+} from "@/lib/inventory/cost";
 import type { ActionResult } from "../empresa/actions";
 
 function emptyToNull(value: string | null | undefined) {
@@ -35,6 +40,8 @@ function revalidateCompras(requestId?: string) {
   revalidatePath("/compras/solicitudes");
   if (requestId) revalidatePath(`/compras/solicitudes/${requestId}`);
   revalidatePath("/compras/inventario");
+  revalidatePath("/compras/sugeridos");
+  revalidatePath("/compras/inventario-fisico");
   revalidatePath("/solicitudes-pago");
   revalidatePath("/proveedores");
 }
@@ -179,6 +186,31 @@ export async function addPurchaseRequestItemAction(
     suggested = links?.[0]?.supplier_id ?? null;
   }
 
+  const { data: existingItem } = await supabase
+    .from("purchase_request_items")
+    .select("id, quantity_requested")
+    .eq("purchase_request_id", requestId)
+    .eq("product_id", product.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (existingItem) {
+    const { error } = await supabase
+      .from("purchase_request_items")
+      .update({
+        quantity_requested: qty,
+        suggested_supplier_id: suggested,
+        unit_cost_estimate: parseNumber(parsed.data.unit_cost_estimate),
+        notes: emptyToNull(parsed.data.notes),
+        updated_by: ctx.userId,
+      })
+      .eq("id", existingItem.id)
+      .eq("organization_id", ctx.organization.id);
+    if (error) return { ok: false, error: error.message };
+    revalidateCompras(requestId);
+    return { ok: true, id: existingItem.id };
+  }
+
   const { count } = await supabase
     .from("purchase_request_items")
     .select("id", { count: "exact", head: true })
@@ -207,6 +239,327 @@ export async function addPurchaseRequestItemAction(
   if (error) return { ok: false, error: error.message };
   revalidateCompras(requestId);
   return { ok: true, id: data.id };
+}
+
+/** Agrega varios productos de una misma categoría a la solicitud. */
+export async function addPurchaseRequestItemsByCategoryAction(
+  requestId: string,
+  formData: FormData,
+): Promise<ActionResult & { created?: number }> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.crear")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const categoryId = String(formData.get("category_id") ?? "").trim();
+  if (!/^[0-9a-f-]{36}$/i.test(categoryId)) {
+    return { ok: false, error: "Seleccione una categoría" };
+  }
+
+  const productIds = formData
+    .getAll("product_ids")
+    .map((v) => String(v))
+    .filter((v) => /^[0-9a-f-]{36}$/i.test(v));
+  if (productIds.length === 0) {
+    return { ok: false, error: "Seleccione al menos un producto" };
+  }
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (request.status !== "BORRADOR") {
+    return { ok: false, error: "Solo se editan borradores" };
+  }
+
+  const { data: products } = await supabase
+    .from("products")
+    .select("id, category_id, unit, unit_cost")
+    .eq("organization_id", ctx.organization.id)
+    .eq("category_id", categoryId)
+    .is("deleted_at", null)
+    .eq("is_active", true)
+    .in("id", productIds);
+
+  if (!products?.length) {
+    return { ok: false, error: "No hay productos válidos en esa categoría" };
+  }
+
+  for (const product of products) {
+    const suggested = emptyToNull(
+      String(formData.get(`supplier_${product.id}`) ?? ""),
+    );
+    if (!suggested) {
+      return {
+        ok: false,
+        error: "Asigne un proveedor a cada producto seleccionado",
+      };
+    }
+  }
+
+  const { data: existingItems } = await supabase
+    .from("purchase_request_items")
+    .select("id, product_id")
+    .eq("purchase_request_id", requestId)
+    .is("deleted_at", null);
+
+  const existingByProduct = new Map(
+    (existingItems ?? []).map((i) => [i.product_id, i]),
+  );
+  let sortOrder = existingItems?.length ?? 0;
+  let created = 0;
+
+  for (const product of products) {
+    const qty =
+      parseNumber(String(formData.get(`qty_${product.id}`) || "")) ?? 1;
+    if (qty <= 0) continue;
+
+    const suggested = emptyToNull(
+      String(formData.get(`supplier_${product.id}`) ?? ""),
+    );
+    if (!suggested) {
+      return {
+        ok: false,
+        error: "Asigne un proveedor a cada producto seleccionado",
+      };
+    }
+
+    const existing = existingByProduct.get(product.id);
+    if (existing) {
+      const { error } = await supabase
+        .from("purchase_request_items")
+        .update({
+          quantity_requested: qty,
+          suggested_supplier_id: suggested,
+          unit_cost_estimate: Number(product.unit_cost || 0),
+          updated_by: ctx.userId,
+        })
+        .eq("id", existing.id)
+        .eq("organization_id", ctx.organization.id);
+      if (error) return { ok: false, error: error.message };
+      created += 1;
+      continue;
+    }
+
+    const { error } = await supabase.from("purchase_request_items").insert({
+      organization_id: ctx.organization.id,
+      purchase_request_id: requestId,
+      product_id: product.id,
+      category_id: product.category_id,
+      quantity_requested: qty,
+      unit: product.unit,
+      suggested_supplier_id: suggested,
+      unit_cost_estimate: Number(product.unit_cost || 0),
+      sort_order: sortOrder,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    });
+    if (error) return { ok: false, error: error.message };
+    sortOrder += 1;
+    created += 1;
+  }
+
+  if (created === 0) {
+    return { ok: false, error: "No se agregó ningún producto" };
+  }
+
+  revalidateCompras(requestId);
+  return { ok: true, id: requestId, created };
+}
+
+export async function updatePurchaseRequestItemAction(
+  requestId: string,
+  itemId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.crear")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const parsed = updatePurchaseRequestItemSchema.safeParse({
+    quantity_requested: formData.get("quantity_requested"),
+    suggested_supplier_id: formData.get("suggested_supplier_id"),
+    unit_cost_estimate: formData.get("unit_cost_estimate"),
+    notes: formData.get("notes"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const qty = parseNumber(parsed.data.quantity_requested);
+  if (qty === null || qty <= 0) return { ok: false, error: "Cantidad inválida" };
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .maybeSingle();
+  if (!request || request.status !== "BORRADOR") {
+    return { ok: false, error: "Solo se editan borradores" };
+  }
+
+  const { error } = await supabase
+    .from("purchase_request_items")
+    .update({
+      quantity_requested: qty,
+      suggested_supplier_id: emptyToNull(parsed.data.suggested_supplier_id),
+      unit_cost_estimate: parseNumber(parsed.data.unit_cost_estimate),
+      notes: emptyToNull(parsed.data.notes),
+      updated_by: ctx.userId,
+    })
+    .eq("id", itemId)
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  if (error) return { ok: false, error: error.message };
+  revalidateCompras(requestId);
+  return { ok: true, id: itemId };
+}
+
+export async function importSuggestedProductsAction(
+  requestId: string,
+  formData?: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.crear")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (request.status !== "BORRADOR") {
+    return { ok: false, error: "Solo se editan borradores" };
+  }
+
+  const selectedIds = formData
+    ? formData
+        .getAll("product_ids")
+        .map((v) => String(v))
+        .filter((v) => /^[0-9a-f-]{36}$/i.test(v))
+    : [];
+
+  const { data: products } = await supabase
+    .from("products")
+    .select("id, category_id, unit, current_stock, min_stock, unit_cost")
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .eq("is_active", true);
+
+  const suggested = (products ?? [])
+    .map((p) => ({
+      ...p,
+      qty: suggestedPurchaseQty(Number(p.current_stock), Number(p.min_stock)),
+    }))
+    .filter((p) => p.qty > 0)
+    .filter((p) => selectedIds.length === 0 || selectedIds.includes(p.id));
+
+  if (suggested.length === 0) {
+    return {
+      ok: false,
+      error:
+        selectedIds.length > 0
+          ? "Seleccione al menos un producto sugerido"
+          : "No hay productos bajo stock mínimo para sugerir",
+    };
+  }
+
+  const { data: existingItems } = await supabase
+    .from("purchase_request_items")
+    .select("id, product_id, quantity_requested")
+    .eq("purchase_request_id", requestId)
+    .is("deleted_at", null);
+
+  const existingByProduct = new Map(
+    (existingItems ?? []).map((i) => [i.product_id, i]),
+  );
+
+  const { data: links } = await supabase
+    .from("supplier_product_categories")
+    .select("supplier_id, category_id")
+    .eq("organization_id", ctx.organization.id)
+    .eq("is_active", true)
+    .is("deleted_at", null);
+
+  const supplierByCategory = new Map<string, string>();
+  for (const link of links ?? []) {
+    if (!supplierByCategory.has(link.category_id)) {
+      supplierByCategory.set(link.category_id, link.supplier_id);
+    }
+  }
+
+  let sortOrder = existingItems?.length ?? 0;
+  let imported = 0;
+
+  for (const product of suggested) {
+    const suggestedSupplier = supplierByCategory.get(product.category_id) ?? null;
+    const existing = existingByProduct.get(product.id);
+    const qtyOverride = formData
+      ? parseNumber(String(formData.get(`qty_${product.id}`) || ""))
+      : null;
+    const qty = qtyOverride && qtyOverride > 0 ? qtyOverride : product.qty;
+
+    if (existing) {
+      const { error } = await supabase
+        .from("purchase_request_items")
+        .update({
+          quantity_requested: qty,
+          suggested_supplier_id: suggestedSupplier,
+          unit_cost_estimate: Number(product.unit_cost || 0),
+          updated_by: ctx.userId,
+        })
+        .eq("id", existing.id)
+        .eq("organization_id", ctx.organization.id);
+      if (error) return { ok: false, error: error.message };
+      imported += 1;
+      continue;
+    }
+
+    const { error } = await supabase.from("purchase_request_items").insert({
+      organization_id: ctx.organization.id,
+      purchase_request_id: requestId,
+      product_id: product.id,
+      category_id: product.category_id,
+      quantity_requested: qty,
+      unit: product.unit,
+      suggested_supplier_id: suggestedSupplier,
+      unit_cost_estimate: Number(product.unit_cost || 0),
+      notes: "Importado desde sugeridos",
+      sort_order: sortOrder,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    });
+    if (error) return { ok: false, error: error.message };
+    sortOrder += 1;
+    imported += 1;
+  }
+
+  if (imported === 0) {
+    return { ok: false, error: "No se importó ningún producto" };
+  }
+
+  revalidateCompras(requestId);
+  return { ok: true, id: requestId };
 }
 
 export async function removePurchaseRequestItemAction(
@@ -456,6 +809,17 @@ export async function rejectPurchaseRequestAction(
   return { ok: true, id: requestId };
 }
 
+function isPurchaseItemClosed(item: {
+  status: string;
+  quantity_approved: number | string | null;
+  quantity_requested: number | string;
+  quantity_received: number | string;
+}) {
+  if (item.status === "CANCELADO" || item.status === "RECIBIDO") return true;
+  const target = Number(item.quantity_approved ?? item.quantity_requested);
+  return Number(item.quantity_received || 0) >= target;
+}
+
 export async function receivePurchaseItemsAction(
   requestId: string,
   formData: FormData,
@@ -469,20 +833,21 @@ export async function receivePurchaseItemsAction(
   const supabase = await createClient();
   const { data: request } = await supabase
     .from("purchase_requests")
-    .select("id, status")
+    .select("id, status, payment_request_id")
     .eq("id", requestId)
     .eq("organization_id", ctx.organization.id)
     .maybeSingle();
 
   if (!request) return { ok: false, error: "Solicitud no encontrada" };
-  if (!["PEDIDA", "RECIBIDA_PARCIAL"].includes(request.status)) {
+  // FACTURA_ACEPTADA también: puede quedar remanente pendiente tras facturar lo parcial.
+  if (!["PEDIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(request.status)) {
     return { ok: false, error: "La solicitud no está pendiente de recepción" };
   }
 
   const { data: items } = await supabase
     .from("purchase_request_items")
     .select(
-      "id, product_id, quantity_approved, quantity_requested, quantity_received",
+      "id, product_id, quantity_approved, quantity_requested, quantity_received, unit_cost_estimate, status, notes",
     )
     .eq("purchase_request_id", requestId)
     .eq("organization_id", ctx.organization.id)
@@ -490,61 +855,142 @@ export async function receivePurchaseItemsAction(
 
   if (!items?.length) return { ok: false, error: "Sin ítems" };
 
-  for (const item of items) {
-    const raw = formData.get(`item_${item.id}_quantity_received`);
-    if (raw === null || raw === undefined || String(raw).trim() === "") continue;
+  let touched = 0;
 
+  for (const item of items) {
+    if (isPurchaseItemClosed(item)) continue;
+
+    const disposition = String(
+      formData.get(`item_${item.id}_disposition`) ?? "pendiente",
+    ).trim();
+
+    if (disposition === "pendiente" || disposition === "") continue;
+
+    if (disposition === "no_llegara") {
+      const reason = emptyToNull(
+        String(formData.get(`item_${item.id}_close_reason`) ?? ""),
+      );
+      const previous = Number(item.quantity_received || 0);
+      const noteParts = [
+        item.notes,
+        reason
+          ? `Cierre faltante: ${reason}`
+          : "Cierre faltante: no llegará el resto",
+      ].filter(Boolean);
+
+      const { error } = await supabase
+        .from("purchase_request_items")
+        .update({
+          status: "CANCELADO",
+          notes: noteParts.join(" · "),
+          updated_by: ctx.userId,
+        })
+        .eq("id", item.id)
+        .eq("organization_id", ctx.organization.id);
+      if (error) return { ok: false, error: error.message };
+      touched += 1;
+      // Si ya había recepción parcial, el stock ya se movió; no se toca.
+      void previous;
+      continue;
+    }
+
+    if (disposition !== "llego") {
+      return { ok: false, error: "Disposición de ítem inválida" };
+    }
+
+    const raw = formData.get(`item_${item.id}_quantity_received`);
     const parsed = receivePurchaseItemSchema.safeParse({
       item_id: item.id,
-      quantity_received: String(raw),
+      quantity_received: String(raw ?? ""),
+      unit_cost: formData.get(`item_${item.id}_unit_cost`),
     });
     if (!parsed.success) {
       return { ok: false, error: parsed.error.issues[0]?.message ?? "Cantidad inválida" };
     }
 
     const receivedNow = parseNumber(parsed.data.quantity_received);
-    if (receivedNow === null || receivedNow < 0) {
-      return { ok: false, error: "Cantidad recibida inválida" };
+    if (receivedNow === null || receivedNow <= 0) {
+      return {
+        ok: false,
+        error: "Indique una cantidad recibida mayor a 0, o marque pendiente / no llegará",
+      };
     }
 
     const previous = Number(item.quantity_received || 0);
     const totalReceived = previous + receivedNow;
     const target = Number(item.quantity_approved ?? item.quantity_requested);
     const status =
-      totalReceived <= 0
-        ? "PEDIDO"
-        : totalReceived >= target
-          ? "RECIBIDO"
-          : "RECIBIDO_PARCIAL";
+      totalReceived >= target ? "RECIBIDO" : "RECIBIDO_PARCIAL";
+
+    const incomingCost =
+      parseNumber(parsed.data.unit_cost) ??
+      parseNumber(
+        item.unit_cost_estimate != null ? String(item.unit_cost_estimate) : null,
+      );
 
     const { error } = await supabase
       .from("purchase_request_items")
       .update({
         quantity_received: totalReceived,
         status,
+        unit_cost_estimate: incomingCost ?? item.unit_cost_estimate,
         updated_by: ctx.userId,
       })
       .eq("id", item.id)
       .eq("organization_id", ctx.organization.id);
     if (error) return { ok: false, error: error.message };
+    touched += 1;
 
-    if (receivedNow > 0) {
-      const { data: product } = await supabase
+    const { data: product } = await supabase
+      .from("products")
+      .select("current_stock, unit_cost")
+      .eq("id", item.product_id)
+      .eq("organization_id", ctx.organization.id)
+      .maybeSingle();
+    if (product) {
+      const stockBefore = Number(product.current_stock || 0);
+      const costBefore = Number(product.unit_cost || 0);
+      const costIn = incomingCost ?? costBefore;
+      const stockAfter = stockBefore + receivedNow;
+      const costAfter = weightedAverageUnitCost(
+        stockBefore,
+        costBefore,
+        receivedNow,
+        costIn,
+      );
+
+      await supabase
         .from("products")
-        .select("current_stock")
-        .eq("id", item.product_id)
-        .eq("organization_id", ctx.organization.id)
-        .maybeSingle();
-      if (product) {
-        await supabase
-          .from("products")
-          .update({
-            current_stock: Number(product.current_stock || 0) + receivedNow,
-            updated_by: ctx.userId,
-          })
-          .eq("id", item.product_id);
-      }
+        .update({
+          current_stock: stockAfter,
+          unit_cost: costAfter,
+          updated_by: ctx.userId,
+        })
+        .eq("id", item.product_id);
+
+      await supabase.from("inventory_movements").insert({
+        organization_id: ctx.organization.id,
+        product_id: item.product_id,
+        movement_type: "COMPRA",
+        quantity: receivedNow,
+        unit_cost: costIn,
+        stock_before: stockBefore,
+        stock_after: stockAfter,
+        unit_cost_before: costBefore,
+        unit_cost_after: costAfter,
+        reference_type: "purchase_request_items",
+        reference_id: item.id,
+        notes: `Recepción solicitud ${requestId}`,
+        created_by: ctx.userId,
+      });
     }
+  }
+
+  if (touched === 0) {
+    return {
+      ok: false,
+      error: "Marque al menos un ítem como «Llegó» o «No llegará»",
+    };
   }
 
   const { data: refreshed } = await supabase
@@ -554,18 +1000,16 @@ export async function receivePurchaseItemsAction(
     .eq("organization_id", ctx.organization.id)
     .is("deleted_at", null);
 
-  const allReceived = (refreshed ?? []).every(
-    (i) =>
-      i.status === "RECIBIDO" ||
-      Number(i.quantity_received || 0) >=
-        Number(i.quantity_approved ?? i.quantity_requested),
-  );
+  const allClosed = (refreshed ?? []).every((i) => isPurchaseItemClosed(i));
   const anyReceived = (refreshed ?? []).some(
     (i) => Number(i.quantity_received || 0) > 0,
   );
+  const alreadyInvoiced = Boolean(request.payment_request_id);
 
-  const nextStatus = allReceived
-    ? "RECIBIDA"
+  const nextStatus = allClosed
+    ? alreadyInvoiced
+      ? "FACTURA_ACEPTADA"
+      : "RECIBIDA"
     : anyReceived
       ? "RECIBIDA_PARCIAL"
       : request.status;
@@ -574,7 +1018,7 @@ export async function receivePurchaseItemsAction(
     .from("purchase_requests")
     .update({
       status: nextStatus,
-      received_at: allReceived ? new Date().toISOString() : null,
+      received_at: allClosed ? new Date().toISOString() : null,
       updated_by: ctx.userId,
     })
     .eq("id", requestId)
@@ -590,11 +1034,12 @@ export async function acceptPurchaseInvoiceAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (
-    !ctxCanAccess(ctx, "compras.solicitudes.aprobar") &&
-    !ctxCanAccess(ctx, "compras.solicitudes.recibir")
-  ) {
-    return { ok: false, error: "Sin permiso" };
+  const canFacturar =
+    ctxCanAccess(ctx, "compras.solicitudes.facturar") ||
+    ctxCanAccess(ctx, "compras.solicitudes.aprobar") ||
+    ctxCanAccess(ctx, "compras.solicitudes.recibir");
+  if (!canFacturar) {
+    return { ok: false, error: "Sin permiso para aceptar factura" };
   }
 
   const parsed = acceptInvoiceSchema.safeParse({
@@ -616,7 +1061,7 @@ export async function acceptPurchaseInvoiceAction(
   const supabase = await createClient();
   const { data: request } = await supabase
     .from("purchase_requests")
-    .select("id, status, title")
+    .select("id, status, title, payment_request_id")
     .eq("id", requestId)
     .eq("organization_id", ctx.organization.id)
     .maybeSingle();
@@ -625,6 +1070,23 @@ export async function acceptPurchaseInvoiceAction(
   if (!["RECIBIDA", "RECIBIDA_PARCIAL"].includes(request.status)) {
     return { ok: false, error: "Primero registre la recepción de mercancía" };
   }
+  if (request.payment_request_id) {
+    return {
+      ok: false,
+      error:
+        "Esta solicitud ya tiene factura en cola de pago. Si llega otra factura, regístrela en Proveedores / CxP.",
+    };
+  }
+
+  const { data: itemRows } = await supabase
+    .from("purchase_request_items")
+    .select(
+      "quantity_approved, quantity_requested, quantity_received, status",
+    )
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+  const allClosed = (itemRows ?? []).every((i) => isPurchaseItemClosed(i));
 
   let apId: string;
   try {
@@ -699,7 +1161,8 @@ export async function acceptPurchaseInvoiceAction(
   const { error } = await supabase
     .from("purchase_requests")
     .update({
-      status: "FACTURA_ACEPTADA",
+      // Si aún hay pendientes, no cierre el ciclo: puede seguir recibiendo.
+      status: allClosed ? "FACTURA_ACEPTADA" : "RECIBIDA_PARCIAL",
       invoice_accepted_at: new Date().toISOString(),
       ap_document_id: doc.id,
       payment_request_id: payReq.id,
@@ -716,7 +1179,11 @@ export async function acceptPurchaseInvoiceAction(
     action: "INVOICE_ACCEPT",
     entity: "purchase_requests",
     entity_id: requestId,
-    new_values: { ap_document_id: doc.id, payment_request_id: payReq.id },
+    new_values: {
+      ap_document_id: doc.id,
+      payment_request_id: payReq.id,
+      closed: allClosed,
+    },
   });
 
   revalidateCompras(requestId);

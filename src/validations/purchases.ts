@@ -6,14 +6,37 @@ export const productCategorySchema = z.object({
   description: z.string().optional().nullable(),
 });
 
+export const productUnitSchema = z.object({
+  code: z.string().min(1, "Código obligatorio"),
+  name: z.string().min(1, "Nombre obligatorio"),
+});
+
 export const productSchema = z.object({
   category_id: z.string().uuid("Categoría inválida"),
+  unit_id: z.string().uuid("Unidad inválida"),
   sku: z.string().optional().nullable(),
   name: z.string().min(1, "Nombre obligatorio"),
-  unit: z.string().min(1, "Unidad obligatoria"),
-  min_stock: z.string().optional().nullable(),
+  min_stock: z.string().min(1, "Stock mínimo obligatorio"),
   current_stock: z.string().optional().nullable(),
+  unit_cost: z.string().min(1, "Costo unitario obligatorio"),
   notes: z.string().optional().nullable(),
+});
+
+export const createPhysicalCountSchema = z.object({
+  title: z.string().min(2, "Título obligatorio"),
+  counted_at: z.string().min(1, "Fecha obligatoria"),
+  location_label: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
+export const physicalCountItemSchema = z.object({
+  product_id: z.string().uuid("Producto inválido"),
+  counted_qty: z.string().min(1, "Cantidad contada obligatoria"),
+  notes: z.string().optional().nullable(),
+});
+
+export const rejectPhysicalCountSchema = z.object({
+  rejection_reason: z.string().min(2, "Indique el motivo"),
 });
 
 export const supplierCategoryLinkSchema = z.object({
@@ -43,6 +66,13 @@ export const purchaseRequestItemSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
+export const updatePurchaseRequestItemSchema = z.object({
+  quantity_requested: z.string().min(1, "Cantidad obligatoria"),
+  suggested_supplier_id: z.string().uuid().optional().nullable().or(z.literal("")),
+  unit_cost_estimate: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
 export const approvePurchaseItemSchema = z.object({
   item_id: z.string().uuid(),
   approved_supplier_id: z.string().uuid("Proveedor inválido"),
@@ -54,6 +84,7 @@ export const approvePurchaseItemSchema = z.object({
 export const receivePurchaseItemSchema = z.object({
   item_id: z.string().uuid(),
   quantity_received: z.string().min(1, "Cantidad recibida obligatoria"),
+  unit_cost: z.string().optional().nullable(),
 });
 
 export const rejectPurchaseRequestSchema = z.object({

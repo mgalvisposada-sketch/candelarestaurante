@@ -1,18 +1,21 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Card, EmptyState, PageIntro } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
-import { requireModuleAccess } from "@/lib/permissions";
+import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { isSuperAdmin } from "@/types/domain";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ComprasNav } from "../compras-nav";
 import {
+  BulkImportProductsForm,
   CreateCategoryForm,
   CreateProductForm,
+  CreateUnitForm,
   InventoryLists,
   type CategoryRow,
   type ProductRow,
+  type UnitRow,
 } from "./inventory-client";
 
 export default async function ComprasInventarioPage() {
@@ -36,22 +39,33 @@ export default async function ComprasInventarioPage() {
   }
 
   const supabase = await createClient();
-  const [{ data: catRows }, { data: prodRows }] = await Promise.all([
-    supabase
-      .from("product_categories")
-      .select("id, code, name, description")
-      .eq("organization_id", ctx.organization.id)
-      .is("deleted_at", null)
-      .order("code"),
-    supabase
-      .from("products")
-      .select("id, category_id, sku, name, unit, min_stock, current_stock, notes")
-      .eq("organization_id", ctx.organization.id)
-      .is("deleted_at", null)
-      .order("name"),
-  ]);
+  const [{ data: catRows }, { data: unitRows }, { data: prodRows }] =
+    await Promise.all([
+      supabase
+        .from("product_categories")
+        .select("id, code, name, description")
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null)
+        .order("code"),
+      supabase
+        .from("product_units")
+        .select("id, code, name")
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null)
+        .eq("is_active", true)
+        .order("code"),
+      supabase
+        .from("products")
+        .select(
+          "id, category_id, unit_id, sku, name, unit, min_stock, current_stock, unit_cost, notes",
+        )
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null)
+        .order("name"),
+    ]);
 
   const categories = (catRows ?? []) as CategoryRow[];
+  const units = (unitRows ?? []) as UnitRow[];
   const products = (prodRows ?? []) as ProductRow[];
 
   return (
@@ -65,27 +79,38 @@ export default async function ComprasInventarioPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Inventario de compras"
-            description="Asigne a cada producto una categoría del maestro único (el mismo de Proveedores). Así la sugerencia de proveedor coincide siempre por categoría."
+            description="Categorías y unidades son maestros únicos. Cada producto elige de esos catálogos para mantener uniformidad."
           />
-          <div className="flex flex-wrap gap-2">
+          <div className="flex w-full flex-wrap gap-2">
             <CreateCategoryForm />
-            <CreateProductForm categories={categories} />
+            <CreateUnitForm />
+            <CreateProductForm categories={categories} units={units} />
+            <BulkImportProductsForm categories={categories} units={units} />
           </div>
         </div>
         <p className="text-sm text-[var(--muted)]">
-          Las categorías son un maestro único compartido con{" "}
+          Categorías compartidas con{" "}
           <Link href="/proveedores" className="text-[var(--accent)]">
             Proveedores & CxP
           </Link>
+          . Reposiciones en{" "}
+          <Link href="/compras/sugeridos" className="text-[var(--accent)]">
+            Sugeridos
+          </Link>
           .
         </p>
-        {categories.length === 0 && products.length === 0 ? (
+        {categories.length === 0 && units.length === 0 && products.length === 0 ? (
           <EmptyState
             title="Sin inventario"
-            description="Cree categorías (carnes, lácteos, empaques…) y luego los productos."
+            description="Cree categorías, unidades (ML, KG, UND…) y luego los productos."
           />
         ) : (
-          <InventoryLists categories={categories} products={products} />
+          <InventoryLists
+            categories={categories}
+            units={units}
+            products={products}
+            canEditMinStock={ctxCanAccess(ctx, "compras.inventario.minimo")}
+          />
         )}
       </main>
     </>

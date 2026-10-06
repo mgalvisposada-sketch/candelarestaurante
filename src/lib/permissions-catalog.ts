@@ -134,12 +134,50 @@ export const APP_MODULES: AppModuleDef[] = [
     href: "/compras",
     mvp: 2,
     submodules: [
-      { key: "compras.inventario", label: "Inventario (maestro)" },
-      { key: "compras.proveedores", label: "Proveedores por categoría" },
-      { key: "compras.solicitudes", label: "Solicitudes de compra" },
-      { key: "compras.solicitudes.crear", label: "Crear solicitudes de compra" },
-      { key: "compras.solicitudes.aprobar", label: "Aprobar compras" },
-      { key: "compras.solicitudes.recibir", label: "Recibir mercancía" },
+      {
+        key: "compras.inventario",
+        label: "Inventario (categorías, unidades y productos)",
+      },
+      {
+        key: "compras.inventario.minimo",
+        label: "Cambiar stock mínimo",
+      },
+      {
+        key: "compras.sugeridos",
+        label: "Sugerido comprar (bajo mínimo)",
+      },
+      {
+        key: "compras.solicitudes",
+        label: "Ver solicitudes y pedidos por proveedor",
+      },
+      {
+        key: "compras.solicitudes.crear",
+        label: "Crear / armar solicitudes (borrador)",
+      },
+      {
+        key: "compras.solicitudes.aprobar",
+        label: "Aprobar compras y marcar pedida",
+      },
+      {
+        key: "compras.solicitudes.recibir",
+        label: "Recibir mercancía (parcial o completa)",
+      },
+      {
+        key: "compras.solicitudes.facturar",
+        label: "Aceptar factura → cola de pago (CxP)",
+      },
+      {
+        key: "compras.proveedores",
+        label: "Proveedores por categoría (lead times)",
+      },
+      {
+        key: "compras.inventario-fisico",
+        label: "Inventario físico (conteo)",
+      },
+      {
+        key: "compras.inventario-fisico.ajustar",
+        label: "Ajustar stock desde inventario físico",
+      },
     ],
   },
   {
@@ -240,15 +278,22 @@ const ALL_EXCEPT_CONFIG_ADMIN = ALL_PERMISSION_KEYS.filter(
 export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
   SUPER_ADMIN: [...ALL_PERMISSION_KEYS],
   GESTION: [...ALL_EXCEPT_CONFIG_ADMIN, "configuracion"],
-  /** Administrador operativo del local: novedades, inventario de compras y solicitudes. */
+  /**
+   * Admin del local: arma pedido, recibe y puede aceptar factura.
+   * No aprueba compras (Gestión) ni ajusta inventario físico.
+   */
   ADMIN_LOCAL: [
     "personal",
     "personal.novedades",
     "compras",
     "compras.inventario",
+    "compras.inventario.minimo",
+    "compras.sugeridos",
+    "compras.inventario-fisico",
     "compras.solicitudes",
     "compras.solicitudes.crear",
     "compras.solicitudes.recibir",
+    "compras.solicitudes.facturar",
   ],
   SOCIO: [
     "inicio",
@@ -278,9 +323,9 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "solicitudes-pago.bandeja",
     "solicitudes-pago.pagar",
     "compras",
-    "compras.inventario",
     "compras.proveedores",
     "compras.solicitudes",
+    // Contador: consulta de solicitudes/proveedores; sin editar inventario ni operar el flujo.
     "presupuesto",
     "presupuesto.lineas",
     "tributario",

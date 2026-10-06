@@ -18,12 +18,14 @@ export function AppShell({
   const pathname = usePathname();
   return (
     <div className="flex min-h-screen">
-      <AppSidebar
-        pathname={pathname}
-        userEmail={userEmail}
-        role={role}
-        permissions={permissions}
-      />
+      <div className="print:hidden">
+        <AppSidebar
+          pathname={pathname}
+          userEmail={userEmail}
+          role={role}
+          permissions={permissions}
+        />
+      </div>
       <div className="flex min-w-0 flex-1 flex-col">{children}</div>
     </div>
   );

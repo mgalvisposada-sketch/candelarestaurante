@@ -202,6 +202,7 @@ async function syncSupplierCategories(
 
 function revalidateSupplierPaths() {
   revalidatePath("/proveedores");
+  revalidatePath("/proveedores/cxp");
   revalidatePath("/compras/proveedores");
   revalidatePath("/compras/solicitudes");
   revalidatePath("/inicio");
@@ -468,6 +469,7 @@ export async function createApDocumentAction(
   });
 
   revalidatePath("/proveedores");
+  revalidatePath("/proveedores/cxp");
   revalidatePath("/inicio");
   return { ok: true, id: data.id };
 }
@@ -532,6 +534,7 @@ export async function updateApDocumentAction(
 
   await refreshDocumentPaid(supabase, ctx.organization.id, documentId);
   revalidatePath("/proveedores");
+  revalidatePath("/proveedores/cxp");
   revalidatePath("/inicio");
   return { ok: true, id: documentId };
 }
@@ -582,6 +585,7 @@ export async function registerApPaymentAction(
   });
 
   revalidatePath("/proveedores");
+  revalidatePath("/proveedores/cxp");
   revalidatePath("/inicio");
   return { ok: true };
 }
@@ -604,5 +608,6 @@ export async function softDeleteSupplierAction(
     .eq("organization_id", ctx.organization.id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/proveedores");
+  revalidatePath("/proveedores/cxp");
   return { ok: true, id: supplierId };
 }

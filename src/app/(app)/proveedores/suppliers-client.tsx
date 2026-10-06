@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import {
   createApDocumentAction,
   createSupplierAction,
@@ -9,7 +10,10 @@ import {
   updateApDocumentAction,
   updateSupplierAction,
 } from "./actions";
-import { createProductCategoryAction } from "../compras/inventory-actions";
+import {
+  createProductCategoryAction,
+  softDeleteProductCategoryAction,
+} from "../compras/inventory-actions";
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP, money, apDocumentBalance } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
@@ -126,6 +130,67 @@ export function CreateCategoryMasterForm({
         </button>
       </div>
     </form>
+  );
+}
+
+function CategoryMasterChip({
+  category,
+  canManage,
+}: {
+  category: ProductCategoryOption;
+  canManage: boolean;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  return (
+    <span className="inline-flex max-w-full flex-col gap-1">
+      <span className="inline-flex items-center gap-2 rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm">
+        <span className="min-w-0">
+          <strong>{category.code}</strong> — {category.name}
+        </span>
+        {canManage ? (
+          <button
+            type="button"
+            disabled={pending}
+            className="shrink-0 text-xs text-red-700 disabled:opacity-60"
+            onClick={() => {
+              if (
+                !confirm(
+                  `¿Eliminar categoría ${category.code}? Solo si no tiene productos.`,
+                )
+              ) {
+                return;
+              }
+              setError(null);
+              startTransition(async () => {
+                const r = await softDeleteProductCategoryAction(category.id);
+                if (!r.ok) setError(r.error ?? "Error");
+              });
+            }}
+          >
+            Eliminar
+          </button>
+        ) : null}
+      </span>
+      {error ? <span className="text-xs text-red-700">{error}</span> : null}
+    </span>
+  );
+}
+
+export function CategoryMasterList({
+  categories,
+  canManage = false,
+}: {
+  categories: ProductCategoryOption[];
+  canManage?: boolean;
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {categories.map((c) => (
+        <CategoryMasterChip key={c.id} category={c} canManage={canManage} />
+      ))}
+    </div>
   );
 }
 
@@ -420,72 +485,100 @@ function ApDocFields({
   );
 }
 
-export function SupplierCard({
+export function SupplierMasterCard({
   supplier,
-  documents,
+  openBalance,
+  openDocsCount,
   categories,
   caps,
 }: {
   supplier: SupplierRow;
-  documents: ApDocRow[];
+  openBalance: number | string;
+  openDocsCount: number;
   categories: ProductCategoryOption[];
   caps: ProveedoresCaps;
 }) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const total = documents.reduce(
-    (acc, d) => acc.plus(apDocumentBalance(d.original_amount, d.paid_amount)),
-    money(0),
-  );
   const categoryLabels = categories
     .filter((c) => supplier.category_ids.includes(c.id))
     .map((c) => c.name)
     .join(", ");
 
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-white p-5">
+    <article className="rounded-xl border border-[var(--line)] bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="font-display text-xl font-semibold">{supplier.name}</h3>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-display text-xl font-semibold">{supplier.name}</h3>
+            {!supplier.is_active ? <Badge tone="neutral">Inactivo</Badge> : null}
+            <Badge tone={supplier.is_purchase_supplier ? "ok" : "neutral"}>
+              {supplier.is_purchase_supplier ? "Insumos" : "Administrativo"}
+            </Badge>
+          </div>
           <p className="mt-1 text-sm text-[var(--muted)]">
             {[
               supplier.tax_id,
-              supplier.is_purchase_supplier ? "Insumos" : "Administrativo / servicio",
               categoryLabels || supplier.category,
               supplier.contact_name,
+              supplier.phone,
+              supplier.email,
             ]
               .filter(Boolean)
-              .join(" · ") || "Sin detalle"}
+              .join(" · ") || "Sin detalle de contacto"}
           </p>
+          {supplier.bank_account_info ? (
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Cuenta: {supplier.bank_account_info}
+            </p>
+          ) : null}
         </div>
         <div className="text-right">
-          <p className="text-xs uppercase text-[var(--muted)]">Saldo</p>
-          <p className="font-display text-2xl">{formatCOP(total)}</p>
+          <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
+            Saldo CxP abierto
+          </p>
+          <p className="font-display text-2xl">{formatCOP(openBalance)}</p>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">
+            {openDocsCount}{" "}
+            {openDocsCount === 1 ? "documento" : "documentos"}
+          </p>
         </div>
       </div>
 
-      {caps.canEditSupplier ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" onClick={() => setEditing((v) => !v)} className="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-medium">
-            {editing ? "Cerrar" : "Editar proveedor"}
-          </button>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              if (!confirm("¿Desactivar proveedor?")) return;
-              startTransition(async () => {
-                const r = await softDeleteSupplierAction(supplier.id);
-                if (!r.ok) setError(r.error ?? "Error");
-              });
-            }}
-            className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700"
-          >
-            Desactivar
-          </button>
-        </div>
-      ) : null}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {caps.canEditSupplier ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setEditing((v) => !v)}
+              className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
+            >
+              {editing ? "Cerrar" : "Editar"}
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                if (!confirm("¿Desactivar proveedor?")) return;
+                startTransition(async () => {
+                  const r = await softDeleteSupplierAction(supplier.id);
+                  if (!r.ok) setError(r.error ?? "Error");
+                });
+              }}
+              className="rounded-lg px-3 py-1.5 text-sm text-red-700"
+            >
+              Desactivar
+            </button>
+          </>
+        ) : null}
+        <Link
+          href="/proveedores/cxp"
+          className="ml-auto text-sm text-[var(--accent)]"
+        >
+          Ver cuentas por pagar →
+        </Link>
+      </div>
 
       {editing && caps.canEditSupplier ? (
         <form
@@ -500,28 +593,73 @@ export function SupplierCard({
           }}
         >
           <SupplierFields s={supplier} categories={categories} />
-          <button type="submit" disabled={pending} className="rounded-md bg-[var(--ink)] px-3 py-1.5 text-xs text-white">Guardar</button>
+          <button
+            type="submit"
+            disabled={pending}
+            className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+          >
+            Guardar
+          </button>
         </form>
       ) : null}
+      {error ? (
+        <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error}
+        </p>
+      ) : null}
+    </article>
+  );
+}
 
-      <div className="mt-5 space-y-3 border-t border-[var(--line)] pt-4">
-        <h4 className="text-sm font-medium">Documentos ({documents.length})</h4>
+/** Agrupa documentos CxP de un proveedor (sin editar el maestro). */
+export function SupplierCxpGroup({
+  supplier,
+  documents,
+  allSuppliers,
+  caps,
+}: {
+  supplier: SupplierRow;
+  documents: ApDocRow[];
+  allSuppliers: SupplierRow[];
+  caps: ProveedoresCaps;
+}) {
+  const total = documents.reduce(
+    (acc, d) => acc.plus(apDocumentBalance(d.original_amount, d.paid_amount)),
+    money(0),
+  );
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-[var(--line)] bg-white">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-l-4 border-l-[var(--ink)] bg-neutral-50 px-4 py-3">
+        <div>
+          <h3 className="font-medium">{supplier.name}</h3>
+          <p className="text-sm text-[var(--muted)]">
+            {documents.length}{" "}
+            {documents.length === 1 ? "documento" : "documentos"}
+            {supplier.tax_id ? ` · NIT ${supplier.tax_id}` : ""}
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs uppercase text-[var(--muted)]">Saldo</p>
+          <p className="font-display text-xl">{formatCOP(total)}</p>
+        </div>
+      </div>
+      <div className="space-y-3 p-4">
         {documents.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">Sin facturas. Agrega documentos CxP arriba.</p>
+          <p className="text-sm text-[var(--muted)]">Sin documentos abiertos.</p>
         ) : (
           documents.map((doc) => (
             <ApDocCard
               key={doc.id}
               doc={doc}
-              suppliers={[supplier]}
+              suppliers={allSuppliers}
               canEdit={caps.canEditAp}
               canPay={caps.canPay}
             />
           ))
         )}
       </div>
-      {error ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
-    </div>
+    </section>
   );
 }
 

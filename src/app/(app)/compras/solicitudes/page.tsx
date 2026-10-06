@@ -59,7 +59,7 @@ export default async function ComprasSolicitudesPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Solicitudes de compra"
-            description="El administrador del punto pide reposición; compras aprueba proveedores y plazos; luego se recibe mercancía y se acepta factura hacia tesorería."
+            description="Arme la solicitud, envíela a compras, apruebe proveedores y use el documento «Pedidos por proveedor» para enviar a cada uno. Luego reciba mercancía y acepte la factura hacia tesorería."
           />
           {canCreate ? <CreatePurchaseRequestForm /> : null}
         </div>

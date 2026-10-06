@@ -9,11 +9,13 @@ import Link from "next/link";
 import { ComprasNav } from "../../compras-nav";
 import {
   RequestDetailClient,
+  type CategoryOption,
   type CategorySupplierLink,
   type ItemRow,
   type ProductOption,
   type RequestDetail,
   type SupplierOption,
+  type UnitOption,
 } from "./request-detail-client";
 
 export default async function CompraSolicitudDetailPage({
@@ -40,8 +42,14 @@ export default async function CompraSolicitudDetailPage({
 
   if (!request) notFound();
 
-  const [{ data: itemRows }, { data: productRows }, { data: supplierRows }, { data: linkRows }, { data: categoryRows }] =
-    await Promise.all([
+  const [
+    { data: itemRows },
+    { data: productRows },
+    { data: supplierRows },
+    { data: linkRows },
+    { data: categoryRows },
+    { data: unitRows },
+  ] = await Promise.all([
       supabase
         .from("purchase_request_items")
         .select(
@@ -53,7 +61,7 @@ export default async function CompraSolicitudDetailPage({
         .order("sort_order"),
       supabase
         .from("products")
-        .select("id, name, unit, category_id")
+        .select("id, name, unit, category_id, current_stock, min_stock, unit_cost")
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
         .eq("is_active", true)
@@ -77,6 +85,13 @@ export default async function CompraSolicitudDetailPage({
         .select("id, name")
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null),
+      supabase
+        .from("product_units")
+        .select("id, code, name")
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null)
+        .eq("is_active", true)
+        .order("code"),
     ]);
 
   const categories = new Map((categoryRows ?? []).map((c) => [c.id, c.name]));
@@ -88,6 +103,9 @@ export default async function CompraSolicitudDetailPage({
     unit: p.unit,
     category_id: p.category_id,
     category_name: categories.get(p.category_id) ?? "Sin categoría",
+    current_stock: p.current_stock ?? 0,
+    min_stock: p.min_stock ?? 0,
+    unit_cost: p.unit_cost ?? 0,
   }));
 
   const purchaseSupplierIds = new Set(
@@ -134,11 +152,25 @@ export default async function CompraSolicitudDetailPage({
           request={request as RequestDetail}
           items={items}
           products={products}
+          categories={(categoryRows ?? []).map((c) => ({
+            id: c.id,
+            name: c.name,
+          })) as CategoryOption[]}
+          units={(unitRows ?? []) as UnitOption[]}
           suppliers={purchaseSuppliers}
           links={(linkRows ?? []) as CategorySupplierLink[]}
           canCreate={ctxCanAccess(ctx, "compras.solicitudes.crear")}
+          canCreateProduct={
+            ctxCanAccess(ctx, "compras.inventario") ||
+            ctxCanAccess(ctx, "compras.solicitudes.crear")
+          }
           canApprove={ctxCanAccess(ctx, "compras.solicitudes.aprobar")}
           canReceive={ctxCanAccess(ctx, "compras.solicitudes.recibir")}
+          canAcceptInvoice={
+            ctxCanAccess(ctx, "compras.solicitudes.facturar") ||
+            ctxCanAccess(ctx, "compras.solicitudes.aprobar") ||
+            ctxCanAccess(ctx, "compras.solicitudes.recibir")
+          }
         />
       </main>
     </>

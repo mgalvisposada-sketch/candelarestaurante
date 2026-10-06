@@ -1,19 +1,18 @@
 import { AppHeader } from "@/components/layout/app-header";
-import { Card, EmptyState, PageIntro, StatCard } from "@/components/ui/primitives";
+import { Card, EmptyState, PageIntro } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
+import { isSuperAdmin } from "@/types/domain";
 import { createClient } from "@/lib/supabase/server";
-import { formatCOP, apDocumentBalance, money } from "@/lib/money";
-import { summarizeApAging } from "@/lib/accounts-payable";
-import { todayInBogota } from "@/lib/dates";
+import { apDocumentBalance, money } from "@/lib/money";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { ProveedoresNav } from "./proveedores-nav";
 import {
-  CreateApDocumentForm,
+  CategoryMasterList,
   CreateCategoryMasterForm,
   CreateSupplierForm,
-  SupplierCard,
-  type ApDocRow,
+  SupplierMasterCard,
   type ProductCategoryOption,
   type ProveedoresCaps,
   type SupplierRow,
@@ -26,11 +25,14 @@ export default async function ProveedoresPage() {
   if (!ctx.organization) {
     return (
       <>
-        <AppHeader title="Proveedores & CxP" subtitle="Deudas administrativas" />
+        <AppHeader title="Proveedores & CxP" subtitle="Maestro de proveedores" />
         <main className="p-8">
           <Card>
             <p className="font-medium">Primero configura la empresa</p>
-            <Link href="/empresa" className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white">
+            <Link
+              href="/empresa"
+              className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+            >
               Ir a Empresa
             </Link>
           </Card>
@@ -82,64 +84,53 @@ export default async function ProveedoresPage() {
     linksBySupplier.set(link.supplier_id, list);
   }
 
-  const suppliers = ((supplierRows ?? []) as Omit<SupplierRow, "category_ids">[]).map(
-    (s) => ({
-      ...s,
-      category_ids: linksBySupplier.get(s.id) ?? [],
-    }),
-  );
+  const suppliers = (
+    (supplierRows ?? []) as Omit<SupplierRow, "category_ids">[]
+  ).map((s) => ({
+    ...s,
+    category_ids: linksBySupplier.get(s.id) ?? [],
+  }));
   const ids = suppliers.map((s) => s.id);
 
-  let documents: ApDocRow[] = [];
+  const balanceBySupplier = new Map<string, ReturnType<typeof money>>();
+  const docsCountBySupplier = new Map<string, number>();
   if (ids.length > 0) {
     const { data: docs } = await supabase
       .from("accounts_payable_documents")
-      .select(
-        "id, supplier_id, document_type, document_number, issue_date, due_date, concept, original_amount, paid_amount, status, priority, verification_status, observation, comments, source",
-      )
+      .select("id, supplier_id, original_amount, paid_amount, status")
       .eq("organization_id", ctx.organization.id)
       .is("deleted_at", null)
-      .in("supplier_id", ids)
-      .order("due_date", { ascending: true });
-    documents = (docs ?? []) as ApDocRow[];
+      .in("supplier_id", ids);
+
+    for (const d of docs ?? []) {
+      if (d.status === "ANULADA") continue;
+      const bal = apDocumentBalance(d.original_amount, d.paid_amount);
+      balanceBySupplier.set(
+        d.supplier_id,
+        (balanceBySupplier.get(d.supplier_id) ?? money(0)).plus(bal),
+      );
+      docsCountBySupplier.set(
+        d.supplier_id,
+        (docsCountBySupplier.get(d.supplier_id) ?? 0) + 1,
+      );
+    }
   }
-
-  const openDocs = documents.filter((d) => d.status !== "ANULADA");
-  let total = money(0);
-  let confirmed = money(0);
-  let declared = money(0);
-  let pending = money(0);
-  let critica = money(0);
-
-  for (const d of openDocs) {
-    const bal = apDocumentBalance(d.original_amount, d.paid_amount);
-    total = total.plus(bal);
-    if (d.verification_status === "CONFIRMADO") confirmed = confirmed.plus(bal);
-    if (d.verification_status === "DECLARADO") declared = declared.plus(bal);
-    if (d.verification_status === "PENDIENTE") pending = pending.plus(bal);
-    if (d.priority === "CRITICA") critica = critica.plus(bal);
-  }
-
-  const aging = summarizeApAging(
-    openDocs.map((d) => ({
-      dueDate: d.due_date,
-      originalAmount: d.original_amount,
-      paidAmount: d.paid_amount,
-    })),
-    todayInBogota(),
-  );
 
   return (
     <>
       <AppHeader
         title="Proveedores & CxP"
-        subtitle="Deudas administrativas soportadas por documentos"
+        subtitle="Maestro de proveedores"
       />
       <main className="space-y-6 p-8">
+        <ProveedoresNav
+          permissions={ctx.permissions}
+          isSuperAdmin={isSuperAdmin(ctx.role)}
+        />
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
-            title="Cuentas por pagar"
-            description="Carga facturas abiertas a la fecha de corte como saldo inicial. El saldo por proveedor se calcula solo. Prioridades y verificación para el empalme. Las categorías del proveedor vienen del maestro único (también usado en inventario de compras)."
+            title="Maestro de proveedores"
+            description="Datos de contacto, tipo (insumos o administrativo) y categorías. Las facturas y saldos se gestionan en Cuentas por pagar."
           />
           <div className="flex flex-wrap gap-2">
             <CreateCategoryMasterForm canManage={caps.canManageCategories} />
@@ -147,64 +138,50 @@ export default async function ProveedoresPage() {
               categories={categories}
               canCreate={caps.canCreateSupplier}
             />
-            <CreateApDocumentForm
-              suppliers={suppliers.filter((s) => s.is_active)}
-              canCreate={caps.canCreateAp}
-            />
           </div>
         </div>
 
         {categories.length > 0 ? (
           <Card>
-            <h3 className="font-medium">Maestro de categorías</h3>
+            <h3 className="font-medium">Categorías de insumo</h3>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Misma lista al asignar proveedores y al crear productos de inventario.
+              Maestro compartido con inventario de compras.
             </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {categories.map((c) => (
-                <span
-                  key={c.id}
-                  className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
-                >
-                  <strong>{c.code}</strong> — {c.name}
-                </span>
-              ))}
-            </div>
+            <CategoryMasterList
+              categories={categories}
+              canManage={caps.canManageCategories}
+            />
           </Card>
         ) : null}
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <StatCard label="Total CxP" value={formatCOP(total)} />
-          <StatCard label="Confirmada" value={formatCOP(confirmed)} />
-          <StatCard label="Declarada" value={formatCOP(declared)} />
-          <StatCard label="Pendiente soporte" value={formatCOP(pending)} />
-          <StatCard label="Crítica" value={formatCOP(critica)} />
-        </div>
-
-        <Card>
-          <h3 className="font-medium">Aging</h3>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5 text-sm">
-            <div>0-30: <strong>{formatCOP(aging["0-30"])}</strong></div>
-            <div>31-60: <strong>{formatCOP(aging["31-60"])}</strong></div>
-            <div>61-90: <strong>{formatCOP(aging["61-90"])}</strong></div>
-            <div>+90: <strong>{formatCOP(aging[">90"])}</strong></div>
-            <div>Sin venc.: <strong>{formatCOP(aging.sin_vencimiento)}</strong></div>
-          </div>
-        </Card>
-
         {suppliers.length === 0 ? (
           <EmptyState
-            title="Sin proveedores ni documentos CxP"
-            description="Cree el maestro de proveedores y cargue facturas con vencimiento, prioridad y evidencia."
+            title="Sin proveedores"
+            description="Cree el maestro de proveedores. Luego cargue facturas en Cuentas por pagar."
           />
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className="font-medium">
+                {suppliers.length}{" "}
+                {suppliers.length === 1 ? "proveedor" : "proveedores"}
+              </h3>
+              {ctxCanAccess(ctx, "proveedores.cxp") ? (
+                <Link
+                  href="/proveedores/cxp"
+                  className="text-sm text-[var(--accent)]"
+                >
+                  Ir a cuentas por pagar →
+                </Link>
+              ) : null}
+            </div>
             {suppliers.map((s) => (
-              <SupplierCard
+              <SupplierMasterCard
                 key={s.id}
                 supplier={s}
                 categories={categories}
-                documents={documents.filter((d) => d.supplier_id === s.id)}
+                openBalance={(balanceBySupplier.get(s.id) ?? money(0)).toNumber()}
+                openDocsCount={docsCountBySupplier.get(s.id) ?? 0}
                 caps={caps}
               />
             ))}
