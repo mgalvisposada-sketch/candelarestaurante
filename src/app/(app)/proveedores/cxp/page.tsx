@@ -11,7 +11,6 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ProveedoresNav } from "../proveedores-nav";
 import {
-  CreateApDocumentForm,
   SupplierCxpGroup,
   type ApDocRow,
   type ProveedoresCaps,
@@ -23,7 +22,7 @@ export default async function ProveedoresCxpPage() {
   if (!ctx) redirect("/login");
   requireModuleAccess(ctx, "proveedores");
   if (!ctxCanAccess(ctx, "proveedores.cxp") && !isSuperAdmin(ctx.role)) {
-    redirect("/proveedores");
+    redirect("/proveedores/maestro");
   }
   if (!ctx.organization) {
     return (
@@ -58,7 +57,7 @@ export default async function ProveedoresCxpPage() {
     supabase
       .from("suppliers")
       .select(
-        "id, name, tax_id, contact_name, phone, email, category, bank_account_info, notes, is_active, is_purchase_supplier",
+        "id, name, tax_id, contact_name, phone, email, category, bank_account_info, notes, is_active, is_purchase_supplier, is_expense_supplier",
       )
       .eq("organization_id", ctx.organization.id)
       .is("deleted_at", null)
@@ -73,11 +72,11 @@ export default async function ProveedoresCxpPage() {
       .order("due_date", { ascending: true }),
   ]);
 
-  const suppliers: SupplierRow[] = ((supplierRows ?? []) as Omit<
-    SupplierRow,
-    "category_ids"
-  >[]).map((s) => ({
+  const suppliers: SupplierRow[] = ((supplierRows ?? []) as Array<
+    Omit<SupplierRow, "category_ids"> & { is_expense_supplier?: boolean }
+  >).map((s) => ({
     ...s,
+    is_expense_supplier: Boolean(s.is_expense_supplier),
     category_ids: [],
   }));
   const documents = (docs ?? []) as ApDocRow[];
@@ -140,13 +139,21 @@ export default async function ProveedoresCxpPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Cuentas por pagar"
-            description="Facturas y cuentas de cobro por proveedor. El maestro de proveedores se gestiona en la pestaña Proveedores."
+            description="Cartera de costos de insumos/materias primas que llegan desde Compras. No se cargan facturas a mano ni se paga aquí: el pago se gestiona en Solicitudes de pago y el saldo se actualiza solo. Gastos operativos (arriendo, gas, etc.) van en Gastos."
           />
           <div className="flex flex-wrap gap-2">
-            <CreateApDocumentForm
-              suppliers={suppliers.filter((s) => s.is_active)}
-              canCreate={caps.canCreateAp}
-            />
+            <Link
+              href="/gastos"
+              className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm font-medium"
+            >
+              Ir a Gastos
+            </Link>
+            <Link
+              href="/solicitudes-pago"
+              className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm font-medium"
+            >
+              Ir a solicitudes de pago
+            </Link>
           </div>
         </div>
 
@@ -182,12 +189,12 @@ export default async function ProveedoresCxpPage() {
         {suppliers.length === 0 ? (
           <EmptyState
             title="Sin proveedores"
-            description="Cree proveedores en el maestro antes de cargar facturas."
+            description="Cree proveedores en el maestro. Las facturas de insumos llegarán aquí desde Compras."
           />
         ) : groups.length === 0 ? (
           <EmptyState
             title="Sin documentos CxP"
-            description="Agregue facturas o cuentas de cobro. Los proveedores sin deuda no aparecen aquí."
+            description="Acepte una factura desde Compras (tras recibir insumos). Quedará en esta cartera y en Solicitudes de pago."
           />
         ) : (
           <div className="space-y-4">
@@ -195,8 +202,11 @@ export default async function ProveedoresCxpPage() {
               <h3 className="font-medium">
                 Deuda por proveedor ({groups.length})
               </h3>
-              <Link href="/proveedores" className="text-sm text-[var(--accent)]">
-                ← Maestro de proveedores
+              <Link
+                href="/proveedores/maestro"
+                className="text-sm text-[var(--muted)]"
+              >
+                Maestro de proveedores
               </Link>
             </div>
             {groups.map((g) => (

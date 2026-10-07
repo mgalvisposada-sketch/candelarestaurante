@@ -81,8 +81,8 @@ export default async function ComprasProveedoresPage() {
         />
         <p className="text-sm text-[var(--muted)]">
           Maestro de proveedores y categorías en{" "}
-          <Link href="/proveedores" className="text-[var(--accent)]">
-            Proveedores & CxP
+          <Link href="/proveedores/maestro" className="text-[var(--accent)]">
+            Maestro de proveedores
           </Link>
           .
         </p>

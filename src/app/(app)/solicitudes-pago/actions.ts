@@ -6,8 +6,6 @@ import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess } from "@/lib/permissions";
 import { todayInBogota } from "@/lib/dates";
 import {
-  createInternalPaymentRequestSchema,
-  createInvoicePaymentRequestSchema,
   payPaymentRequestSchema,
   rejectPaymentRequestSchema,
 } from "@/validations/payment-requests";
@@ -40,49 +38,11 @@ function parseMoney(raw: string | null | undefined, fallback?: number) {
 function revalidatePaymentPaths() {
   revalidatePath("/solicitudes-pago");
   revalidatePath("/proveedores");
+  revalidatePath("/proveedores/cxp");
+  revalidatePath("/proveedores/maestro");
   revalidatePath("/gastos");
   revalidatePath("/tesoreria");
   revalidatePath("/inicio");
-}
-
-function mapPriorityToAp(
-  priority: "CRITICA" | "ALTA" | "NORMAL" | "BAJA",
-): "CRITICA" | "ALTA" | "NORMAL" | "NEGOCIABLE" | "POR_VALIDAR" {
-  if (priority === "BAJA") return "NEGOCIABLE";
-  return priority;
-}
-
-async function ensureAccountsPayable(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  orgId: string,
-  supplierId: string,
-  userId: string,
-  priority?: string,
-) {
-  const { data: existing } = await supabase
-    .from("accounts_payable")
-    .select("id")
-    .eq("organization_id", orgId)
-    .eq("supplier_id", supplierId)
-    .is("deleted_at", null)
-    .maybeSingle();
-
-  if (existing) return existing.id;
-
-  const { data, error } = await supabase
-    .from("accounts_payable")
-    .insert({
-      organization_id: orgId,
-      supplier_id: supplierId,
-      priority: priority || "POR_VALIDAR",
-      created_by: userId,
-      updated_by: userId,
-    })
-    .select("id")
-    .single();
-
-  if (error) throw new Error(error.message);
-  return data.id as string;
 }
 
 async function refreshDocumentPaid(
@@ -140,180 +100,26 @@ async function getWritableRequest(
   return data;
 }
 
+/** Alta cerrada: las solicitudes nacen en Compras/CxP o Gastos. */
 export async function createInternalPaymentRequestAction(
-  formData: FormData,
+  _formData: FormData,
 ): Promise<ActionResult> {
-  const ctx = await getOrgContext();
-  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "solicitudes-pago.crear")) {
-    return { ok: false, error: "Sin permiso para crear solicitudes" };
-  }
-
-  const parsed = createInternalPaymentRequestSchema.safeParse({
-    concept: formData.get("concept"),
-    amount: formData.get("amount"),
-    requested_at: formData.get("requested_at") || todayInBogota(),
-    due_date: formData.get("due_date"),
-    supplier_id: formData.get("supplier_id"),
-    priority: formData.get("priority") || "NORMAL",
-    notes: formData.get("notes"),
-    create_expense: formData.get("create_expense") || "false",
-  });
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
-  }
-
-  const amount = parseMoney(parsed.data.amount);
-  if (amount === null || amount <= 0) return { ok: false, error: "Monto inválido" };
-
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("payment_requests")
-    .insert({
-      organization_id: ctx.organization.id,
-      source: "SOLICITUD_INTERNA",
-      status: "EN_REVISION",
-      priority: parsed.data.priority,
-      concept: parsed.data.concept.trim(),
-      amount,
-      requested_at: parsed.data.requested_at,
-      due_date: emptyToNull(parsed.data.due_date),
-      supplier_id: emptyToNull(parsed.data.supplier_id),
-      notes: emptyToNull(parsed.data.notes),
-      create_expense: parsed.data.create_expense === "true",
-      requested_by: ctx.userId,
-      created_by: ctx.userId,
-      updated_by: ctx.userId,
-    })
-    .select("id")
-    .single();
-
-  if (error) return { ok: false, error: error.message };
-
-  await supabase.from("audit_logs").insert({
-    organization_id: ctx.organization.id,
-    user_id: ctx.userId,
-    action: "CREATE",
-    entity: "payment_requests",
-    entity_id: data.id,
-    new_values: { source: "SOLICITUD_INTERNA", amount },
-  });
-
-  revalidatePaymentPaths();
-  return { ok: true, id: data.id };
+  return {
+    ok: false,
+    error:
+      "Ya no se crean solicitudes aquí. Costos: Compras. Gastos operativos: módulo Gastos.",
+  };
 }
 
+/** Alta cerrada: las facturas se registran en Compras o Gastos. */
 export async function createInvoicePaymentRequestAction(
-  formData: FormData,
+  _formData: FormData,
 ): Promise<ActionResult> {
-  const ctx = await getOrgContext();
-  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "solicitudes-pago.crear")) {
-    return { ok: false, error: "Sin permiso para crear solicitudes" };
-  }
-
-  const parsed = createInvoicePaymentRequestSchema.safeParse({
-    supplier_id: formData.get("supplier_id"),
-    concept: formData.get("concept"),
-    amount: formData.get("amount"),
-    requested_at: formData.get("requested_at") || todayInBogota(),
-    due_date: formData.get("due_date"),
-    issue_date: formData.get("issue_date"),
-    document_type: formData.get("document_type") || "FACTURA",
-    document_number: formData.get("document_number"),
-    priority: formData.get("priority") || "NORMAL",
-    notes: formData.get("notes"),
-  });
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
-  }
-
-  const amount = parseMoney(parsed.data.amount);
-  if (amount === null || amount <= 0) return { ok: false, error: "Monto inválido" };
-
-  const supabase = await createClient();
-  const apPriority = mapPriorityToAp(parsed.data.priority);
-
-  let apId: string;
-  try {
-    apId = await ensureAccountsPayable(
-      supabase,
-      ctx.organization.id,
-      parsed.data.supplier_id,
-      ctx.userId,
-      apPriority,
-    );
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Error CxP" };
-  }
-
-  const { data: doc, error: docError } = await supabase
-    .from("accounts_payable_documents")
-    .insert({
-      organization_id: ctx.organization.id,
-      accounts_payable_id: apId,
-      supplier_id: parsed.data.supplier_id,
-      document_type: parsed.data.document_type,
-      document_number: emptyToNull(parsed.data.document_number),
-      issue_date: emptyToNull(parsed.data.issue_date) || parsed.data.requested_at,
-      due_date: emptyToNull(parsed.data.due_date),
-      concept: parsed.data.concept.trim(),
-      original_amount: amount,
-      paid_amount: 0,
-      status: "ABIERTA",
-      priority: apPriority,
-      verification_status: "PENDIENTE",
-      source: "solicitudes-pago",
-      observation: emptyToNull(parsed.data.notes),
-      created_by: ctx.userId,
-      updated_by: ctx.userId,
-    })
-    .select("id")
-    .single();
-
-  if (docError) return { ok: false, error: docError.message };
-
-  const { data, error } = await supabase
-    .from("payment_requests")
-    .insert({
-      organization_id: ctx.organization.id,
-      source: "FACTURA_PROVEEDOR",
-      status: "EN_REVISION",
-      priority: parsed.data.priority,
-      concept: parsed.data.concept.trim(),
-      amount,
-      requested_at: parsed.data.requested_at,
-      due_date: emptyToNull(parsed.data.due_date),
-      supplier_id: parsed.data.supplier_id,
-      ap_document_id: doc.id,
-      document_type: parsed.data.document_type,
-      document_number: emptyToNull(parsed.data.document_number),
-      issue_date: emptyToNull(parsed.data.issue_date) || parsed.data.requested_at,
-      notes: emptyToNull(parsed.data.notes),
-      requested_by: ctx.userId,
-      created_by: ctx.userId,
-      updated_by: ctx.userId,
-    })
-    .select("id")
-    .single();
-
-  if (error) return { ok: false, error: error.message };
-
-  await supabase.from("audit_logs").insert({
-    organization_id: ctx.organization.id,
-    user_id: ctx.userId,
-    action: "CREATE",
-    entity: "payment_requests",
-    entity_id: data.id,
-    new_values: {
-      source: "FACTURA_PROVEEDOR",
-      amount,
-      ap_document_id: doc.id,
-    },
-  });
-
-  revalidatePaymentPaths();
-  return { ok: true, id: data.id };
+  return {
+    ok: false,
+    error:
+      "Ya no se registran facturas aquí. Costos de insumos: Compras. Opex: Gastos.",
+  };
 }
 
 export async function approvePaymentRequestAction(
@@ -594,8 +400,8 @@ export async function softDeletePaymentRequestAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "solicitudes-pago.crear")) {
-    return { ok: false, error: "Sin permiso" };
+  if (!ctxCanAccess(ctx, "solicitudes-pago.aprobar")) {
+    return { ok: false, error: "Sin permiso para anular" };
   }
 
   const supabase = await createClient();

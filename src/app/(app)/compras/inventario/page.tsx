@@ -90,8 +90,8 @@ export default async function ComprasInventarioPage() {
         </div>
         <p className="text-sm text-[var(--muted)]">
           Categorías compartidas con{" "}
-          <Link href="/proveedores" className="text-[var(--accent)]">
-            Proveedores & CxP
+          <Link href="/proveedores/maestro" className="text-[var(--accent)]">
+            Maestro de proveedores
           </Link>
           . Reposiciones en{" "}
           <Link href="/compras/sugeridos" className="text-[var(--accent)]">

@@ -7,38 +7,29 @@ import { cn } from "@/lib/utils";
 
 const LINKS = [
   {
-    href: "/proveedores/cxp",
-    label: "Cuentas por pagar",
+    href: "/gastos",
+    label: "Registro",
     primary: true,
     match: (granted: readonly string[], isSuperAdmin: boolean) =>
-      [
-        "proveedores.cxp",
-        "proveedores.cxp.crear",
-        "proveedores.cxp.editar",
-        "proveedores.cxp.pagar",
-      ].some((k) => hasPermission(granted, k, { isSuperAdmin })),
-    active: (pathname: string) => pathname.startsWith("/proveedores/cxp"),
+      ["gastos", "gastos.registro"].some((k) =>
+        hasPermission(granted, k, { isSuperAdmin }),
+      ),
+    active: (pathname: string) =>
+      pathname === "/gastos" || pathname === "/gastos/",
   },
   {
-    href: "/proveedores/maestro",
-    label: "Proveedores",
+    href: "/gastos/categorias",
+    label: "Categorías",
     primary: false,
     match: (granted: readonly string[], isSuperAdmin: boolean) =>
-      [
-        "proveedores.maestro",
-        "proveedores.crear",
-        "proveedores.editar",
-        "proveedores.categorias",
-        "proveedores",
-      ].some((k) => hasPermission(granted, k, { isSuperAdmin })),
-    active: (pathname: string) =>
-      pathname.startsWith("/proveedores/maestro") ||
-      pathname === "/proveedores" ||
-      pathname === "/proveedores/",
+      ["gastos", "gastos.categorias", "gastos.registro"].some((k) =>
+        hasPermission(granted, k, { isSuperAdmin }),
+      ),
+    active: (pathname: string) => pathname.startsWith("/gastos/categorias"),
   },
 ] as const;
 
-export function ProveedoresNav({
+export function GastosNav({
   permissions = [],
   isSuperAdmin = false,
 }: {

@@ -78,14 +78,20 @@ export const APP_MODULES: AppModuleDef[] = [
     href: "/proveedores",
     mvp: 1,
     submodules: [
-      { key: "proveedores.maestro", label: "Ver proveedores" },
+      { key: "proveedores.cxp", label: "Ver cuentas por pagar (principal)" },
+      {
+        key: "proveedores.cxp.crear",
+        label: "Crear documentos CxP (desactivado; alta vía Compras)",
+      },
+      { key: "proveedores.cxp.editar", label: "Editar documentos CxP" },
+      {
+        key: "proveedores.cxp.pagar",
+        label: "Pagos CxP (desactivado; usar Solicitudes de pago)",
+      },
+      { key: "proveedores.maestro", label: "Ver maestro de proveedores" },
       { key: "proveedores.crear", label: "Crear proveedores" },
       { key: "proveedores.editar", label: "Editar / desactivar proveedores" },
       { key: "proveedores.categorias", label: "Gestionar categorías" },
-      { key: "proveedores.cxp", label: "Ver cuentas por pagar" },
-      { key: "proveedores.cxp.crear", label: "Crear documentos CxP" },
-      { key: "proveedores.cxp.editar", label: "Editar documentos CxP" },
-      { key: "proveedores.cxp.pagar", label: "Registrar pagos CxP" },
     ],
   },
   {
@@ -114,6 +120,10 @@ export const APP_MODULES: AppModuleDef[] = [
     mvp: 2,
     submodules: [
       { key: "gastos.registro", label: "Registro de gastos" },
+      {
+        key: "gastos.categorias",
+        label: "Maestro de categorías de gastos (no Compras)",
+      },
     ],
   },
   {
@@ -123,7 +133,10 @@ export const APP_MODULES: AppModuleDef[] = [
     mvp: 2,
     submodules: [
       { key: "solicitudes-pago.bandeja", label: "Bandeja de solicitudes" },
-      { key: "solicitudes-pago.crear", label: "Crear solicitudes" },
+      {
+        key: "solicitudes-pago.crear",
+        label: "Crear solicitudes (desactivado; alta en CxP / Compras)",
+      },
       { key: "solicitudes-pago.aprobar", label: "Aprobar / rechazar" },
       { key: "solicitudes-pago.pagar", label: "Ejecutar pagos" },
     ],
@@ -319,6 +332,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "proveedores.cxp",
     "gastos",
     "gastos.registro",
+    "gastos.categorias",
     "solicitudes-pago",
     "solicitudes-pago.bandeja",
     "solicitudes-pago.pagar",

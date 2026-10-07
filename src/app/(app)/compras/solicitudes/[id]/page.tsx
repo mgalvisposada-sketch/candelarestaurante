@@ -53,7 +53,7 @@ export default async function CompraSolicitudDetailPage({
       supabase
         .from("purchase_request_items")
         .select(
-          "id, product_id, category_id, quantity_requested, quantity_approved, quantity_received, unit, suggested_supplier_id, approved_supplier_id, unit_cost_estimate, expected_delivery_date, status, notes",
+          "id, product_id, category_id, quantity_requested, quantity_approved, quantity_received, unit, suggested_supplier_id, approved_supplier_id, unit_cost_estimate, expected_delivery_date, status, notes, invoice_payment_request_id, invoice_ap_document_id",
         )
         .eq("purchase_request_id", id)
         .eq("organization_id", ctx.organization.id)

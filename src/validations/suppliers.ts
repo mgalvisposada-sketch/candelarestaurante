@@ -11,6 +11,7 @@ export const supplierSchema = z.object({
   notes: z.string().optional().nullable(),
   is_active: z.enum(["true", "false"]).optional(),
   is_purchase_supplier: z.enum(["true", "false"]).optional(),
+  is_expense_supplier: z.enum(["true", "false"]).optional(),
 });
 
 export const apDocumentSchema = z.object({

@@ -1050,6 +1050,7 @@ export async function acceptPurchaseInvoiceAction(
     issue_date: formData.get("issue_date") || todayInBogota(),
     due_date: formData.get("due_date"),
     concept: formData.get("concept"),
+    priority: formData.get("priority") || "NORMAL",
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
@@ -1057,43 +1058,65 @@ export async function acceptPurchaseInvoiceAction(
 
   const amount = parseNumber(parsed.data.amount);
   if (amount === null || amount <= 0) return { ok: false, error: "Monto inválido" };
+  const supplierId = parsed.data.supplier_id;
+  const payPriority = parsed.data.priority || "NORMAL";
+  const apPriority =
+    payPriority === "BAJA"
+      ? ("NEGOCIABLE" as const)
+      : (payPriority as "CRITICA" | "ALTA" | "NORMAL");
 
   const supabase = await createClient();
   const { data: request } = await supabase
     .from("purchase_requests")
-    .select("id, status, title, payment_request_id")
+    .select("id, status, title")
     .eq("id", requestId)
     .eq("organization_id", ctx.organization.id)
     .maybeSingle();
 
   if (!request) return { ok: false, error: "Solicitud no encontrada" };
-  if (!["RECIBIDA", "RECIBIDA_PARCIAL"].includes(request.status)) {
-    return { ok: false, error: "Primero registre la recepción de mercancía" };
-  }
-  if (request.payment_request_id) {
-    return {
-      ok: false,
-      error:
-        "Esta solicitud ya tiene factura en cola de pago. Si llega otra factura, regístrela en Proveedores / CxP.",
-    };
+  if (
+    !["PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
+      request.status,
+    )
+  ) {
+    return { ok: false, error: "La solicitud no admite factura en este estado" };
   }
 
   const { data: itemRows } = await supabase
     .from("purchase_request_items")
     .select(
-      "quantity_approved, quantity_requested, quantity_received, status",
+      "id, quantity_approved, quantity_requested, quantity_received, status, approved_supplier_id, suggested_supplier_id, invoice_payment_request_id",
     )
     .eq("purchase_request_id", requestId)
     .eq("organization_id", ctx.organization.id)
     .is("deleted_at", null);
-  const allClosed = (itemRows ?? []).every((i) => isPurchaseItemClosed(i));
+
+  const supplierItems = (itemRows ?? []).filter((i) => {
+    const sid = i.approved_supplier_id ?? i.suggested_supplier_id;
+    return sid === supplierId;
+  });
+  if (supplierItems.length === 0) {
+    return { ok: false, error: "Ese proveedor no tiene ítems en esta solicitud" };
+  }
+
+  const toInvoice = supplierItems.filter(
+    (i) =>
+      Number(i.quantity_received || 0) > 0 && !i.invoice_payment_request_id,
+  );
+  if (toInvoice.length === 0) {
+    return {
+      ok: false,
+      error:
+        "No hay mercancía recibida sin facturar para este proveedor. Primero registre la recepción de sus ítems.",
+    };
+  }
 
   let apId: string;
   try {
     apId = await ensureAccountsPayable(
       supabase,
       ctx.organization.id,
-      parsed.data.supplier_id,
+      supplierId,
       ctx.userId,
     );
   } catch (e) {
@@ -1101,14 +1124,15 @@ export async function acceptPurchaseInvoiceAction(
   }
 
   const concept =
-    emptyToNull(parsed.data.concept) || `Compra: ${request.title}`;
+    emptyToNull(parsed.data.concept) ||
+    `Compra: ${request.title} · proveedor`;
 
   const { data: doc, error: docError } = await supabase
     .from("accounts_payable_documents")
     .insert({
       organization_id: ctx.organization.id,
       accounts_payable_id: apId,
-      supplier_id: parsed.data.supplier_id,
+      supplier_id: supplierId,
       document_type: parsed.data.document_type || "FACTURA",
       document_number: emptyToNull(parsed.data.document_number),
       issue_date: emptyToNull(parsed.data.issue_date),
@@ -1117,7 +1141,7 @@ export async function acceptPurchaseInvoiceAction(
       original_amount: amount,
       paid_amount: 0,
       status: "ABIERTA",
-      priority: "NORMAL",
+      priority: apPriority,
       verification_status: "CONFIRMADO",
       source: "compras",
       validated_by: ctx.userId,
@@ -1136,17 +1160,17 @@ export async function acceptPurchaseInvoiceAction(
       organization_id: ctx.organization.id,
       source: "FACTURA_PROVEEDOR",
       status: "EN_COLA_PAGO",
-      priority: "NORMAL",
+      priority: payPriority,
       concept,
       amount,
       requested_at: todayInBogota(),
       due_date: emptyToNull(parsed.data.due_date),
-      supplier_id: parsed.data.supplier_id,
+      supplier_id: supplierId,
       ap_document_id: doc.id,
       document_type: parsed.data.document_type || "FACTURA",
       document_number: emptyToNull(parsed.data.document_number),
       issue_date: emptyToNull(parsed.data.issue_date),
-      notes: `Desde compra ${requestId}`,
+      notes: `Desde compra ${requestId} · proveedor ${supplierId}`,
       requested_by: ctx.userId,
       approved_by: ctx.userId,
       approved_at: new Date().toISOString(),
@@ -1158,11 +1182,47 @@ export async function acceptPurchaseInvoiceAction(
 
   if (payError) return { ok: false, error: payError.message };
 
+  const stampIds = toInvoice.map((i) => i.id);
+  const { error: stampError } = await supabase
+    .from("purchase_request_items")
+    .update({
+      invoice_payment_request_id: payReq.id,
+      invoice_ap_document_id: doc.id,
+      updated_by: ctx.userId,
+    })
+    .eq("organization_id", ctx.organization.id)
+    .in("id", stampIds);
+  if (stampError) return { ok: false, error: stampError.message };
+
+  const { data: refreshed } = await supabase
+    .from("purchase_request_items")
+    .select(
+      "quantity_approved, quantity_requested, quantity_received, status, invoice_payment_request_id",
+    )
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  const allClosed = (refreshed ?? []).every((i) => isPurchaseItemClosed(i));
+  const anyUninvoicedReceived = (refreshed ?? []).some(
+    (i) =>
+      Number(i.quantity_received || 0) > 0 && !i.invoice_payment_request_id,
+  );
+  const anyReceived = (refreshed ?? []).some(
+    (i) => Number(i.quantity_received || 0) > 0,
+  );
+
+  const nextStatus =
+    allClosed && !anyUninvoicedReceived
+      ? "FACTURA_ACEPTADA"
+      : anyReceived
+        ? "RECIBIDA_PARCIAL"
+        : request.status;
+
   const { error } = await supabase
     .from("purchase_requests")
     .update({
-      // Si aún hay pendientes, no cierre el ciclo: puede seguir recibiendo.
-      status: allClosed ? "FACTURA_ACEPTADA" : "RECIBIDA_PARCIAL",
+      status: nextStatus,
       invoice_accepted_at: new Date().toISOString(),
       ap_document_id: doc.id,
       payment_request_id: payReq.id,
@@ -1182,7 +1242,9 @@ export async function acceptPurchaseInvoiceAction(
     new_values: {
       ap_document_id: doc.id,
       payment_request_id: payReq.id,
-      closed: allClosed,
+      supplier_id: supplierId,
+      item_ids: stampIds,
+      closed: allClosed && !anyUninvoicedReceived,
     },
   });
 

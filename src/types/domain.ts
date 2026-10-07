@@ -43,7 +43,7 @@ export const NAV_ITEMS = [
     href: "/proveedores",
     label: "Proveedores & CxP",
     mvp: 1,
-    hint: "Proveedores y cuentas por pagar",
+    hint: "Cuentas por pagar y maestro",
   },
   {
     href: "/prestamos",
@@ -61,19 +61,19 @@ export const NAV_ITEMS = [
     href: "/gastos",
     label: "Gastos",
     mvp: 2,
-    hint: "Registro de gastos",
+    hint: "Facturas operativas (opex)",
   },
   {
     href: "/solicitudes-pago",
     label: "Solicitudes de pago",
     mvp: 2,
-    hint: "Bandeja, aprobación y pago",
+    hint: "Aprobar y pagar",
   },
   {
     href: "/compras",
     label: "Compras",
     mvp: 2,
-    hint: "Inventario, proveedores y solicitudes",
+    hint: "Inventario y solicitudes de insumos",
   },
   {
     href: "/presupuesto",
@@ -136,18 +136,18 @@ export const NAV_GROUPS = [
   },
   {
     id: "caja",
-    label: "Caja y pagos",
-    hrefs: [
-      "/tesoreria",
-      "/gastos",
-      "/solicitudes-pago",
-      "/presupuesto",
-    ] as const,
+    label: "Tesorería",
+    hrefs: ["/tesoreria", "/solicitudes-pago", "/presupuesto"] as const,
   },
   {
-    id: "compras",
-    label: "Compras y proveedores",
+    id: "costos",
+    label: "Costos",
     hrefs: ["/proveedores", "/compras"] as const,
+  },
+  {
+    id: "gastos",
+    label: "Gastos",
+    hrefs: ["/gastos"] as const,
   },
   {
     id: "socios",

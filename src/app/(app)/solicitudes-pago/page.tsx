@@ -7,8 +7,6 @@ import { formatCOP, money } from "@/lib/money";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
-  CreateInternalRequestForm,
-  CreateInvoiceRequestForm,
   PaymentRequestQueues,
   type BankAccountOption,
   type PaymentRequestRow,
@@ -89,7 +87,6 @@ export default async function SolicitudesPagoPage() {
     money(0),
   );
 
-  const canCreate = ctxCanAccess(ctx, "solicitudes-pago.crear");
   const canApprove = ctxCanAccess(ctx, "solicitudes-pago.aprobar");
   const canPay = ctxCanAccess(ctx, "solicitudes-pago.pagar");
 
@@ -97,32 +94,58 @@ export default async function SolicitudesPagoPage() {
     <>
       <AppHeader
         title="Solicitudes de pago"
-        subtitle="Solicitar · aprobar · pagar desde tesorería"
+        subtitle="Bandeja de tesorería · aprobar y pagar"
       />
       <main className="space-y-6 p-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
-            title="Bandeja operativa"
-            description="Unifique solicitudes internas y facturas de proveedores. Al aprobar pasan a cola de tesorería; al pagar se registran movimiento bancario y, si aplica, CxP o gasto."
+            title="Cola de pagos"
+            description="Aquí solo se aprueba y se paga. Las solicitudes llegan desde Compras (costos/CxP) o desde Gastos. Al pagar se actualiza el módulo de origen."
           />
-          {canCreate ? (
-            <div className="flex flex-wrap gap-2">
-              <CreateInternalRequestForm suppliers={suppliers} />
-              <CreateInvoiceRequestForm suppliers={suppliers} />
-            </div>
-          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/gastos"
+              className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm font-medium hover:bg-neutral-50"
+            >
+              Gastos
+            </Link>
+            <Link
+              href="/proveedores/cxp"
+              className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm font-medium hover:bg-neutral-50"
+            >
+              CxP
+            </Link>
+            <Link
+              href="/tesoreria"
+              className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm font-medium hover:bg-neutral-50"
+            >
+              Tesorería
+            </Link>
+          </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
-          <StatCard label="Por aprobar" value={formatCOP(reviewTotal)} />
-          <StatCard label="Por pagar" value={formatCOP(payTotal)} />
-          <StatCard label="En bandeja" value={String(requests.length)} />
+          <StatCard
+            label="Por aprobar"
+            value={formatCOP(reviewTotal)}
+            hint={`${review.length} ${review.length === 1 ? "solicitud" : "solicitudes"}`}
+          />
+          <StatCard
+            label="Por pagar"
+            value={formatCOP(payTotal)}
+            hint={`${payQueue.length} ${payQueue.length === 1 ? "solicitud" : "solicitudes"}`}
+          />
+          <StatCard
+            label="Histórico"
+            value={String(history.length)}
+            hint="Pagadas, rechazadas o anuladas"
+          />
         </div>
 
         {requests.length === 0 ? (
           <EmptyState
             title="Sin solicitudes de pago"
-            description="Cree una solicitud interna o registre una factura de proveedor para iniciar el flujo de aprobación."
+            description="Acepte facturas en Compras (costos) o regístrelas en Gastos; aparecerán aquí para aprobar y pagar."
           />
         ) : (
           <PaymentRequestQueues
@@ -133,7 +156,6 @@ export default async function SolicitudesPagoPage() {
             bankAccounts={bankAccounts}
             canApprove={canApprove}
             canPay={canPay}
-            canCreate={canCreate}
           />
         )}
       </main>

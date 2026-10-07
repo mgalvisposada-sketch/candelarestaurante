@@ -6,10 +6,19 @@ import { getOrgContext, type OrgContext } from "@/lib/org-context";
 import { ctxCanAccess } from "@/lib/permissions";
 import {
   apDocumentSchema,
-  apPaymentSchema,
   supplierSchema,
 } from "@/validations/suppliers";
 import type { ActionResult } from "../empresa/actions";
+
+function mapApPriorityToPaymentRequest(
+  priority: "CRITICA" | "ALTA" | "NORMAL" | "NEGOCIABLE" | "POR_VALIDAR",
+): "CRITICA" | "ALTA" | "NORMAL" | "BAJA" {
+  if (priority === "CRITICA" || priority === "ALTA" || priority === "NORMAL") {
+    return priority;
+  }
+  if (priority === "NEGOCIABLE") return "BAJA";
+  return "NORMAL";
+}
 
 type OrgCtx = OrgContext & {
   organization: NonNullable<OrgContext["organization"]>;
@@ -203,6 +212,7 @@ async function syncSupplierCategories(
 function revalidateSupplierPaths() {
   revalidatePath("/proveedores");
   revalidatePath("/proveedores/cxp");
+  revalidatePath("/proveedores/maestro");
   revalidatePath("/compras/proveedores");
   revalidatePath("/compras/solicitudes");
   revalidatePath("/inicio");
@@ -226,12 +236,14 @@ export async function createSupplierAction(
     notes: formData.get("notes"),
     is_active: formData.get("is_active") || "true",
     is_purchase_supplier: formData.get("is_purchase_supplier") || "false",
+    is_expense_supplier: formData.get("is_expense_supplier") || "false",
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
   }
 
   const isPurchaseSupplier = parsed.data.is_purchase_supplier === "true";
+  const isExpenseSupplier = parsed.data.is_expense_supplier === "true";
   const categoryIds = isPurchaseSupplier ? parseCategoryIds(formData) : [];
   if (isPurchaseSupplier && categoryIds.length === 0) {
     return {
@@ -255,6 +267,7 @@ export async function createSupplierAction(
       notes: emptyToNull(parsed.data.notes),
       is_active: parsed.data.is_active !== "false",
       is_purchase_supplier: isPurchaseSupplier,
+      is_expense_supplier: isExpenseSupplier,
       created_by: ctx.userId,
       updated_by: ctx.userId,
     })
@@ -320,12 +333,14 @@ export async function updateSupplierAction(
     notes: formData.get("notes"),
     is_active: formData.get("is_active") || "true",
     is_purchase_supplier: formData.get("is_purchase_supplier") || "false",
+    is_expense_supplier: formData.get("is_expense_supplier") || "false",
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
   }
 
   const isPurchaseSupplier = parsed.data.is_purchase_supplier === "true";
+  const isExpenseSupplier = parsed.data.is_expense_supplier === "true";
   const categoryIds = isPurchaseSupplier ? parseCategoryIds(formData) : [];
   if (isPurchaseSupplier && categoryIds.length === 0) {
     return {
@@ -357,6 +372,7 @@ export async function updateSupplierAction(
       notes: emptyToNull(parsed.data.notes),
       is_active: parsed.data.is_active !== "false",
       is_purchase_supplier: isPurchaseSupplier,
+      is_expense_supplier: isExpenseSupplier,
       updated_by: ctx.userId,
     })
     .eq("id", supplierId)
@@ -367,111 +383,15 @@ export async function updateSupplierAction(
   return { ok: true, id: supplierId };
 }
 
+/** Alta cerrada: CxP solo recibe facturas desde Compras. */
 export async function createApDocumentAction(
-  formData: FormData,
+  _formData: FormData,
 ): Promise<ActionResult> {
-  const gate = await requireProveedoresPerm("proveedores.cxp.crear");
-  if (!gate.ok) return { ok: false, error: gate.error };
-  const { ctx } = gate;
-
-  const parsed = apDocumentSchema.safeParse({
-    supplier_id: formData.get("supplier_id"),
-    document_type: formData.get("document_type"),
-    document_number: formData.get("document_number"),
-    issue_date: formData.get("issue_date"),
-    due_date: formData.get("due_date"),
-    concept: formData.get("concept"),
-    original_amount: formData.get("original_amount"),
-    paid_amount: formData.get("paid_amount") || "0",
-    priority: formData.get("priority") || "POR_VALIDAR",
-    verification_status: formData.get("verification_status") || "PENDIENTE",
-    observation: formData.get("observation"),
-    comments: formData.get("comments"),
-    source: formData.get("source"),
-  });
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
-  }
-
-  const original = parseMoney(parsed.data.original_amount);
-  const paid = parseMoney(parsed.data.paid_amount, 0);
-  if (original === null || original < 0) return { ok: false, error: "Valor inválido" };
-  if (paid === null || paid < 0 || paid > original) {
-    return { ok: false, error: "Valor pagado inválido" };
-  }
-
-  const supabase = await createClient();
-  let apId: string;
-  try {
-    apId = await ensureAccountsPayable(
-      supabase,
-      ctx.organization.id,
-      parsed.data.supplier_id,
-      ctx.userId,
-      parsed.data.priority,
-    );
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Error CxP" };
-  }
-
-  let status: "ABIERTA" | "PARCIAL" | "PAGADA" = "ABIERTA";
-  if (paid >= original && original > 0) status = "PAGADA";
-  else if (paid > 0) status = "PARCIAL";
-
-  const { data, error } = await supabase
-    .from("accounts_payable_documents")
-    .insert({
-      organization_id: ctx.organization.id,
-      accounts_payable_id: apId,
-      supplier_id: parsed.data.supplier_id,
-      document_type: parsed.data.document_type,
-      document_number: emptyToNull(parsed.data.document_number),
-      issue_date: emptyToNull(parsed.data.issue_date),
-      due_date: emptyToNull(parsed.data.due_date),
-      concept: emptyToNull(parsed.data.concept),
-      original_amount: original,
-      paid_amount: paid,
-      status,
-      priority: parsed.data.priority,
-      verification_status: parsed.data.verification_status,
-      observation: emptyToNull(parsed.data.observation),
-      comments: emptyToNull(parsed.data.comments),
-      source: emptyToNull(parsed.data.source),
-      validated_by:
-        parsed.data.verification_status === "CONFIRMADO" ? ctx.userId : null,
-      validated_at:
-        parsed.data.verification_status === "CONFIRMADO"
-          ? new Date().toISOString()
-          : null,
-      created_by: ctx.userId,
-      updated_by: ctx.userId,
-    })
-    .select("id")
-    .single();
-
-  if (error) return { ok: false, error: error.message };
-
-  await supabase
-    .from("accounts_payable")
-    .update({
-      priority: parsed.data.priority,
-      verification_status: parsed.data.verification_status,
-      updated_by: ctx.userId,
-    })
-    .eq("id", apId);
-
-  await supabase.from("audit_logs").insert({
-    organization_id: ctx.organization.id,
-    user_id: ctx.userId,
-    action: "CREATE",
-    entity: "accounts_payable_documents",
-    entity_id: data.id,
-  });
-
-  revalidatePath("/proveedores");
-  revalidatePath("/proveedores/cxp");
-  revalidatePath("/inicio");
-  return { ok: true, id: data.id };
+  return {
+    ok: false,
+    error:
+      "Ya no se cargan facturas a mano en CxP. Costos de insumos: acepte factura en Compras. Gastos (arriendo, gas, etc.): regístrelos en Gastos.",
+  };
 }
 
 export async function updateApDocumentAction(
@@ -532,62 +452,165 @@ export async function updateApDocumentAction(
 
   if (error) return { ok: false, error: error.message };
 
+  // Si confirman la factura, la solicitud vinculada pasa a cola de pago.
+  if (parsed.data.verification_status === "CONFIRMADO") {
+    await supabase
+      .from("payment_requests")
+      .update({
+        status: "EN_COLA_PAGO",
+        priority: mapApPriorityToPaymentRequest(parsed.data.priority),
+        concept:
+          emptyToNull(parsed.data.concept) ||
+          `${parsed.data.document_type} ${emptyToNull(parsed.data.document_number) || ""}`.trim(),
+        amount: original,
+        due_date: emptyToNull(parsed.data.due_date),
+        document_type: parsed.data.document_type,
+        document_number: emptyToNull(parsed.data.document_number),
+        issue_date: emptyToNull(parsed.data.issue_date),
+        approved_by: ctx.userId,
+        approved_at: new Date().toISOString(),
+        updated_by: ctx.userId,
+      })
+      .eq("ap_document_id", documentId)
+      .eq("organization_id", ctx.organization.id)
+      .is("deleted_at", null)
+      .in("status", ["BORRADOR", "EN_REVISION", "APROBADA"]);
+  } else {
+    await supabase
+      .from("payment_requests")
+      .update({
+        priority: mapApPriorityToPaymentRequest(parsed.data.priority),
+        concept:
+          emptyToNull(parsed.data.concept) ||
+          `${parsed.data.document_type} ${emptyToNull(parsed.data.document_number) || ""}`.trim(),
+        amount: original,
+        due_date: emptyToNull(parsed.data.due_date),
+        document_type: parsed.data.document_type,
+        document_number: emptyToNull(parsed.data.document_number),
+        issue_date: emptyToNull(parsed.data.issue_date),
+        updated_by: ctx.userId,
+      })
+      .eq("ap_document_id", documentId)
+      .eq("organization_id", ctx.organization.id)
+      .is("deleted_at", null)
+      .neq("status", "PAGADA")
+      .neq("status", "ANULADA");
+  }
+
   await refreshDocumentPaid(supabase, ctx.organization.id, documentId);
   revalidatePath("/proveedores");
   revalidatePath("/proveedores/cxp");
+  revalidatePath("/proveedores/maestro");
+  revalidatePath("/solicitudes-pago");
   revalidatePath("/inicio");
   return { ok: true, id: documentId };
 }
 
+/** Pagos solo desde Solicitudes de pago; CxP solo refleja el saldo. */
 export async function registerApPaymentAction(
-  documentId: string,
-  formData: FormData,
+  _documentId: string,
+  _formData: FormData,
 ): Promise<ActionResult> {
-  const gate = await requireProveedoresPerm("proveedores.cxp.pagar");
+  return {
+    ok: false,
+    error:
+      "Los pagos se registran en Solicitudes de pago. Al pagar allí se actualiza el saldo de esta CxP.",
+  };
+}
+
+export async function softDeleteApDocumentAction(
+  documentId: string,
+): Promise<ActionResult> {
+  const gate = await requireProveedoresPerm("proveedores.cxp.editar");
   if (!gate.ok) return { ok: false, error: gate.error };
   const { ctx } = gate;
+  const supabase = await createClient();
 
-  const parsed = apPaymentSchema.safeParse({
-    payment_date: formData.get("payment_date"),
-    amount: formData.get("amount"),
-    reference: formData.get("reference"),
-    notes: formData.get("notes"),
-  });
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  const { data: doc } = await supabase
+    .from("accounts_payable_documents")
+    .select("id, paid_amount, status, document_number, concept")
+    .eq("id", documentId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!doc) return { ok: false, error: "Documento no encontrado" };
+  if (Number(doc.paid_amount || 0) > 0) {
+    return {
+      ok: false,
+      error:
+        "No se puede eliminar: ya tiene pagos registrados. Revierta los pagos o anule el documento desde edición si aplica.",
+    };
   }
 
-  const amount = parseMoney(parsed.data.amount);
-  if (amount === null || amount <= 0) return { ok: false, error: "Monto inválido" };
+  const now = new Date().toISOString();
 
-  const supabase = await createClient();
-  const { error } = await supabase.from("accounts_payable_payments").insert({
-    organization_id: ctx.organization.id,
-    accounts_payable_document_id: documentId,
-    payment_date: parsed.data.payment_date,
-    amount,
-    reference: emptyToNull(parsed.data.reference),
-    notes: emptyToNull(parsed.data.notes),
-    created_by: ctx.userId,
-    updated_by: ctx.userId,
-  });
+  await supabase
+    .from("accounts_payable_payments")
+    .update({
+      deleted_at: now,
+      updated_by: ctx.userId,
+    })
+    .eq("accounts_payable_document_id", documentId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  await supabase
+    .from("payment_requests")
+    .update({
+      status: "ANULADA",
+      updated_by: ctx.userId,
+    })
+    .eq("ap_document_id", documentId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .neq("status", "PAGADA")
+    .neq("status", "ANULADA");
+
+  // Si vino de una compra, liberar el ítem para poder facturar de nuevo.
+  await supabase
+    .from("purchase_request_items")
+    .update({
+      invoice_ap_document_id: null,
+      invoice_payment_request_id: null,
+      updated_by: ctx.userId,
+    })
+    .eq("organization_id", ctx.organization.id)
+    .eq("invoice_ap_document_id", documentId)
+    .is("deleted_at", null);
+
+  const { error } = await supabase
+    .from("accounts_payable_documents")
+    .update({
+      deleted_at: now,
+      status: "ANULADA",
+      updated_by: ctx.userId,
+    })
+    .eq("id", documentId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
   if (error) return { ok: false, error: error.message };
-
-  await refreshDocumentPaid(supabase, ctx.organization.id, documentId);
 
   await supabase.from("audit_logs").insert({
     organization_id: ctx.organization.id,
     user_id: ctx.userId,
-    action: "PAYMENT",
+    action: "DELETE",
     entity: "accounts_payable_documents",
     entity_id: documentId,
-    new_values: { amount, payment_date: parsed.data.payment_date },
+    new_values: {
+      document_number: doc.document_number,
+      concept: doc.concept,
+    },
   });
 
   revalidatePath("/proveedores");
   revalidatePath("/proveedores/cxp");
+  revalidatePath("/proveedores/maestro");
+  revalidatePath("/solicitudes-pago");
+  revalidatePath("/compras/solicitudes");
   revalidatePath("/inicio");
-  return { ok: true };
+  return { ok: true, id: documentId };
 }
 
 export async function softDeleteSupplierAction(
@@ -609,5 +632,6 @@ export async function softDeleteSupplierAction(
   if (error) return { ok: false, error: error.message };
   revalidatePath("/proveedores");
   revalidatePath("/proveedores/cxp");
+  revalidatePath("/proveedores/maestro");
   return { ok: true, id: supplierId };
 }

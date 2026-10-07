@@ -14,7 +14,7 @@ export const expenseSchema = z.object({
   tax_amount: z.string().optional().nullable(),
   nature: z.enum(["FIJO", "VARIABLE", "UNICO"]),
   criticality: z.enum(["ESENCIAL", "REDUCIBLE", "DISCRECIONAL"]),
-  status: z.enum(["BORRADOR", "APROBADO", "PAGADO", "ANULADO"]),
+  status: z.enum(["BORRADOR", "APROBADO", "PAGADO", "ANULADO"]).optional(),
   cost_center: z.string().optional().nullable(),
   period: z.string().optional().nullable(),
   payment_method: z.string().optional().nullable(),
@@ -23,4 +23,9 @@ export const expenseSchema = z.object({
   allocation_percentage: z.string().optional().nullable(),
   allocated_amount: z.string().optional().nullable(),
   allocation_reason: z.string().optional().nullable(),
+  document_type: z.string().optional().nullable(),
+  document_number: z.string().optional().nullable(),
+  due_date: z.string().optional().nullable(),
+  priority: z.enum(["CRITICA", "ALTA", "NORMAL", "BAJA"]).optional(),
+  notes: z.string().optional().nullable(),
 });

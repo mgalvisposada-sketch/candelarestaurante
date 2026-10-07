@@ -99,4 +99,5 @@ export const acceptInvoiceSchema = z.object({
   issue_date: z.string().optional().nullable(),
   due_date: z.string().optional().nullable(),
   concept: z.string().optional().nullable(),
+  priority: z.enum(["CRITICA", "ALTA", "NORMAL", "BAJA"]).optional(),
 });

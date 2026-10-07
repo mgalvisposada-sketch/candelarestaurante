@@ -74,6 +74,8 @@ export type ItemRow = {
   expected_delivery_date: string | null;
   status: string;
   notes: string | null;
+  invoice_payment_request_id?: string | null;
+  invoice_ap_document_id?: string | null;
   product_name?: string;
   category_name?: string;
 };
@@ -695,16 +697,16 @@ function RequestProcessSteps({ status }: { status: string }) {
   const steps = [
     { key: "BORRADOR", label: "Armar" },
     { key: "ENVIADA", label: "Aprobar" },
-    { key: "PEDIDA", label: "Enviar a proveedores" },
-    { key: "RECIBIDA", label: "Recibir" },
-    { key: "FACTURA_ACEPTADA", label: "Factura" },
+    { key: "PEDIDA", label: "Pedir (PDF)" },
+    { key: "RECIBIDA", label: "Recibir / facturar" },
+    { key: "FACTURA_ACEPTADA", label: "Cerrado" },
   ] as const;
 
   const activeIndex = (() => {
     if (status === "BORRADOR") return 0;
     if (status === "ENVIADA") return 1;
-    if (["PEDIDA", "RECIBIDA_PARCIAL"].includes(status)) return 2;
-    if (status === "RECIBIDA") return 3;
+    if (status === "PEDIDA") return 2;
+    if (["RECIBIDA", "RECIBIDA_PARCIAL"].includes(status)) return 3;
     if (status === "FACTURA_ACEPTADA") return 4;
     if (["RECHAZADA", "ANULADA"].includes(status)) return -1;
     return 0;
@@ -746,22 +748,45 @@ function SupplierOrdersPanel({
   requestId,
   items,
   supplierMap,
+  compact = false,
 }: {
   requestId: string;
   items: ItemRow[];
   supplierMap: Map<string, string>;
+  /** En recepción/factura: solo acceso al PDF, sin tablas grandes. */
+  compact?: boolean;
 }) {
   const pedidoHref = `/compras/solicitudes/${requestId}/pedido`;
   const groups = groupItemsBySupplier(items, supplierMap);
+
+  if (compact) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-white px-4 py-3">
+        <div>
+          <p className="text-sm font-medium">PDF para enviar a proveedores</p>
+          <p className="text-xs text-[var(--muted)]">
+            Documento de pedido (no es la factura). {groups.length} proveedor
+            {groups.length === 1 ? "" : "es"}.
+          </p>
+        </div>
+        <Link
+          href={pedidoHref}
+          className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
+        >
+          Abrir PDFs
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h3 className="font-medium">Por proveedor</h3>
+          <h3 className="font-medium">Pedidos para enviar (PDF)</h3>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            {items.length} producto{items.length === 1 ? "" : "s"} agrupados
-            para enviar o revisar el pedido de cada proveedor.
+            Lo que pedimos a cada proveedor. Después, la recepción y la factura
+            se hacen aparte, proveedor por proveedor.
           </p>
         </div>
         <Link
@@ -1174,148 +1199,46 @@ function ReceiveItemRow({ item }: { item: ItemRow }) {
   );
 }
 
-function ReceiveItemsPanel({
+function SupplierInvoiceForm({
   requestId,
+  supplierId,
+  supplierName,
   items,
-  supplierMap,
   pending,
   startTransition,
   setError,
 }: {
   requestId: string;
+  supplierId: string;
+  supplierName: string;
   items: ItemRow[];
-  supplierMap: Map<string, string>;
   pending: boolean;
   startTransition: TransitionStartFunction;
   setError: Dispatch<SetStateAction<string | null>>;
 }) {
-  const openItems = items.filter((i) => !isItemClosed(i));
-  const closedItems = items.filter((i) => isItemClosed(i));
-  const openGroups = groupPurchaseItemsBySupplier(openItems, supplierMap, {
-    includeCancelled: true,
-  });
-
-  return (
-    <form
-      className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
-      action={(fd) => {
-        setError(null);
-        startTransition(async () => {
-          const r = await receivePurchaseItemsAction(requestId, fd);
-          if (!r.ok) setError(r.error ?? "Error");
-        });
-      }}
-    >
-      <div>
-        <h3 className="font-medium">Recepción de mercancía</h3>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          El inventario solo sube con lo que marque como «Llegó ahora». La
-          factura se legaliza aparte y puede diferir de lo recibido.
-        </p>
-      </div>
-
-      {openItems.length === 0 ? (
-        <p className="text-sm text-[var(--muted)]">
-          No hay ítems pendientes de recepción.
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {openGroups.map((group, index) => (
-            <details
-              key={group.supplierId ?? "sin"}
-              open={index === 0}
-              className="overflow-hidden rounded-lg border border-[var(--line)]"
-            >
-              <summary className="cursor-pointer list-none bg-neutral-50 px-4 py-3 marker:content-none [&::-webkit-details-marker]:hidden">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="font-medium">{group.supplierName}</p>
-                    <p className="text-sm text-[var(--muted)]">
-                      {group.items.length} pendiente
-                      {group.items.length === 1 ? "" : "s"}
-                    </p>
-                  </div>
-                  <span className="text-sm text-[var(--muted)]">
-                    Ver / ocultar
-                  </span>
-                </div>
-              </summary>
-              <div className="space-y-2 border-t border-[var(--line)] px-3 py-3">
-                {group.items.map((item) => (
-                  <ReceiveItemRow key={item.id} item={item} />
-                ))}
-              </div>
-            </details>
-          ))}
-        </div>
-      )}
-
-      {closedItems.length > 0 ? (
-        <details className="rounded-lg border border-[var(--line)] px-3 py-2">
-          <summary className="cursor-pointer text-sm text-[var(--muted)]">
-            Ya cerrados ({closedItems.length})
-          </summary>
-          <div className="mt-3 space-y-2">
-            {closedItems.map((item) => (
-              <ReceiveItemRow key={item.id} item={item} />
-            ))}
-          </div>
-        </details>
-      ) : null}
-
-      {openItems.length > 0 ? (
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
-        >
-          {pending ? "Guardando…" : "Registrar recepción / cierres"}
-        </button>
-      ) : null}
-    </form>
+  const billable = items.filter(
+    (i) =>
+      Number(i.quantity_received || 0) > 0 && !i.invoice_payment_request_id,
   );
-}
-
-function AcceptInvoicePanel({
-  requestId,
-  items,
-  suppliers,
-  pending,
-  startTransition,
-  setError,
-}: {
-  requestId: string;
-  items: ItemRow[];
-  suppliers: SupplierOption[];
-  pending: boolean;
-  startTransition: TransitionStartFunction;
-  setError: Dispatch<SetStateAction<string | null>>;
-}) {
-  const rows = items.map((item) => {
-    const ordered = itemOrderedQty(item);
+  const suggestedAmount = billable.reduce((acc, item) => {
     const received = Number(item.quantity_received || 0);
     const unitCost = Number(item.unit_cost_estimate || 0);
-    const receivedValue = received * unitCost;
-    return { item, ordered, received, unitCost, receivedValue };
-  });
-  const suggestedAmount = rows.reduce((acc, r) => acc + r.receivedValue, 0);
-  const shortClosed = items.filter(
-    (i) =>
-      i.status === "CANCELADO" &&
-      Number(i.quantity_received || 0) < itemOrderedQty(i),
-  );
+    return acc + received * unitCost;
+  }, 0);
   const [amount, setAmount] = useState(
     suggestedAmount > 0 ? String(Math.round(suggestedAmount)) : "",
   );
-  const amountNum = Number(String(amount).replace(/,/g, ""));
+  const amountNum = parseBulkNumber(amount);
   const diff =
-    Number.isFinite(amountNum) && suggestedAmount > 0
+    amountNum != null && suggestedAmount > 0
       ? amountNum - suggestedAmount
       : null;
 
+  if (billable.length === 0) return null;
+
   return (
     <form
-      className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
+      className="space-y-3 rounded-lg border-2 border-[var(--ink)] bg-white p-4"
       action={(fd) => {
         setError(null);
         startTransition(async () => {
@@ -1325,114 +1248,60 @@ function AcceptInvoicePanel({
       }}
     >
       <div>
-        <h3 className="font-medium">Aceptar factura (CxP)</h3>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          Ponga el monto de la factura del proveedor (lo que le cobraron por lo
-          recibido). El inventario ya se movió en la recepción; aquí solo se
-          manda a cola de pago. Si aún hay pendientes, puede facturar lo
-          parcial y seguir recibiendo después.
+        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--accent)]">
+          Paso factura · solo {supplierName}
+        </p>
+        <h5 className="mt-1 text-sm font-medium">
+          ¿Cuánto le cobró {supplierName} por lo que ya llegó?
+        </h5>
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          Aquí NO aparecen cebolla, huevos ni otros proveedores. Solo lo
+          recibido de {supplierName}.
         </p>
       </div>
-
-      <div className="overflow-x-auto rounded-lg border border-[var(--line)]">
-        <table className="min-w-full border-collapse text-left text-xs">
-          <thead>
-            <tr className="border-b border-[var(--line)] bg-neutral-50">
-              <th className="px-3 py-2 font-medium">Producto</th>
-              <th className="px-3 py-2 font-medium">Pedido</th>
-              <th className="px-3 py-2 font-medium">Recibido</th>
-              <th className="px-3 py-2 font-medium">Estado</th>
-              <th className="px-3 py-2 font-medium">Valor est. recibido</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(({ item, ordered, received, receivedValue }) => (
-              <tr key={item.id} className="border-b border-[var(--line)] last:border-b-0">
-                <td className="px-3 py-2">{item.product_name}</td>
-                <td className="px-3 py-2">
-                  {ordered} {item.unit}
-                </td>
-                <td
-                  className={`px-3 py-2 ${
-                    received < ordered ? "font-medium text-amber-800" : ""
-                  }`}
-                >
-                  {received} {item.unit}
-                </td>
-                <td className="px-3 py-2">
-                  {item.status === "CANCELADO"
-                    ? "Cerrado / no llegará"
-                    : item.status === "RECIBIDO"
-                      ? "Completo"
-                      : item.status}
-                </td>
-                <td className="px-3 py-2">{formatCOP(receivedValue)}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="bg-neutral-50">
-              <td className="px-3 py-2 font-medium" colSpan={4}>
-                Total estimado por mercancía recibida
-              </td>
-              <td className="px-3 py-2 font-medium">
-                {formatCOP(suggestedAmount)}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      {shortClosed.length > 0 ? (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-          Hay {shortClosed.length} ítem(s) cerrados con faltante. Si la factura
-          cobra lo no recibido, ajuste el monto o gestione nota crédito con el
-          proveedor.
-        </p>
-      ) : null}
-
-      <div className="grid gap-3 md:grid-cols-2">
-        <label className="block text-sm md:col-span-2">
-          <span className="mb-1 block text-[var(--muted)]">Proveedor factura</span>
-          <select
-            name="supplier_id"
-            required
-            className={inputClass}
-            defaultValue={
-              items[0]?.approved_supplier_id ??
-              items[0]?.suggested_supplier_id ??
-              ""
-            }
-          >
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1 block text-[var(--muted)]">Monto factura *</span>
+      <ul className="space-y-1 rounded-lg bg-neutral-50 px-3 py-2 text-sm">
+        {billable.map((item) => {
+          const received = Number(item.quantity_received || 0);
+          const unitCost = Number(item.unit_cost_estimate || 0);
+          return (
+            <li key={item.id} className="flex justify-between gap-2">
+              <span>
+                {item.product_name}{" "}
+                <span className="text-[var(--muted)]">
+                  · {received} {item.unit}
+                </span>
+              </span>
+              <span className="tabular-nums">{formatCOP(received * unitCost)}</span>
+            </li>
+          );
+        })}
+        <li className="flex justify-between gap-2 border-t border-[var(--line)] pt-1 font-medium">
+          <span>Sugerido</span>
+          <span className="tabular-nums">{formatCOP(suggestedAmount)}</span>
+        </li>
+      </ul>
+      <input type="hidden" name="supplier_id" value={supplierId} />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="block text-sm sm:col-span-2">
+          <span className="mb-1 block text-[var(--muted)]">
+            Monto de la factura de {supplierName} *
+          </span>
           <input
             name="amount"
             required
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             className={inputClass}
+            placeholder="Ej. 13000"
           />
           {diff != null && Math.abs(diff) > 1 ? (
             <span className="mt-1 block text-xs text-amber-800">
-              Diferencia vs recibido: {formatCOP(diff)} (
-              {diff > 0 ? "factura mayor" : "factura menor"})
+              Diferencia vs estimado: {formatCOP(diff)}
             </span>
-          ) : (
-            <span className="mt-1 block text-xs text-[var(--muted)]">
-              Sugerido por recepción: {formatCOP(suggestedAmount)}
-            </span>
-          )}
+          ) : null}
         </label>
         <label className="block text-sm">
-          <span className="mb-1 block text-[var(--muted)]">Número factura</span>
+          <span className="mb-1 block text-[var(--muted)]">Nº factura</span>
           <input name="document_number" className={inputClass} />
         </label>
         <label className="block text-sm">
@@ -1448,15 +1317,197 @@ function AcceptInvoicePanel({
           <span className="mb-1 block text-[var(--muted)]">Vence</span>
           <input type="date" name="due_date" className={inputClass} />
         </label>
+        <label className="block text-sm">
+          <span className="mb-1 block text-[var(--muted)]">Prioridad de pago</span>
+          <select name="priority" defaultValue="NORMAL" className={inputClass}>
+            <option value="CRITICA">Crítica</option>
+            <option value="ALTA">Alta</option>
+            <option value="NORMAL">Normal</option>
+            <option value="BAJA">Baja</option>
+          </select>
+        </label>
       </div>
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm text-white disabled:opacity-60"
       >
-        Aceptar factura → cola de pago
+        Enviar factura de {supplierName} a cola de pago
       </button>
     </form>
+  );
+}
+
+function SupplierOperationsPanel({
+  requestId,
+  items,
+  supplierMap,
+  canReceive,
+  canAcceptInvoice,
+  pending,
+  startTransition,
+  setError,
+}: {
+  requestId: string;
+  items: ItemRow[];
+  supplierMap: Map<string, string>;
+  canReceive: boolean;
+  canAcceptInvoice: boolean;
+  pending: boolean;
+  startTransition: TransitionStartFunction;
+  setError: Dispatch<SetStateAction<string | null>>;
+}) {
+  const groups = groupPurchaseItemsBySupplier(items, supplierMap, {
+    includeCancelled: true,
+  });
+
+  if (groups.length === 0) return null;
+
+  return (
+    <section className="space-y-4">
+      <div className="rounded-xl border border-[var(--line)] bg-white p-4">
+        <h3 className="font-medium">Recibir y facturar por proveedor</h3>
+        <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-[var(--muted)]">
+          <li>Abra el proveedor que le llegó (ej. Hielo).</li>
+          <li>Registre la recepción solo de ese proveedor.</li>
+          <li>
+            En el mismo bloque, cargue la factura de ese proveedor (solo lo
+            suyo).
+          </li>
+          <li>Cuando llegue otro proveedor, repita en su bloque.</li>
+        </ol>
+      </div>
+
+      <div className="space-y-3">
+        {groups.map((group) => {
+          const openItems = group.items.filter((i) => !isItemClosed(i));
+          const closedItems = group.items.filter((i) => isItemClosed(i));
+          const uninvoiced = group.items.filter(
+            (i) =>
+              Number(i.quantity_received || 0) > 0 &&
+              !i.invoice_payment_request_id,
+          );
+          const invoiced = group.items.filter((i) => i.invoice_payment_request_id);
+          const canShowReceive = canReceive && openItems.length > 0;
+          const canShowInvoice =
+            canAcceptInvoice &&
+            Boolean(group.supplierId) &&
+            uninvoiced.length > 0;
+          const needsAttention = canShowReceive || canShowInvoice;
+
+          if (!needsAttention && invoiced.length === 0 && closedItems.length === 0) {
+            return null;
+          }
+
+          const statusLabel = canShowInvoice
+            ? "Listo para facturar"
+            : canShowReceive
+              ? "Esperando recepción"
+              : invoiced.length > 0
+                ? "Factura enviada"
+                : "Sin acción";
+
+          return (
+            <details
+              key={group.supplierId ?? "sin"}
+              className={`overflow-hidden rounded-xl border bg-white ${
+                canShowInvoice
+                  ? "border-[var(--ink)]"
+                  : "border-[var(--line)]"
+              }`}
+            >
+              <summary className="cursor-pointer list-none bg-neutral-50 px-4 py-3 marker:content-none [&::-webkit-details-marker]:hidden">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="font-medium">{group.supplierName}</p>
+                    <p className="text-sm text-[var(--muted)]">
+                      {group.items.length} producto
+                      {group.items.length === 1 ? "" : "s"} · {statusLabel}
+                    </p>
+                  </div>
+                  <span className="text-sm text-[var(--muted)]">Ver / ocultar</span>
+                </div>
+              </summary>
+
+              <div className="space-y-4 border-t border-[var(--line)] px-3 py-3">
+                {canShowInvoice && group.supplierId ? (
+                  <SupplierInvoiceForm
+                    requestId={requestId}
+                    supplierId={group.supplierId}
+                    supplierName={group.supplierName}
+                    items={group.items}
+                    pending={pending}
+                    startTransition={startTransition}
+                    setError={setError}
+                  />
+                ) : null}
+
+                {!canShowInvoice && invoiced.length > 0 ? (
+                  <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                    Factura de {group.supplierName} ya en{" "}
+                    <a className="underline" href="/solicitudes-pago">
+                      Solicitudes de pago
+                    </a>
+                    . Los otros proveedores se facturan en su propio bloque.
+                  </p>
+                ) : null}
+
+                {canShowReceive ? (
+                  <form
+                    className="space-y-3 rounded-lg border border-[var(--line)] p-3"
+                    action={(fd) => {
+                      setError(null);
+                      startTransition(async () => {
+                        const r = await receivePurchaseItemsAction(
+                          requestId,
+                          fd,
+                        );
+                        if (!r.ok) setError(r.error ?? "Error");
+                      });
+                    }}
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                      Paso recepción · solo {group.supplierName}
+                    </p>
+                    {openItems.map((item) => (
+                      <ReceiveItemRow key={item.id} item={item} />
+                    ))}
+                    <button
+                      type="submit"
+                      disabled={pending}
+                      className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
+                    >
+                      {pending
+                        ? "Guardando…"
+                        : `Registrar recepción · ${group.supplierName}`}
+                    </button>
+                  </form>
+                ) : null}
+
+                {closedItems.length > 0 && !canShowInvoice ? (
+                  <details className="rounded-lg border border-[var(--line)] px-3 py-2">
+                    <summary className="cursor-pointer text-sm text-[var(--muted)]">
+                      Detalle recibido / cerrado ({closedItems.length})
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {closedItems.map((item) => (
+                        <ReceiveItemRow key={item.id} item={item} />
+                      ))}
+                    </div>
+                  </details>
+                ) : null}
+
+                {!group.supplierId ? (
+                  <p className="text-sm text-amber-800">
+                    Asigne proveedor a estos ítems para poder facturarlos.
+                  </p>
+                ) : null}
+              </div>
+            </details>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -1848,55 +1899,31 @@ export function RequestDetailClient({
         </form>
       ) : null}
 
+      {["PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
+        request.status,
+      ) &&
+      (canReceive || canAcceptInvoice) ? (
+        <SupplierOperationsPanel
+          requestId={request.id}
+          items={items}
+          supplierMap={supplierMap}
+          canReceive={canReceive}
+          canAcceptInvoice={canAcceptInvoice}
+          pending={pending}
+          startTransition={startTransition}
+          setError={setError}
+        />
+      ) : null}
+
       {showSupplierOrders ? (
         <SupplierOrdersPanel
           requestId={request.id}
           items={items}
           supplierMap={supplierMap}
+          compact={["RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
+            request.status,
+          )}
         />
-      ) : null}
-
-      {["PEDIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
-        request.status,
-      ) &&
-      canReceive &&
-      items.some((i) => !isItemClosed(i)) ? (
-        <ReceiveItemsPanel
-          requestId={request.id}
-          items={items}
-          supplierMap={supplierMap}
-          pending={pending}
-          startTransition={startTransition}
-          setError={setError}
-        />
-      ) : null}
-
-      {["RECIBIDA", "RECIBIDA_PARCIAL"].includes(request.status) &&
-      canAcceptInvoice &&
-      !request.payment_request_id ? (
-        <AcceptInvoicePanel
-          requestId={request.id}
-          items={items}
-          suppliers={suppliers}
-          pending={pending}
-          startTransition={startTransition}
-          setError={setError}
-        />
-      ) : null}
-
-      {request.payment_request_id &&
-      ["RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
-        request.status,
-      ) ? (
-        <p className="rounded-lg border border-[var(--line)] bg-white px-4 py-3 text-sm text-[var(--muted)]">
-          Factura ya enviada a{" "}
-          <a className="text-[var(--accent)]" href="/solicitudes-pago">
-            Solicitudes de pago
-          </a>
-          {request.status === "RECIBIDA_PARCIAL"
-            ? ". Puede seguir recibiendo lo pendiente; una segunda factura regístrela en CxP."
-            : "."}
-        </p>
       ) : null}
 
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}

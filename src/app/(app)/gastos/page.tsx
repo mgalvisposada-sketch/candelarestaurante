@@ -2,12 +2,13 @@ import { AppHeader } from "@/components/layout/app-header";
 import { Card, EmptyState, PageIntro, StatCard } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
 import { requireModuleAccess } from "@/lib/permissions";
+import { isSuperAdmin } from "@/types/domain";
 import { createClient } from "@/lib/supabase/server";
 import { formatCOP, money } from "@/lib/money";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { GastosNav } from "./gastos-nav";
 import {
-  CreateCategoryForm,
   CreateExpenseForm,
   ExpenseList,
   type CategoryRow,
@@ -22,7 +23,7 @@ export default async function GastosPage() {
   if (!ctx.organization) {
     return (
       <>
-        <AppHeader title="Gastos" subtitle="Gastos administrativos" />
+        <AppHeader title="Gastos" subtitle="Gastos operativos" />
         <main className="p-8">
           <Card>
             <p className="font-medium">Primero configura la empresa</p>
@@ -56,6 +57,8 @@ export default async function GastosPage() {
       .select("id, name")
       .eq("organization_id", ctx.organization.id)
       .is("deleted_at", null)
+      .eq("is_active", true)
+      .eq("is_expense_supplier", true)
       .order("name"),
   ]);
 
@@ -66,38 +69,66 @@ export default async function GastosPage() {
   const paid = expenses
     .filter((e) => e.status === "PAGADO")
     .reduce((acc, e) => acc.plus(money(e.total_amount)), money(0));
-  const approved = expenses
-    .filter((e) => e.status === "APROBADO")
+  const pendingPay = expenses
+    .filter((e) => e.status === "APROBADO" || e.status === "BORRADOR")
     .reduce((acc, e) => acc.plus(money(e.total_amount)), money(0));
 
   return (
     <>
-      <AppHeader title="Gastos" subtitle="Administrativos — fijos, variables y únicos" />
+      <AppHeader
+        title="Gastos"
+        subtitle="Opex · facturas que no vienen de Compras"
+      />
       <main className="space-y-6 p-8">
+        <GastosNav
+          permissions={ctx.permissions}
+          isSuperAdmin={isSuperAdmin(ctx.role)}
+        />
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
-            title="Gastos administrativos"
-            description="Clasifique por naturaleza y criticidad. Los costos compartidos quedan trazables para asignación a Candela."
+            title="Gastos operativos"
+            description="Facturas y cuentas de cobro operativas. Solo aparecen proveedores marcados como “Proveedor de gastos” en el maestro. Clasifique, envíe a Solicitudes de pago y el estado se actualiza al pagar."
           />
           <div className="flex flex-wrap gap-2">
-            <CreateCategoryForm />
+            <Link
+              href="/proveedores/maestro"
+              className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm font-medium"
+            >
+              Maestro de proveedores
+            </Link>
+            <Link
+              href="/gastos/categorias"
+              className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm font-medium"
+            >
+              Maestro de categorías
+            </Link>
+            <Link
+              href="/solicitudes-pago"
+              className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm font-medium"
+            >
+              Ir a solicitudes de pago
+            </Link>
             <CreateExpenseForm categories={categories} suppliers={suppliers} />
           </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard label="Pagados" value={formatCOP(paid)} />
-          <StatCard label="Aprobados pendientes" value={formatCOP(approved)} />
+          <StatCard label="Pendientes de pago" value={formatCOP(pendingPay)} />
           <StatCard label="Registros" value={String(expenses.length)} />
         </div>
 
         {expenses.length === 0 ? (
           <EmptyState
             title="Sin gastos"
-            description="Cree categorías y registre gastos con estado, naturaleza y criticidad."
+            description="Registre una factura o cuenta de cobro operativa. Aparecerá en Solicitudes de pago para aprobar y pagar."
           />
         ) : (
-          <ExpenseList expenses={expenses} categories={categories} />
+          <ExpenseList
+            expenses={expenses}
+            categories={categories}
+            suppliers={suppliers}
+          />
         )}
       </main>
     </>

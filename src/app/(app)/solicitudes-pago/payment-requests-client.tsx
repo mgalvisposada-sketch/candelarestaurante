@@ -1,17 +1,17 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import {
   approvePaymentRequestAction,
-  createInternalPaymentRequestAction,
-  createInvoicePaymentRequestAction,
   payPaymentRequestAction,
   rejectPaymentRequestAction,
   softDeletePaymentRequestAction,
 } from "./actions";
 import { Badge } from "@/components/ui/primitives";
-import { formatCOP } from "@/lib/money";
+import { formatCOP, money } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
+import { cn } from "@/lib/utils";
 
 export type SupplierOption = { id: string; name: string };
 export type BankAccountOption = {
@@ -40,17 +40,46 @@ export type PaymentRequestRow = {
 const inputClass =
   "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
 
-function sourceLabel(source: string) {
-  if (source === "FACTURA_PROVEEDOR") return "Factura proveedor";
-  if (source === "GASTO") return "Gasto";
-  return "Solicitud interna";
+type QueueKey = "review" | "pay" | "history";
+
+function sourceMeta(source: string) {
+  if (source === "FACTURA_PROVEEDOR") {
+    return { label: "Costo / CxP", tone: "info" as const, href: "/proveedores/cxp" };
+  }
+  if (source === "GASTO") {
+    return { label: "Gasto", tone: "accent" as const, href: "/gastos" };
+  }
+  return { label: "Interna", tone: "neutral" as const, href: null };
+}
+
+function statusLabel(status: string) {
+  const map: Record<string, string> = {
+    BORRADOR: "Borrador",
+    EN_REVISION: "Por aprobar",
+    APROBADA: "Aprobada",
+    EN_COLA_PAGO: "Por pagar",
+    PAGADA: "Pagada",
+    RECHAZADA: "Rechazada",
+    ANULADA: "Anulada",
+  };
+  return map[status] ?? status;
 }
 
 function statusTone(status: string) {
-  if (status === "PAGADA" || status === "EN_COLA_PAGO" || status === "APROBADA")
-    return "ok" as const;
+  if (status === "PAGADA") return "ok" as const;
+  if (status === "EN_COLA_PAGO" || status === "APROBADA") return "info" as const;
   if (status === "RECHAZADA" || status === "ANULADA") return "danger" as const;
   return "warn" as const;
+}
+
+function priorityLabel(priority: string) {
+  const map: Record<string, string> = {
+    CRITICA: "Crítica",
+    ALTA: "Alta",
+    NORMAL: "Normal",
+    BAJA: "Baja",
+  };
+  return map[priority] ?? priority;
 }
 
 function priorityTone(priority: string) {
@@ -59,211 +88,10 @@ function priorityTone(priority: string) {
   return "neutral" as const;
 }
 
-function PrioritySelect({ defaultValue = "NORMAL" }: { defaultValue?: string }) {
-  return (
-    <label className="block text-sm">
-      <span className="mb-1.5 block text-[var(--muted)]">Prioridad</span>
-      <select name="priority" defaultValue={defaultValue} className={inputClass}>
-        <option value="CRITICA">Crítica</option>
-        <option value="ALTA">Alta</option>
-        <option value="NORMAL">Normal</option>
-        <option value="BAJA">Baja</option>
-      </select>
-    </label>
-  );
-}
-
-export function CreateInternalRequestForm({
-  suppliers,
-}: {
-  suppliers: SupplierOption[];
-}) {
-  const [open, setOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white"
-      >
-        Nueva solicitud
-      </button>
-    );
-  }
-
-  return (
-    <form
-      className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
-      action={(fd) => {
-        setError(null);
-        startTransition(async () => {
-          const r = await createInternalPaymentRequestAction(fd);
-          if (!r.ok) setError(r.error ?? "Error");
-          else setOpen(false);
-        });
-      }}
-    >
-      <div className="flex justify-between">
-        <h3 className="font-medium">Solicitud interna de pago</h3>
-        <button type="button" className="text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
-          Cancelar
-        </button>
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <label className="block text-sm md:col-span-2">
-          <span className="mb-1.5 block text-[var(--muted)]">Concepto *</span>
-          <input name="concept" required className={inputClass} />
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Monto *</span>
-          <input name="amount" required className={inputClass} />
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Fecha solicitud</span>
-          <input
-            type="date"
-            name="requested_at"
-            defaultValue={todayInBogota()}
-            required
-            className={inputClass}
-          />
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Vence</span>
-          <input type="date" name="due_date" className={inputClass} />
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Proveedor (opcional)</span>
-          <select name="supplier_id" className={inputClass}>
-            <option value="">—</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <PrioritySelect />
-        <label className="block text-sm md:col-span-2">
-          <span className="mb-1.5 block text-[var(--muted)]">Notas</span>
-          <textarea name="notes" rows={2} className={inputClass} />
-        </label>
-        <label className="flex items-center gap-2 text-sm md:col-span-2">
-          <input type="checkbox" name="create_expense" value="true" />
-          Crear gasto administrativo al aprobar
-        </label>
-      </div>
-      {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
-      >
-        {pending ? "Guardando…" : "Enviar a revisión"}
-      </button>
-    </form>
-  );
-}
-
-export function CreateInvoiceRequestForm({
-  suppliers,
-}: {
-  suppliers: SupplierOption[];
-}) {
-  const [open, setOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm"
-      >
-        Registrar factura
-      </button>
-    );
-  }
-
-  return (
-    <form
-      className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
-      action={(fd) => {
-        setError(null);
-        startTransition(async () => {
-          const r = await createInvoicePaymentRequestAction(fd);
-          if (!r.ok) setError(r.error ?? "Error");
-          else setOpen(false);
-        });
-      }}
-    >
-      <div className="flex justify-between">
-        <h3 className="font-medium">Factura de proveedor</h3>
-        <button type="button" className="text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
-          Cancelar
-        </button>
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <label className="block text-sm md:col-span-2">
-          <span className="mb-1.5 block text-[var(--muted)]">Proveedor *</span>
-          <select name="supplier_id" required className={inputClass}>
-            <option value="">Seleccione…</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block text-sm md:col-span-2">
-          <span className="mb-1.5 block text-[var(--muted)]">Concepto *</span>
-          <input name="concept" required className={inputClass} />
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Monto *</span>
-          <input name="amount" required className={inputClass} />
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Tipo documento</span>
-          <select name="document_type" defaultValue="FACTURA" className={inputClass}>
-            <option value="FACTURA">Factura</option>
-            <option value="CUENTA_DE_COBRO">Cuenta de cobro</option>
-            <option value="NOTA">Nota</option>
-          </select>
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Número</span>
-          <input name="document_number" className={inputClass} />
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Fecha emisión</span>
-          <input type="date" name="issue_date" defaultValue={todayInBogota()} className={inputClass} />
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Vence</span>
-          <input type="date" name="due_date" className={inputClass} />
-        </label>
-        <input type="hidden" name="requested_at" value={todayInBogota()} />
-        <PrioritySelect />
-        <label className="block text-sm md:col-span-2">
-          <span className="mb-1.5 block text-[var(--muted)]">Notas</span>
-          <textarea name="notes" rows={2} className={inputClass} />
-        </label>
-      </div>
-      {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
-      >
-        {pending ? "Guardando…" : "Enviar a aprobación"}
-      </button>
-    </form>
-  );
+function isOverdue(dueDate: string | null, status: string) {
+  if (!dueDate) return false;
+  if (["PAGADA", "RECHAZADA", "ANULADA"].includes(status)) return false;
+  return dueDate < todayInBogota();
 }
 
 function PayForm({
@@ -280,7 +108,7 @@ function PayForm({
 
   return (
     <form
-      className="mt-3 grid gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3 md:grid-cols-4"
+      className="mt-4 grid gap-3 rounded-lg border border-[var(--line)] bg-neutral-50/80 p-4 md:grid-cols-12"
       action={(fd) => {
         setError(null);
         startTransition(async () => {
@@ -289,7 +117,10 @@ function PayForm({
         });
       }}
     >
-      <label className="block text-sm md:col-span-2">
+      <p className="md:col-span-12 text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
+        Registrar pago
+      </p>
+      <label className="block text-sm md:col-span-5">
         <span className="mb-1 block text-[var(--muted)]">Cuenta *</span>
         <select name="bank_account_id" required className={inputClass}>
           <option value="">Seleccione…</option>
@@ -301,7 +132,7 @@ function PayForm({
           ))}
         </select>
       </label>
-      <label className="block text-sm">
+      <label className="block text-sm md:col-span-3">
         <span className="mb-1 block text-[var(--muted)]">Fecha</span>
         <input
           type="date"
@@ -311,29 +142,39 @@ function PayForm({
           className={inputClass}
         />
       </label>
-      <label className="block text-sm">
+      <label className="block text-sm md:col-span-4">
         <span className="mb-1 block text-[var(--muted)]">Monto</span>
         <input name="amount" defaultValue={String(defaultAmount)} className={inputClass} />
       </label>
-      <label className="block text-sm md:col-span-3">
+      <label className="block text-sm md:col-span-8">
         <span className="mb-1 block text-[var(--muted)]">Referencia</span>
-        <input name="payment_reference" className={inputClass} />
+        <input
+          name="payment_reference"
+          placeholder="Nº transferencia o comprobante"
+          className={inputClass}
+        />
       </label>
-      <div className="flex items-end">
+      <div className="flex items-end md:col-span-4">
         <button
           type="submit"
           disabled={pending || bankAccounts.length === 0}
-          className="w-full rounded-lg bg-[var(--ink)] px-3 py-2 text-sm text-white disabled:opacity-60"
+          className="w-full rounded-lg bg-[var(--ink)] px-3 py-2.5 text-sm font-medium text-white disabled:opacity-60"
         >
-          {pending ? "Pagando…" : "Registrar pago"}
+          {pending ? "Pagando…" : "Confirmar pago"}
         </button>
       </div>
       {error ? (
-        <p className="md:col-span-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>
+        <p className="md:col-span-12 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error}
+        </p>
       ) : null}
       {bankAccounts.length === 0 ? (
-        <p className="md:col-span-4 text-sm text-[var(--muted)]">
-          Configure una cuenta en Tesorería para poder pagar.
+        <p className="md:col-span-12 text-sm text-[var(--muted)]">
+          Configure una cuenta en{" "}
+          <Link href="/tesoreria" className="underline">
+            Tesorería
+          </Link>{" "}
+          para poder pagar.
         </p>
       ) : null}
     </form>
@@ -349,7 +190,7 @@ function RejectForm({ requestId }: { requestId: string }) {
     return (
       <button
         type="button"
-        className="rounded-lg px-3 py-1.5 text-sm text-red-700"
+        className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
         onClick={() => setOpen(true)}
       >
         Rechazar
@@ -359,7 +200,7 @@ function RejectForm({ requestId }: { requestId: string }) {
 
   return (
     <form
-      className="mt-2 flex flex-wrap items-end gap-2"
+      className="mt-3 flex w-full flex-wrap items-end gap-2 rounded-lg border border-red-100 bg-red-50/50 p-3"
       action={(fd) => {
         setError(null);
         startTransition(async () => {
@@ -369,20 +210,27 @@ function RejectForm({ requestId }: { requestId: string }) {
         });
       }}
     >
-      <input
-        name="rejection_reason"
-        required
-        placeholder="Motivo del rechazo"
-        className={`${inputClass} min-w-[220px]`}
-      />
+      <label className="min-w-[220px] flex-1 text-sm">
+        <span className="mb-1 block text-[var(--muted)]">Motivo del rechazo</span>
+        <input
+          name="rejection_reason"
+          required
+          placeholder="Indique el motivo"
+          className={inputClass}
+        />
+      </label>
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700"
+        className="rounded-lg bg-red-700 px-3 py-2 text-sm text-white disabled:opacity-60"
       >
         Confirmar rechazo
       </button>
-      <button type="button" className="text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
+      <button
+        type="button"
+        className="rounded-lg px-3 py-2 text-sm text-[var(--muted)]"
+        onClick={() => setOpen(false)}
+      >
         Cancelar
       </button>
       {error ? <p className="w-full text-sm text-red-700">{error}</p> : null}
@@ -396,97 +244,168 @@ function RequestCard({
   bankAccounts,
   canApprove,
   canPay,
-  canCreate,
+  queue,
 }: {
   request: PaymentRequestRow;
   supplierName?: string;
   bankAccounts: BankAccountOption[];
   canApprove: boolean;
   canPay: boolean;
-  canCreate: boolean;
+  queue: QueueKey;
 }) {
   const [pending, startTransition] = useTransition();
-  const inReview = request.status === "EN_REVISION" || request.status === "BORRADOR";
-  const inPayQueue = request.status === "EN_COLA_PAGO" || request.status === "APROBADA";
+  const [payOpen, setPayOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const source = sourceMeta(request.source);
+  const overdue = isOverdue(request.due_date, request.status);
+  const inReview = queue === "review";
+  const inPayQueue = queue === "pay";
 
   return (
-    <article className="rounded-xl border border-[var(--line)] bg-white px-4 py-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="font-medium">{request.concept}</p>
-          <p className="text-sm text-[var(--muted)]">
-            {sourceLabel(request.source)}
-            {supplierName ? ` · ${supplierName}` : ""}
-            {request.document_number
-              ? ` · ${request.document_type ?? "Doc"} ${request.document_number}`
-              : ""}
-            {" · "}
-            {formatDateCO(request.requested_at)}
-            {request.due_date ? ` · vence ${formatDateCO(request.due_date)}` : ""}
-          </p>
+    <article
+      className={cn(
+        "rounded-xl border bg-white p-4 shadow-[0_1px_0_rgba(18,18,18,0.03)] transition",
+        overdue ? "border-red-200" : "border-[var(--line)]",
+      )}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge tone={source.tone}>{source.label}</Badge>
+            <Badge tone={priorityTone(request.priority)}>
+              Prioridad {priorityLabel(request.priority)}
+            </Badge>
+            <Badge tone={statusTone(request.status)}>
+              {statusLabel(request.status)}
+            </Badge>
+            {overdue ? <Badge tone="danger">Vencida</Badge> : null}
+          </div>
+          <h3 className="font-medium leading-snug text-[var(--ink)]">
+            {request.concept}
+          </h3>
+          <dl className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-[var(--muted)]">
+            {supplierName ? (
+              <div>
+                <dt className="sr-only">Proveedor</dt>
+                <dd>{supplierName}</dd>
+              </div>
+            ) : null}
+            {request.document_number ? (
+              <div>
+                <dt className="sr-only">Documento</dt>
+                <dd>
+                  {request.document_type ?? "Doc"} {request.document_number}
+                </dd>
+              </div>
+            ) : null}
+            <div>
+              <dt className="sr-only">Solicitada</dt>
+              <dd>Solicitada {formatDateCO(request.requested_at)}</dd>
+            </div>
+            {request.due_date ? (
+              <div className={overdue ? "font-medium text-red-700" : undefined}>
+                <dt className="sr-only">Vence</dt>
+                <dd>Vence {formatDateCO(request.due_date)}</dd>
+              </div>
+            ) : null}
+          </dl>
           {request.notes ? (
-            <p className="mt-1 text-sm text-[var(--muted)]">{request.notes}</p>
+            <p className="text-sm text-[var(--muted)]">{request.notes}</p>
           ) : null}
           {request.rejection_reason ? (
-            <p className="mt-1 text-sm text-red-700">Rechazo: {request.rejection_reason}</p>
+            <p className="rounded-md bg-red-50 px-2.5 py-1.5 text-sm text-red-800">
+              Rechazo: {request.rejection_reason}
+            </p>
           ) : null}
           {request.paid_at ? (
-            <p className="mt-1 text-sm text-[var(--muted)]">
+            <p className="text-sm text-[var(--muted)]">
               Pagada {formatDateCO(request.paid_at)}
-              {request.payment_reference ? ` · ref. ${request.payment_reference}` : ""}
+              {request.payment_reference
+                ? ` · ref. ${request.payment_reference}`
+                : ""}
             </p>
           ) : null}
         </div>
         <div className="text-right">
-          <p className="font-medium">{formatCOP(request.amount)}</p>
-          <div className="mt-1 flex flex-wrap justify-end gap-1">
-            <Badge tone={statusTone(request.status)}>{request.status}</Badge>
-            <Badge tone={priorityTone(request.priority)}>{request.priority}</Badge>
-          </div>
+          <p className="font-display text-2xl font-semibold tracking-tight">
+            {formatCOP(request.amount)}
+          </p>
+          {source.href ? (
+            <Link
+              href={source.href}
+              className="mt-1 inline-block text-xs text-[var(--muted)] underline"
+            >
+              Ver origen
+            </Link>
+          ) : null}
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {inReview && canApprove ? (
-          <>
-            <button
-              type="button"
-              disabled={pending}
-              className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
-              onClick={() =>
-                startTransition(async () => {
-                  await approvePaymentRequestAction(request.id);
-                })
-              }
-            >
-              Aprobar → cola tesorería
-            </button>
-            <RejectForm requestId={request.id} />
-          </>
-        ) : null}
-        {inReview && canCreate ? (
+      {inReview && canApprove ? (
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-3">
           <button
             type="button"
             disabled={pending}
-            className="rounded-lg px-3 py-1.5 text-sm text-red-700"
+            className="rounded-lg bg-[var(--ink)] px-3.5 py-2 text-sm font-medium text-white disabled:opacity-60"
+            onClick={() => {
+              setActionError(null);
+              startTransition(async () => {
+                const r = await approvePaymentRequestAction(request.id);
+                if (!r.ok) setActionError(r.error ?? "Error");
+              });
+            }}
+          >
+            Aprobar → cola de pago
+          </button>
+          <RejectForm requestId={request.id} />
+          <button
+            type="button"
+            disabled={pending}
+            className="rounded-lg px-3 py-2 text-sm text-[var(--muted)] hover:text-red-700 disabled:opacity-60"
             onClick={() => {
               if (!confirm("¿Anular esta solicitud?")) return;
+              setActionError(null);
               startTransition(async () => {
-                await softDeletePaymentRequestAction(request.id);
+                const r = await softDeletePaymentRequestAction(request.id);
+                if (!r.ok) setActionError(r.error ?? "Error");
               });
             }}
           >
             Anular
           </button>
-        ) : null}
-      </div>
+          {actionError ? (
+            <p className="w-full text-sm text-red-700">{actionError}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       {inPayQueue && canPay ? (
-        <PayForm
-          requestId={request.id}
-          defaultAmount={request.amount}
-          bankAccounts={bankAccounts}
-        />
+        <div className="mt-4 border-t border-[var(--line)] pt-3">
+          {!payOpen ? (
+            <button
+              type="button"
+              className="rounded-lg bg-[var(--accent)] px-3.5 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)]"
+              onClick={() => setPayOpen(true)}
+            >
+              Pagar
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="mb-1 text-xs text-[var(--muted)] underline"
+                onClick={() => setPayOpen(false)}
+              >
+                Cancelar pago
+              </button>
+              <PayForm
+                requestId={request.id}
+                defaultAmount={request.amount}
+                bankAccounts={bankAccounts}
+              />
+            </>
+          )}
+        </div>
       ) : null}
     </article>
   );
@@ -500,7 +419,6 @@ export function PaymentRequestQueues({
   bankAccounts,
   canApprove,
   canPay,
-  canCreate,
 }: {
   review: PaymentRequestRow[];
   payQueue: PaymentRequestRow[];
@@ -509,43 +427,119 @@ export function PaymentRequestQueues({
   bankAccounts: BankAccountOption[];
   canApprove: boolean;
   canPay: boolean;
-  canCreate: boolean;
 }) {
   const supplierMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const defaultTab: QueueKey =
+    review.length > 0 ? "review" : payQueue.length > 0 ? "pay" : "history";
+  const [tab, setTab] = useState<QueueKey>(defaultTab);
 
-  const sections = [
-    { key: "review", title: "Por aprobar", items: review },
-    { key: "pay", title: "Por pagar (tesorería)", items: payQueue },
-    { key: "history", title: "Histórico", items: history },
-  ] as const;
+  const sections = useMemo(
+    () =>
+      [
+        {
+          key: "review" as const,
+          title: "Por aprobar",
+          hint: "Revisión antes de pasar a tesorería",
+          items: review,
+        },
+        {
+          key: "pay" as const,
+          title: "Por pagar",
+          hint: "Cola de tesorería lista para desembolsar",
+          items: payQueue,
+        },
+        {
+          key: "history" as const,
+          title: "Histórico",
+          hint: "Pagadas, rechazadas o anuladas",
+          items: history,
+        },
+      ] as const,
+    [review, payQueue, history],
+  );
+
+  const active = sections.find((s) => s.key === tab) ?? sections[0];
+  const activeTotal = active.items.reduce(
+    (acc, r) => acc.plus(money(r.amount)),
+    money(0),
+  );
 
   return (
-    <div className="space-y-8">
-      {sections.map((section) => (
-        <section key={section.key} className="space-y-3">
-          <div className="flex items-baseline justify-between gap-3">
-            <h3 className="font-medium">{section.title}</h3>
-            <span className="text-sm text-[var(--muted)]">{section.items.length}</span>
+    <div className="space-y-4">
+      <div
+        role="tablist"
+        aria-label="Colas de solicitudes"
+        className="flex flex-wrap gap-1 rounded-xl border border-[var(--line)] bg-neutral-50 p-1"
+      >
+        {sections.map((section) => {
+          const selected = section.key === tab;
+          return (
+            <button
+              key={section.key}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => setTab(section.key)}
+              className={cn(
+                "flex min-w-[9rem] flex-1 items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition",
+                selected
+                  ? "bg-white font-medium text-[var(--ink)] shadow-sm"
+                  : "text-[var(--muted)] hover:text-[var(--ink)]",
+              )}
+            >
+              <span>{section.title}</span>
+              <span
+                className={cn(
+                  "rounded-md px-1.5 py-0.5 text-xs tabular-nums",
+                  selected ? "bg-neutral-100" : "bg-transparent",
+                )}
+              >
+                {section.items.length}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <section className="space-y-3" role="tabpanel">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h3 className="font-medium">{active.title}</h3>
+            <p className="text-sm text-[var(--muted)]">{active.hint}</p>
           </div>
-          {section.items.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-[var(--line)] px-4 py-6 text-sm text-[var(--muted)]">
-              Sin solicitudes en esta cola.
+          {active.items.length > 0 ? (
+            <p className="text-sm text-[var(--muted)]">
+              {active.items.length}{" "}
+              {active.items.length === 1 ? "solicitud" : "solicitudes"} ·{" "}
+              <span className="font-medium text-[var(--ink)]">
+                {formatCOP(activeTotal)}
+              </span>
             </p>
-          ) : (
-            section.items.map((r) => (
+          ) : null}
+        </div>
+
+        {active.items.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-[var(--line)] bg-white/60 px-4 py-10 text-center text-sm text-[var(--muted)]">
+            Sin solicitudes en esta cola.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {active.items.map((r) => (
               <RequestCard
                 key={r.id}
                 request={r}
-                supplierName={r.supplier_id ? supplierMap.get(r.supplier_id) : undefined}
+                supplierName={
+                  r.supplier_id ? supplierMap.get(r.supplier_id) : undefined
+                }
                 bankAccounts={bankAccounts}
                 canApprove={canApprove}
                 canPay={canPay}
-                canCreate={canCreate}
+                queue={active.key}
               />
-            ))
-          )}
-        </section>
-      ))}
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

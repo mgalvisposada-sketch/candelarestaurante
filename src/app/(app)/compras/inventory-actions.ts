@@ -96,6 +96,7 @@ export async function createProductCategoryAction(
   revalidatePath("/compras/inventario");
   revalidatePath("/compras/proveedores");
   revalidatePath("/proveedores");
+  revalidatePath("/proveedores/maestro");
   return { ok: true, id: data.id };
 }
 
@@ -181,6 +182,7 @@ export async function softDeleteProductCategoryAction(
   revalidatePath("/compras/solicitudes");
   revalidatePath("/compras/sugeridos");
   revalidatePath("/proveedores");
+  revalidatePath("/proveedores/maestro");
   return { ok: true, id: categoryId };
 }
 
