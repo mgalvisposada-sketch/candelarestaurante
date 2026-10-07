@@ -176,6 +176,10 @@ export const APP_MODULES: AppModuleDef[] = [
         label: "Recibir mercancía (parcial o completa)",
       },
       {
+        key: "compras.solicitudes.recibir.extras",
+        label: "Agregar productos extras en recepción (admin)",
+      },
+      {
         key: "compras.solicitudes.facturar",
         label: "Aceptar factura → cola de pago (CxP)",
       },
@@ -306,6 +310,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "compras.solicitudes",
     "compras.solicitudes.crear",
     "compras.solicitudes.recibir",
+    "compras.solicitudes.recibir.extras",
     "compras.solicitudes.facturar",
   ],
   SOCIO: [

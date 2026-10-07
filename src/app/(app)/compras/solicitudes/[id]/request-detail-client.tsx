@@ -12,6 +12,7 @@ import Link from "next/link";
 import {
   acceptPurchaseInvoiceAction,
   addPurchaseRequestItemsByCategoryAction,
+  addReceivedExtraItemAction,
   approvePurchaseRequestAction,
   importSuggestedProductsAction,
   receivePurchaseItemsAction,
@@ -1067,10 +1068,14 @@ function ReceiveItemRow({ item }: { item: ItemRow }) {
               ? received > 0
                 ? "Cerrado (faltante)"
                 : "No llegará"
-              : "Recibido completo"}
+              : ordered <= 0
+                ? "Extra en recepción"
+                : received > ordered
+                  ? "Recibido (+extra)"
+                  : "Recibido completo"}
           </Badge>
         </div>
-        {item.status === "CANCELADO" && item.notes ? (
+        {item.notes ? (
           <p className="mt-1 text-xs text-[var(--muted)]">{item.notes}</p>
         ) : null}
       </div>
@@ -1157,7 +1162,7 @@ function ReceiveItemRow({ item }: { item: ItemRow }) {
           </label>
           <p className="text-xs text-[var(--muted)] md:col-span-2">
             Ponga lo que pagó por esta cantidad (ej. $20.000 por 5000 {item.unit}
-            ).{" "}
+            ). Puede registrar más de lo pedido si el proveedor envió de más.{" "}
             {unitCost != null ? (
               <>
                 Queda{" "}
@@ -1338,11 +1343,179 @@ function SupplierInvoiceForm({
   );
 }
 
+function AddExtraReceivedForm({
+  requestId,
+  products,
+  suppliers,
+  links,
+  pending,
+  startTransition,
+  setError,
+}: {
+  requestId: string;
+  products: ProductOption[];
+  suppliers: SupplierOption[];
+  links: CategorySupplierLink[];
+  pending: boolean;
+  startTransition: TransitionStartFunction;
+  setError: Dispatch<SetStateAction<string | null>>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [productId, setProductId] = useState("");
+  const [qtyRaw, setQtyRaw] = useState("");
+  const [totalCostRaw, setTotalCostRaw] = useState("");
+
+  const product = products.find((p) => p.id === productId);
+  const supplierOptions = product
+    ? suppliersForCategory(product.category_id, suppliers, links)
+    : suppliers;
+  const qty = parseBulkNumber(qtyRaw);
+  const totalCost = parseBulkNumber(totalCostRaw);
+  const unitCost =
+    qty != null && qty > 0 && totalCost != null && totalCost >= 0
+      ? totalCost / qty
+      : null;
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded-lg border border-[var(--ink)] px-4 py-2.5 text-sm font-medium"
+      >
+        + Producto que llegó (extra / no pedido)
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="space-y-3 rounded-xl border-2 border-[var(--ink)] bg-white p-4"
+      action={(fd) => {
+        setError(null);
+        startTransition(async () => {
+          const r = await addReceivedExtraItemAction(requestId, fd);
+          if (!r.ok) setError(r.error ?? "Error");
+          else {
+            setOpen(false);
+            setProductId("");
+            setQtyRaw("");
+            setTotalCostRaw("");
+          }
+        });
+      }}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--accent)]">
+            Solo administrador
+          </p>
+          <h4 className="mt-1 font-medium">Producto que llegó y no estaba en el pedido</h4>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Use esto si el proveedor envió algo de más o compraron un ítem no
+            previsto. Entra a inventario y queda listo para facturar con ese
+            proveedor.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="text-sm text-[var(--muted)]"
+          onClick={() => setOpen(false)}
+        >
+          Cancelar
+        </button>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="block text-sm md:col-span-2">
+          <span className="mb-1 block text-[var(--muted)]">Producto *</span>
+          <select
+            name="product_id"
+            required
+            value={productId}
+            onChange={(e) => setProductId(e.target.value)}
+            className={inputClass}
+          >
+            <option value="">Seleccione…</option>
+            {products.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} · {p.category_name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-sm md:col-span-2">
+          <span className="mb-1 block text-[var(--muted)]">Proveedor que lo trajo *</span>
+          <select name="supplier_id" required className={inputClass}>
+            <option value="">Seleccione…</option>
+            {supplierOptions.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block text-[var(--muted)]">
+            Cantidad recibida *{product ? ` (${product.unit})` : ""}
+          </span>
+          <input
+            name="quantity_received"
+            required
+            value={qtyRaw}
+            onChange={(e) => setQtyRaw(e.target.value)}
+            className={inputClass}
+            inputMode="decimal"
+          />
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block text-[var(--muted)]">Costo total de esta entrega</span>
+          <input
+            value={totalCostRaw}
+            onChange={(e) => setTotalCostRaw(e.target.value)}
+            placeholder="Ej. 20000"
+            className={inputClass}
+            inputMode="decimal"
+          />
+          <input
+            type="hidden"
+            name="unit_cost"
+            value={unitCost != null ? String(unitCost) : ""}
+          />
+        </label>
+        <label className="block text-sm md:col-span-2">
+          <span className="mb-1 block text-[var(--muted)]">Nota (opcional)</span>
+          <input
+            name="notes"
+            placeholder="Ej. lo mandaron de más / se compró en sitio"
+            className={inputClass}
+          />
+        </label>
+      </div>
+      {unitCost != null && product ? (
+        <p className="text-xs text-[var(--muted)]">
+          Queda {formatCOP(unitCost)} / {product.unit} en inventario.
+        </p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm text-white disabled:opacity-60"
+      >
+        {pending ? "Guardando…" : "Agregar a recepción e inventario"}
+      </button>
+    </form>
+  );
+}
+
 function SupplierOperationsPanel({
   requestId,
   items,
+  products,
+  suppliers,
+  links,
   supplierMap,
   canReceive,
+  canReceiveExtras,
   canAcceptInvoice,
   pending,
   startTransition,
@@ -1350,8 +1523,12 @@ function SupplierOperationsPanel({
 }: {
   requestId: string;
   items: ItemRow[];
+  products: ProductOption[];
+  suppliers: SupplierOption[];
+  links: CategorySupplierLink[];
   supplierMap: Map<string, string>;
   canReceive: boolean;
+  canReceiveExtras: boolean;
   canAcceptInvoice: boolean;
   pending: boolean;
   startTransition: TransitionStartFunction;
@@ -1361,7 +1538,7 @@ function SupplierOperationsPanel({
     includeCancelled: true,
   });
 
-  if (groups.length === 0) return null;
+  if (groups.length === 0 && !canReceiveExtras) return null;
 
   return (
     <section className="space-y-4">
@@ -1376,6 +1553,19 @@ function SupplierOperationsPanel({
           </li>
           <li>Cuando llegue otro proveedor, repita en su bloque.</li>
         </ol>
+        {canReceiveExtras ? (
+          <div className="mt-4">
+            <AddExtraReceivedForm
+              requestId={requestId}
+              products={products}
+              suppliers={suppliers}
+              links={links}
+              pending={pending}
+              startTransition={startTransition}
+              setError={setError}
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className="space-y-3">
@@ -1627,6 +1817,7 @@ export function RequestDetailClient({
   canCreateProduct,
   canApprove,
   canReceive,
+  canReceiveExtras = false,
   canAcceptInvoice,
 }: {
   request: RequestDetail;
@@ -1640,6 +1831,7 @@ export function RequestDetailClient({
   canCreateProduct: boolean;
   canApprove: boolean;
   canReceive: boolean;
+  canReceiveExtras?: boolean;
   canAcceptInvoice: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -1902,12 +2094,16 @@ export function RequestDetailClient({
       {["PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
         request.status,
       ) &&
-      (canReceive || canAcceptInvoice) ? (
+      (canReceive || canAcceptInvoice || canReceiveExtras) ? (
         <SupplierOperationsPanel
           requestId={request.id}
           items={items}
+          products={products}
+          suppliers={suppliers}
+          links={links}
           supplierMap={supplierMap}
           canReceive={canReceive}
+          canReceiveExtras={canReceiveExtras}
           canAcceptInvoice={canAcceptInvoice}
           pending={pending}
           startTransition={startTransition}

@@ -7,6 +7,7 @@ import { ctxCanAccess } from "@/lib/permissions";
 import { todayInBogota } from "@/lib/dates";
 import {
   acceptInvoiceSchema,
+  addReceivedExtraItemSchema,
   approvePurchaseItemSchema,
   createPurchaseRequestSchema,
   purchaseRequestItemSchema,
@@ -1026,6 +1027,243 @@ export async function receivePurchaseItemsAction(
 
   revalidateCompras(requestId);
   return { ok: true, id: requestId };
+}
+
+/**
+ * Agrega un producto que llegó y no estaba en el pedido (o suma extras a uno
+ * existente). Solo admin con permiso compras.solicitudes.recibir.extras.
+ */
+export async function addReceivedExtraItemAction(
+  requestId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.recibir.extras")) {
+    return {
+      ok: false,
+      error: "Sin permiso para agregar productos extras en recepción",
+    };
+  }
+
+  const parsed = addReceivedExtraItemSchema.safeParse({
+    product_id: formData.get("product_id"),
+    supplier_id: formData.get("supplier_id"),
+    quantity_received: formData.get("quantity_received"),
+    unit_cost: formData.get("unit_cost"),
+    notes: formData.get("notes"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const qty = parseNumber(parsed.data.quantity_received);
+  if (qty === null || qty <= 0) return { ok: false, error: "Cantidad inválida" };
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (
+    !["PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
+      request.status,
+    )
+  ) {
+    return {
+      ok: false,
+      error: "Solo se pueden agregar extras cuando el pedido ya está en recepción",
+    };
+  }
+
+  const { data: product } = await supabase
+    .from("products")
+    .select("id, category_id, unit, unit_cost, current_stock, name")
+    .eq("id", parsed.data.product_id)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!product) return { ok: false, error: "Producto no encontrado" };
+
+  const { data: supplier } = await supabase
+    .from("suppliers")
+    .select("id")
+    .eq("id", parsed.data.supplier_id)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .eq("is_purchase_supplier", true)
+    .maybeSingle();
+  if (!supplier) return { ok: false, error: "Proveedor de insumos inválido" };
+
+  const unitCostIn =
+    parseNumber(parsed.data.unit_cost) ?? Number(product.unit_cost || 0);
+  const extraNote =
+    emptyToNull(parsed.data.notes) ||
+    "Agregado en recepción (extra / no estaba en el pedido)";
+
+  const { data: existingItems } = await supabase
+    .from("purchase_request_items")
+    .select(
+      "id, quantity_approved, quantity_requested, quantity_received, unit_cost_estimate, status, notes, approved_supplier_id, suggested_supplier_id, invoice_payment_request_id",
+    )
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .eq("product_id", product.id)
+    .is("deleted_at", null);
+
+  const sameSupplier = (existingItems ?? []).find((i) => {
+    const sid = i.approved_supplier_id ?? i.suggested_supplier_id;
+    return sid === parsed.data.supplier_id && !i.invoice_payment_request_id;
+  });
+
+  let itemId: string;
+
+  if (sameSupplier) {
+    const previous = Number(sameSupplier.quantity_received || 0);
+    const totalReceived = previous + qty;
+    const ordered = Number(
+      sameSupplier.quantity_approved ?? sameSupplier.quantity_requested ?? 0,
+    );
+    const nextApproved = Math.max(ordered, totalReceived);
+    const noteParts = [sameSupplier.notes, extraNote].filter(Boolean);
+
+    const { error } = await supabase
+      .from("purchase_request_items")
+      .update({
+        quantity_received: totalReceived,
+        quantity_approved: nextApproved,
+        status: "RECIBIDO",
+        unit_cost_estimate: unitCostIn || sameSupplier.unit_cost_estimate,
+        approved_supplier_id: parsed.data.supplier_id,
+        notes: noteParts.join(" · "),
+        updated_by: ctx.userId,
+      })
+      .eq("id", sameSupplier.id)
+      .eq("organization_id", ctx.organization.id);
+    if (error) return { ok: false, error: error.message };
+    itemId = sameSupplier.id;
+  } else {
+    const { data: maxSort } = await supabase
+      .from("purchase_request_items")
+      .select("sort_order")
+      .eq("purchase_request_id", requestId)
+      .eq("organization_id", ctx.organization.id)
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const { data: created, error } = await supabase
+      .from("purchase_request_items")
+      .insert({
+        organization_id: ctx.organization.id,
+        purchase_request_id: requestId,
+        product_id: product.id,
+        category_id: product.category_id,
+        quantity_requested: 0,
+        quantity_approved: qty,
+        quantity_received: qty,
+        unit: product.unit,
+        suggested_supplier_id: parsed.data.supplier_id,
+        approved_supplier_id: parsed.data.supplier_id,
+        unit_cost_estimate: unitCostIn,
+        status: "RECIBIDO",
+        notes: extraNote,
+        sort_order: (maxSort?.sort_order ?? 0) + 1,
+        created_by: ctx.userId,
+        updated_by: ctx.userId,
+      })
+      .select("id")
+      .single();
+    if (error) return { ok: false, error: error.message };
+    itemId = created.id;
+  }
+
+  const stockBefore = Number(product.current_stock || 0);
+  const costBefore = Number(product.unit_cost || 0);
+  const stockAfter = stockBefore + qty;
+  const costAfter = weightedAverageUnitCost(
+    stockBefore,
+    costBefore,
+    qty,
+    unitCostIn,
+  );
+
+  await supabase
+    .from("products")
+    .update({
+      current_stock: stockAfter,
+      unit_cost: costAfter,
+      updated_by: ctx.userId,
+    })
+    .eq("id", product.id)
+    .eq("organization_id", ctx.organization.id);
+
+  await supabase.from("inventory_movements").insert({
+    organization_id: ctx.organization.id,
+    product_id: product.id,
+    movement_type: "COMPRA",
+    quantity: qty,
+    unit_cost: unitCostIn,
+    stock_before: stockBefore,
+    stock_after: stockAfter,
+    unit_cost_before: costBefore,
+    unit_cost_after: costAfter,
+    reference_type: "purchase_request_items",
+    reference_id: itemId,
+    notes: `Recepción extra solicitud ${requestId}`,
+    created_by: ctx.userId,
+  });
+
+  const { data: refreshed } = await supabase
+    .from("purchase_request_items")
+    .select("quantity_approved, quantity_requested, quantity_received, status")
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  const allClosed = (refreshed ?? []).every((i) => isPurchaseItemClosed(i));
+  const anyReceived = (refreshed ?? []).some(
+    (i) => Number(i.quantity_received || 0) > 0,
+  );
+
+  const nextStatus = allClosed
+    ? request.status === "FACTURA_ACEPTADA"
+      ? "FACTURA_ACEPTADA"
+      : "RECIBIDA"
+    : anyReceived
+      ? "RECIBIDA_PARCIAL"
+      : request.status;
+
+  await supabase
+    .from("purchase_requests")
+    .update({
+      status: nextStatus,
+      updated_by: ctx.userId,
+    })
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id);
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "RECEIVE_EXTRA",
+    entity: "purchase_requests",
+    entity_id: requestId,
+    new_values: {
+      item_id: itemId,
+      product_id: product.id,
+      supplier_id: parsed.data.supplier_id,
+      quantity: qty,
+    },
+  });
+
+  revalidateCompras(requestId);
+  return { ok: true, id: itemId };
 }
 
 export async function acceptPurchaseInvoiceAction(

@@ -166,6 +166,10 @@ export default async function CompraSolicitudDetailPage({
           }
           canApprove={ctxCanAccess(ctx, "compras.solicitudes.aprobar")}
           canReceive={ctxCanAccess(ctx, "compras.solicitudes.recibir")}
+          canReceiveExtras={ctxCanAccess(
+            ctx,
+            "compras.solicitudes.recibir.extras",
+          )}
           canAcceptInvoice={
             ctxCanAccess(ctx, "compras.solicitudes.facturar") ||
             ctxCanAccess(ctx, "compras.solicitudes.aprobar") ||

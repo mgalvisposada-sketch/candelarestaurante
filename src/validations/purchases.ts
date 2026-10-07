@@ -87,6 +87,15 @@ export const receivePurchaseItemSchema = z.object({
   unit_cost: z.string().optional().nullable(),
 });
 
+/** Producto que llegó sin estar (o de más) en el pedido original. */
+export const addReceivedExtraItemSchema = z.object({
+  product_id: z.string().uuid("Producto inválido"),
+  supplier_id: z.string().uuid("Proveedor inválido"),
+  quantity_received: z.string().min(1, "Cantidad obligatoria"),
+  unit_cost: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
 export const rejectPurchaseRequestSchema = z.object({
   rejection_reason: z.string().min(2, "Indique el motivo"),
 });
