@@ -84,17 +84,20 @@ export const approvePurchaseItemSchema = z.object({
 export const receivePurchaseItemSchema = z.object({
   item_id: z.string().uuid(),
   quantity_received: z.string().min(1, "Cantidad recibida obligatoria"),
-  unit_cost: z.string().optional().nullable(),
+  unit_cost: z.string().min(1, "Costo de la entrega obligatorio"),
 });
 
-/** Producto que llegó sin estar (o de más) en el pedido original. */
-export const addReceivedExtraItemSchema = z.object({
+/** Producto que se agrega al pedido de un proveedor en recepción (queda pendiente). */
+export const addSupplierPendingItemSchema = z.object({
   product_id: z.string().uuid("Producto inválido"),
   supplier_id: z.string().uuid("Proveedor inválido"),
-  quantity_received: z.string().min(1, "Cantidad obligatoria"),
-  unit_cost: z.string().optional().nullable(),
+  quantity: z.string().min(1, "Cantidad obligatoria"),
+  unit_cost_estimate: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
 });
+
+/** @deprecated usar addSupplierPendingItemSchema */
+export const addReceivedExtraItemSchema = addSupplierPendingItemSchema;
 
 export const rejectPurchaseRequestSchema = z.object({
   rejection_reason: z.string().min(2, "Indique el motivo"),

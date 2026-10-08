@@ -82,6 +82,12 @@ export default async function ComprasInventarioPage() {
             description="Categorías y unidades son maestros únicos. Cada producto elige de esos catálogos para mantener uniformidad."
           />
           <div className="flex w-full flex-wrap gap-2">
+            <Link
+              href="/compras/inventario/lista"
+              className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm"
+            >
+              Lista / imprimir
+            </Link>
             <CreateCategoryForm />
             <CreateUnitForm />
             <CreateProductForm categories={categories} units={units} />
@@ -96,6 +102,10 @@ export default async function ComprasInventarioPage() {
           . Reposiciones en{" "}
           <Link href="/compras/sugeridos" className="text-[var(--accent)]">
             Sugeridos
+          </Link>
+          . Vista de lista en{" "}
+          <Link href="/compras/inventario/lista" className="text-[var(--accent)]">
+            Lista / imprimir
           </Link>
           .
         </p>

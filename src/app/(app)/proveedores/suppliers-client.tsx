@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import {
   createSupplierAction,
@@ -451,6 +451,92 @@ function ApDocFields({
         <span className="mb-1 block text-[var(--muted)]">Comentarios</span>
         <textarea name="comments" rows={2} defaultValue={doc?.comments ?? ""} className={inputClass} />
       </label>
+    </div>
+  );
+}
+
+export function SupplierMasterList({
+  suppliers,
+  categories,
+  balanceBySupplier,
+  docsCountBySupplier,
+  caps,
+}: {
+  suppliers: SupplierRow[];
+  categories: ProductCategoryOption[];
+  balanceBySupplier: Record<string, number>;
+  docsCountBySupplier: Record<string, number>;
+  caps: ProveedoresCaps;
+}) {
+  const [query, setQuery] = useState("");
+  const categoryNameById = useMemo(
+    () => new Map(categories.map((c) => [c.id, c.name])),
+    [categories],
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter((s) => {
+      const categoryNames = s.category_ids
+        .map((id) => categoryNameById.get(id) ?? "")
+        .join(" ");
+      const haystack = [
+        s.name,
+        s.tax_id,
+        s.contact_name,
+        s.phone,
+        s.email,
+        s.category,
+        s.notes,
+        categoryNames,
+        s.is_purchase_supplier ? "insumos" : "",
+        s.is_expense_supplier ? "gastos administrativo" : "",
+        s.is_active ? "activo" : "inactivo",
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [suppliers, query, categoryNameById]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <h3 className="font-medium">
+          {filtered.length === suppliers.length
+            ? `${suppliers.length} ${suppliers.length === 1 ? "proveedor" : "proveedores"}`
+            : `${filtered.length} de ${suppliers.length} proveedores`}
+        </h3>
+        <label className="block min-w-[220px] flex-1 sm:max-w-sm">
+          <span className="mb-1 block text-sm text-[var(--muted)]">Buscar</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Nombre, NIT, contacto, categoría…"
+            className={inputClass}
+            autoComplete="off"
+          />
+        </label>
+      </div>
+      {filtered.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-3 text-sm text-[var(--muted)]">
+          Ningún proveedor coincide con «{query.trim()}».
+        </p>
+      ) : (
+        filtered.map((s) => (
+          <SupplierMasterCard
+            key={s.id}
+            supplier={s}
+            categories={categories}
+            openBalance={balanceBySupplier[s.id] ?? 0}
+            openDocsCount={docsCountBySupplier[s.id] ?? 0}
+            caps={caps}
+          />
+        ))
+      )}
     </div>
   );
 }

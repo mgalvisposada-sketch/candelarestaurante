@@ -457,7 +457,8 @@ export async function createProductFromRequestAction(
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
   const canCreate =
     ctxCanAccess(ctx, "compras.inventario") ||
-    ctxCanAccess(ctx, "compras.solicitudes.crear");
+    ctxCanAccess(ctx, "compras.solicitudes.crear") ||
+    ctxCanAccess(ctx, "compras.solicitudes.recibir.extras");
   if (!canCreate) return { ok: false, error: "Sin permiso para crear productos" };
 
   const parsed = productSchema.safeParse({

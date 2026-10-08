@@ -177,7 +177,7 @@ export const APP_MODULES: AppModuleDef[] = [
       },
       {
         key: "compras.solicitudes.recibir.extras",
-        label: "Agregar productos extras en recepción (admin)",
+        label: "Agregar productos al pedido en recepción (admin)",
       },
       {
         key: "compras.solicitudes.facturar",

@@ -162,7 +162,8 @@ export default async function CompraSolicitudDetailPage({
           canCreate={ctxCanAccess(ctx, "compras.solicitudes.crear")}
           canCreateProduct={
             ctxCanAccess(ctx, "compras.inventario") ||
-            ctxCanAccess(ctx, "compras.solicitudes.crear")
+            ctxCanAccess(ctx, "compras.solicitudes.crear") ||
+            ctxCanAccess(ctx, "compras.solicitudes.recibir.extras")
           }
           canApprove={ctxCanAccess(ctx, "compras.solicitudes.aprobar")}
           canReceive={ctxCanAccess(ctx, "compras.solicitudes.recibir")}

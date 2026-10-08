@@ -7,7 +7,7 @@ import { ctxCanAccess } from "@/lib/permissions";
 import { todayInBogota } from "@/lib/dates";
 import {
   acceptInvoiceSchema,
-  addReceivedExtraItemSchema,
+  addSupplierPendingItemSchema,
   approvePurchaseItemSchema,
   createPurchaseRequestSchema,
   purchaseRequestItemSchema,
@@ -19,7 +19,45 @@ import {
   suggestedPurchaseQty,
   weightedAverageUnitCost,
 } from "@/lib/inventory/cost";
+import { roundPurchaseQty } from "@/lib/purchases/qty";
+import {
+  allocateInvoiceCharges,
+  chargesTotal,
+  merchandiseSubtotal,
+  roundMoney,
+  type InvoiceCharge,
+} from "@/lib/purchases/invoice-charges";
 import type { ActionResult } from "../empresa/actions";
+
+function parseInvoiceChargesFromForm(formData: FormData): InvoiceCharge[] {
+  const count = Math.min(
+    30,
+    Math.max(0, Math.floor(Number(formData.get("charge_count") ?? 0) || 0)),
+  );
+  const charges: InvoiceCharge[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const concept = String(formData.get(`charge_${i}_concept`) ?? "").trim();
+    const amount = parseNumber(String(formData.get(`charge_${i}_amount`) ?? ""));
+    if (amount === null || amount <= 0) continue;
+    const kindRaw = String(formData.get(`charge_${i}_kind`) ?? "cargo")
+      .trim()
+      .toLowerCase();
+    const kind = kindRaw === "descuento" ? "descuento" : "cargo";
+    const affectsRaw = String(
+      formData.get(`charge_${i}_affects_cost`) ?? "1",
+    ).trim();
+    const affectsCost =
+      affectsRaw === "1" || affectsRaw === "true" || affectsRaw === "on";
+    charges.push({
+      concept:
+        concept || (kind === "descuento" ? `Descuento ${i + 1}` : `Cargo ${i + 1}`),
+      amount: roundMoney(amount),
+      kind,
+      affectsCost,
+    });
+  }
+  return charges;
+}
 
 function emptyToNull(value: string | null | undefined) {
   if (value === undefined || value === null || String(value).trim() === "")
@@ -817,8 +855,11 @@ function isPurchaseItemClosed(item: {
   quantity_received: number | string;
 }) {
   if (item.status === "CANCELADO" || item.status === "RECIBIDO") return true;
-  const target = Number(item.quantity_approved ?? item.quantity_requested);
-  return Number(item.quantity_received || 0) >= target;
+  const target = roundPurchaseQty(
+    Number(item.quantity_approved ?? item.quantity_requested),
+  );
+  const received = roundPurchaseQty(Number(item.quantity_received || 0));
+  return received >= target;
 }
 
 export async function receivePurchaseItemsAction(
@@ -917,24 +958,29 @@ export async function receivePurchaseItemsAction(
       };
     }
 
-    const previous = Number(item.quantity_received || 0);
-    const totalReceived = previous + receivedNow;
-    const target = Number(item.quantity_approved ?? item.quantity_requested);
+    const previous = roundPurchaseQty(Number(item.quantity_received || 0));
+    const totalReceived = roundPurchaseQty(previous + receivedNow);
+    const target = roundPurchaseQty(
+      Number(item.quantity_approved ?? item.quantity_requested),
+    );
     const status =
       totalReceived >= target ? "RECIBIDO" : "RECIBIDO_PARCIAL";
 
-    const incomingCost =
-      parseNumber(parsed.data.unit_cost) ??
-      parseNumber(
-        item.unit_cost_estimate != null ? String(item.unit_cost_estimate) : null,
-      );
+    const incomingCost = parseNumber(parsed.data.unit_cost);
+    if (incomingCost === null || incomingCost <= 0) {
+      return {
+        ok: false,
+        error:
+          "Indique el costo total de cada entrega (mayor a 0). No se puede recibir sin valor.",
+      };
+    }
 
     const { error } = await supabase
       .from("purchase_request_items")
       .update({
         quantity_received: totalReceived,
         status,
-        unit_cost_estimate: incomingCost ?? item.unit_cost_estimate,
+        unit_cost_estimate: incomingCost,
         updated_by: ctx.userId,
       })
       .eq("id", item.id)
@@ -951,7 +997,7 @@ export async function receivePurchaseItemsAction(
     if (product) {
       const stockBefore = Number(product.current_stock || 0);
       const costBefore = Number(product.unit_cost || 0);
-      const costIn = incomingCost ?? costBefore;
+      const costIn = incomingCost;
       const stockAfter = stockBefore + receivedNow;
       const costAfter = weightedAverageUnitCost(
         stockBefore,
@@ -1030,10 +1076,10 @@ export async function receivePurchaseItemsAction(
 }
 
 /**
- * Agrega un producto que llegó y no estaba en el pedido (o suma extras a uno
- * existente). Solo admin con permiso compras.solicitudes.recibir.extras.
+ * Agrega un producto al pedido de un proveedor en recepción.
+ * Queda pendiente (APROBADO), igual que los demás; se recibe después.
  */
-export async function addReceivedExtraItemAction(
+export async function addSupplierPendingItemAction(
   requestId: string,
   formData: FormData,
 ): Promise<ActionResult> {
@@ -1042,22 +1088,23 @@ export async function addReceivedExtraItemAction(
   if (!ctxCanAccess(ctx, "compras.solicitudes.recibir.extras")) {
     return {
       ok: false,
-      error: "Sin permiso para agregar productos extras en recepción",
+      error: "Sin permiso para agregar productos al pedido en recepción",
     };
   }
 
-  const parsed = addReceivedExtraItemSchema.safeParse({
+  const parsed = addSupplierPendingItemSchema.safeParse({
     product_id: formData.get("product_id"),
     supplier_id: formData.get("supplier_id"),
-    quantity_received: formData.get("quantity_received"),
-    unit_cost: formData.get("unit_cost"),
+    quantity: formData.get("quantity") ?? formData.get("quantity_received"),
+    unit_cost_estimate:
+      formData.get("unit_cost_estimate") ?? formData.get("unit_cost"),
     notes: formData.get("notes"),
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
   }
 
-  const qty = parseNumber(parsed.data.quantity_received);
+  const qty = parseNumber(parsed.data.quantity);
   if (qty === null || qty <= 0) return { ok: false, error: "Cantidad inválida" };
 
   const supabase = await createClient();
@@ -1076,13 +1123,13 @@ export async function addReceivedExtraItemAction(
   ) {
     return {
       ok: false,
-      error: "Solo se pueden agregar extras cuando el pedido ya está en recepción",
+      error: "Solo se pueden agregar productos cuando el pedido ya está en recepción",
     };
   }
 
   const { data: product } = await supabase
     .from("products")
-    .select("id, category_id, unit, unit_cost, current_stock, name")
+    .select("id, category_id, unit, unit_cost, name")
     .eq("id", parsed.data.product_id)
     .eq("organization_id", ctx.organization.id)
     .is("deleted_at", null)
@@ -1099,11 +1146,29 @@ export async function addReceivedExtraItemAction(
     .maybeSingle();
   if (!supplier) return { ok: false, error: "Proveedor de insumos inválido" };
 
+  const { data: categoryLink } = await supabase
+    .from("supplier_product_categories")
+    .select("id")
+    .eq("organization_id", ctx.organization.id)
+    .eq("supplier_id", parsed.data.supplier_id)
+    .eq("category_id", product.category_id)
+    .is("deleted_at", null)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (!categoryLink) {
+    return {
+      ok: false,
+      error:
+        "Este producto es de una categoría que el proveedor no tiene asignada. Asigne la categoría en Proveedores o elija otro producto.",
+    };
+  }
+
   const unitCostIn =
-    parseNumber(parsed.data.unit_cost) ?? Number(product.unit_cost || 0);
-  const extraNote =
+    parseNumber(parsed.data.unit_cost_estimate) ??
+    Number(product.unit_cost || 0);
+  const note =
     emptyToNull(parsed.data.notes) ||
-    "Agregado en recepción (extra / no estaba en el pedido)";
+    "Agregado al pedido en recepción (no estaba en el original)";
 
   const { data: existingItems } = await supabase
     .from("purchase_request_items")
@@ -1115,37 +1180,41 @@ export async function addReceivedExtraItemAction(
     .eq("product_id", product.id)
     .is("deleted_at", null);
 
-  const sameSupplier = (existingItems ?? []).find((i) => {
+  const openSameSupplier = (existingItems ?? []).find((i) => {
     const sid = i.approved_supplier_id ?? i.suggested_supplier_id;
-    return sid === parsed.data.supplier_id && !i.invoice_payment_request_id;
+    if (sid !== parsed.data.supplier_id || i.invoice_payment_request_id) {
+      return false;
+    }
+    return !isPurchaseItemClosed(i);
   });
 
   let itemId: string;
 
-  if (sameSupplier) {
-    const previous = Number(sameSupplier.quantity_received || 0);
-    const totalReceived = previous + qty;
+  if (openSameSupplier) {
     const ordered = Number(
-      sameSupplier.quantity_approved ?? sameSupplier.quantity_requested ?? 0,
+      openSameSupplier.quantity_approved ??
+        openSameSupplier.quantity_requested ??
+        0,
     );
-    const nextApproved = Math.max(ordered, totalReceived);
-    const noteParts = [sameSupplier.notes, extraNote].filter(Boolean);
-
+    const nextQty = ordered + qty;
+    const noteParts = [openSameSupplier.notes, note].filter(Boolean);
     const { error } = await supabase
       .from("purchase_request_items")
       .update({
-        quantity_received: totalReceived,
-        quantity_approved: nextApproved,
-        status: "RECIBIDO",
-        unit_cost_estimate: unitCostIn || sameSupplier.unit_cost_estimate,
+        quantity_requested: Math.max(
+          Number(openSameSupplier.quantity_requested || 0),
+          nextQty,
+        ),
+        quantity_approved: nextQty,
+        unit_cost_estimate: unitCostIn || openSameSupplier.unit_cost_estimate,
         approved_supplier_id: parsed.data.supplier_id,
         notes: noteParts.join(" · "),
         updated_by: ctx.userId,
       })
-      .eq("id", sameSupplier.id)
+      .eq("id", openSameSupplier.id)
       .eq("organization_id", ctx.organization.id);
     if (error) return { ok: false, error: error.message };
-    itemId = sameSupplier.id;
+    itemId = openSameSupplier.id;
   } else {
     const { data: maxSort } = await supabase
       .from("purchase_request_items")
@@ -1164,15 +1233,15 @@ export async function addReceivedExtraItemAction(
         purchase_request_id: requestId,
         product_id: product.id,
         category_id: product.category_id,
-        quantity_requested: 0,
+        quantity_requested: qty,
         quantity_approved: qty,
-        quantity_received: qty,
+        quantity_received: 0,
         unit: product.unit,
         suggested_supplier_id: parsed.data.supplier_id,
         approved_supplier_id: parsed.data.supplier_id,
-        unit_cost_estimate: unitCostIn,
-        status: "RECIBIDO",
-        notes: extraNote,
+        unit_cost_estimate: unitCostIn || null,
+        status: "APROBADO",
+        notes: note,
         sort_order: (maxSort?.sort_order ?? 0) + 1,
         created_by: ctx.userId,
         updated_by: ctx.userId,
@@ -1183,75 +1252,10 @@ export async function addReceivedExtraItemAction(
     itemId = created.id;
   }
 
-  const stockBefore = Number(product.current_stock || 0);
-  const costBefore = Number(product.unit_cost || 0);
-  const stockAfter = stockBefore + qty;
-  const costAfter = weightedAverageUnitCost(
-    stockBefore,
-    costBefore,
-    qty,
-    unitCostIn,
-  );
-
-  await supabase
-    .from("products")
-    .update({
-      current_stock: stockAfter,
-      unit_cost: costAfter,
-      updated_by: ctx.userId,
-    })
-    .eq("id", product.id)
-    .eq("organization_id", ctx.organization.id);
-
-  await supabase.from("inventory_movements").insert({
-    organization_id: ctx.organization.id,
-    product_id: product.id,
-    movement_type: "COMPRA",
-    quantity: qty,
-    unit_cost: unitCostIn,
-    stock_before: stockBefore,
-    stock_after: stockAfter,
-    unit_cost_before: costBefore,
-    unit_cost_after: costAfter,
-    reference_type: "purchase_request_items",
-    reference_id: itemId,
-    notes: `Recepción extra solicitud ${requestId}`,
-    created_by: ctx.userId,
-  });
-
-  const { data: refreshed } = await supabase
-    .from("purchase_request_items")
-    .select("quantity_approved, quantity_requested, quantity_received, status")
-    .eq("purchase_request_id", requestId)
-    .eq("organization_id", ctx.organization.id)
-    .is("deleted_at", null);
-
-  const allClosed = (refreshed ?? []).every((i) => isPurchaseItemClosed(i));
-  const anyReceived = (refreshed ?? []).some(
-    (i) => Number(i.quantity_received || 0) > 0,
-  );
-
-  const nextStatus = allClosed
-    ? request.status === "FACTURA_ACEPTADA"
-      ? "FACTURA_ACEPTADA"
-      : "RECIBIDA"
-    : anyReceived
-      ? "RECIBIDA_PARCIAL"
-      : request.status;
-
-  await supabase
-    .from("purchase_requests")
-    .update({
-      status: nextStatus,
-      updated_by: ctx.userId,
-    })
-    .eq("id", requestId)
-    .eq("organization_id", ctx.organization.id);
-
   await supabase.from("audit_logs").insert({
     organization_id: ctx.organization.id,
     user_id: ctx.userId,
-    action: "RECEIVE_EXTRA",
+    action: "ADD_PENDING_ITEM",
     entity: "purchase_requests",
     entity_id: requestId,
     new_values: {
@@ -1264,6 +1268,14 @@ export async function addReceivedExtraItemAction(
 
   revalidateCompras(requestId);
   return { ok: true, id: itemId };
+}
+
+/** @deprecated alias — usar addSupplierPendingItemAction */
+export async function addReceivedExtraItemAction(
+  requestId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  return addSupplierPendingItemAction(requestId, formData);
 }
 
 export async function acceptPurchaseInvoiceAction(
@@ -1294,8 +1306,6 @@ export async function acceptPurchaseInvoiceAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
   }
 
-  const amount = parseNumber(parsed.data.amount);
-  if (amount === null || amount <= 0) return { ok: false, error: "Monto inválido" };
   const supplierId = parsed.data.supplier_id;
   const payPriority = parsed.data.priority || "NORMAL";
   const apPriority =
@@ -1323,7 +1333,7 @@ export async function acceptPurchaseInvoiceAction(
   const { data: itemRows } = await supabase
     .from("purchase_request_items")
     .select(
-      "id, quantity_approved, quantity_requested, quantity_received, status, approved_supplier_id, suggested_supplier_id, invoice_payment_request_id",
+      "id, product_id, quantity_approved, quantity_requested, quantity_received, unit_cost_estimate, status, approved_supplier_id, suggested_supplier_id, invoice_payment_request_id",
     )
     .eq("purchase_request_id", requestId)
     .eq("organization_id", ctx.organization.id)
@@ -1349,6 +1359,35 @@ export async function acceptPurchaseInvoiceAction(
     };
   }
 
+  const charges = parseInvoiceChargesFromForm(formData);
+  const billableLines = toInvoice.map((i) => ({
+    itemId: i.id,
+    productId: i.product_id,
+    receivedQty: roundPurchaseQty(Number(i.quantity_received || 0)),
+    unitCost: Number(i.unit_cost_estimate || 0),
+  }));
+  const merchandise = merchandiseSubtotal(billableLines);
+  const extras = chargesTotal(charges);
+  const computedTotal = roundMoney(merchandise + extras);
+  const amountIn = parseNumber(parsed.data.amount);
+  // Prioriza el total calculado (mercancía + cargos); el monto del form es respaldo.
+  if (computedTotal <= 0) {
+    return {
+      ok: false,
+      error:
+        "El total de la factura debe ser mayor a 0. Revise descuentos vs mercancía.",
+    };
+  }
+  const amount =
+    computedTotal > 0
+      ? computedTotal
+      : amountIn != null && amountIn > 0
+        ? roundMoney(amountIn)
+        : null;
+  if (amount === null || amount <= 0) return { ok: false, error: "Monto inválido" };
+
+  const allocations = allocateInvoiceCharges(billableLines, charges);
+
   let apId: string;
   try {
     apId = await ensureAccountsPayable(
@@ -1360,6 +1399,19 @@ export async function acceptPurchaseInvoiceAction(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Error CxP" };
   }
+
+  const chargeSummary =
+    charges.length > 0
+      ? charges
+          .map((c) => {
+            const sign = c.kind === "descuento" ? "−" : "+";
+            const tag = c.kind === "descuento" ? "descuento" : "cargo";
+            return `${tag} ${c.concept}: ${sign}${c.amount}${
+              c.affectsCost ? " (→ costo)" : ""
+            }`;
+          })
+          .join("; ")
+      : null;
 
   const concept =
     emptyToNull(parsed.data.concept) ||
@@ -1392,6 +1444,14 @@ export async function acceptPurchaseInvoiceAction(
 
   if (docError) return { ok: false, error: docError.message };
 
+  const payNotes = [
+    `Desde compra ${requestId} · proveedor ${supplierId}`,
+    `Mercancía ${merchandise}`,
+    chargeSummary ? `Ajustes: ${chargeSummary}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   const { data: payReq, error: payError } = await supabase
     .from("payment_requests")
     .insert({
@@ -1408,7 +1468,7 @@ export async function acceptPurchaseInvoiceAction(
       document_type: parsed.data.document_type || "FACTURA",
       document_number: emptyToNull(parsed.data.document_number),
       issue_date: emptyToNull(parsed.data.issue_date),
-      notes: `Desde compra ${requestId} · proveedor ${supplierId}`,
+      notes: payNotes,
       requested_by: ctx.userId,
       approved_by: ctx.userId,
       approved_at: new Date().toISOString(),
@@ -1419,6 +1479,45 @@ export async function acceptPurchaseInvoiceAction(
     .single();
 
   if (payError) return { ok: false, error: payError.message };
+
+  // Costo aterrizado (cargos + / descuentos −): actualiza ítem y promedio del producto.
+  for (const alloc of allocations) {
+    if (alloc.allocatedExtra === 0) continue;
+
+    await supabase
+      .from("purchase_request_items")
+      .update({
+        unit_cost_estimate: alloc.landedUnitCost,
+        updated_by: ctx.userId,
+      })
+      .eq("id", alloc.itemId)
+      .eq("organization_id", ctx.organization.id);
+
+    const { data: product } = await supabase
+      .from("products")
+      .select("id, current_stock, unit_cost")
+      .eq("id", alloc.productId)
+      .eq("organization_id", ctx.organization.id)
+      .maybeSingle();
+    if (!product) continue;
+
+    const stock = Number(product.current_stock || 0);
+    const costBefore = Number(product.unit_cost || 0);
+    const rawAfter =
+      stock > 0
+        ? (stock * costBefore + alloc.allocatedExtra) / stock
+        : alloc.landedUnitCost;
+    const costAfter = Math.max(0, rawAfter);
+
+    await supabase
+      .from("products")
+      .update({
+        unit_cost: costAfter,
+        updated_by: ctx.userId,
+      })
+      .eq("id", product.id)
+      .eq("organization_id", ctx.organization.id);
+  }
 
   const stampIds = toInvoice.map((i) => i.id);
   const { error: stampError } = await supabase
@@ -1482,6 +1581,15 @@ export async function acceptPurchaseInvoiceAction(
       payment_request_id: payReq.id,
       supplier_id: supplierId,
       item_ids: stampIds,
+      amount,
+      merchandise,
+      charges,
+      allocations: allocations.map((a) => ({
+        item_id: a.itemId,
+        product_id: a.productId,
+        allocated_extra: a.allocatedExtra,
+        landed_unit_cost: a.landedUnitCost,
+      })),
       closed: allClosed && !anyUninvoicedReceived,
     },
   });

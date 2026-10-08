@@ -12,7 +12,7 @@ import {
   CategoryMasterList,
   CreateCategoryMasterForm,
   CreateSupplierForm,
-  SupplierMasterCard,
+  SupplierMasterList,
   type ProductCategoryOption,
   type ProveedoresCaps,
   type SupplierRow,
@@ -161,22 +161,18 @@ export default async function ProveedoresMaestroPage() {
             description="Cree el maestro de proveedores. Luego cargue facturas en Cuentas por pagar."
           />
         ) : (
-          <div className="space-y-3">
-            <h3 className="font-medium">
-              {suppliers.length}{" "}
-              {suppliers.length === 1 ? "proveedor" : "proveedores"}
-            </h3>
-            {suppliers.map((s) => (
-              <SupplierMasterCard
-                key={s.id}
-                supplier={s}
-                categories={categories}
-                openBalance={(balanceBySupplier.get(s.id) ?? money(0)).toNumber()}
-                openDocsCount={docsCountBySupplier.get(s.id) ?? 0}
-                caps={caps}
-              />
-            ))}
-          </div>
+          <SupplierMasterList
+            suppliers={suppliers}
+            categories={categories}
+            balanceBySupplier={Object.fromEntries(
+              [...balanceBySupplier.entries()].map(([id, bal]) => [
+                id,
+                bal.toNumber(),
+              ]),
+            )}
+            docsCountBySupplier={Object.fromEntries(docsCountBySupplier)}
+            caps={caps}
+          />
         )}
       </main>
     </>
