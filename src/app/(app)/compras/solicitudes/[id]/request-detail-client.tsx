@@ -1345,16 +1345,18 @@ function SupplierInvoiceForm({
 
 function AddExtraReceivedForm({
   requestId,
+  supplierId,
+  supplierName,
   products,
-  suppliers,
   links,
   pending,
   startTransition,
   setError,
 }: {
   requestId: string;
+  supplierId: string;
+  supplierName: string;
   products: ProductOption[];
-  suppliers: SupplierOption[];
   links: CategorySupplierLink[];
   pending: boolean;
   startTransition: TransitionStartFunction;
@@ -1365,10 +1367,16 @@ function AddExtraReceivedForm({
   const [qtyRaw, setQtyRaw] = useState("");
   const [totalCostRaw, setTotalCostRaw] = useState("");
 
-  const product = products.find((p) => p.id === productId);
-  const supplierOptions = product
-    ? suppliersForCategory(product.category_id, suppliers, links)
-    : suppliers;
+  const categoryIdsForSupplier = new Set(
+    links.filter((l) => l.supplier_id === supplierId).map((l) => l.category_id),
+  );
+  const productOptions =
+    categoryIdsForSupplier.size > 0
+      ? products.filter((p) => categoryIdsForSupplier.has(p.category_id))
+      : products;
+
+  const product = productOptions.find((p) => p.id === productId) ??
+    products.find((p) => p.id === productId);
   const qty = parseBulkNumber(qtyRaw);
   const totalCost = parseBulkNumber(totalCostRaw);
   const unitCost =
@@ -1381,16 +1389,16 @@ function AddExtraReceivedForm({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg border border-[var(--ink)] px-4 py-2.5 text-sm font-medium"
+        className="rounded-lg border border-dashed border-[var(--ink)] px-3 py-2 text-sm font-medium"
       >
-        + Producto que llegó (extra / no pedido)
+        + Extra de {supplierName}
       </button>
     );
   }
 
   return (
     <form
-      className="space-y-3 rounded-xl border-2 border-[var(--ink)] bg-white p-4"
+      className="space-y-3 rounded-lg border-2 border-[var(--ink)] bg-neutral-50 p-3"
       action={(fd) => {
         setError(null);
         startTransition(async () => {
@@ -1408,13 +1416,11 @@ function AddExtraReceivedForm({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-[var(--accent)]">
-            Solo administrador
+            Admin · extra de {supplierName}
           </p>
-          <h4 className="mt-1 font-medium">Producto que llegó y no estaba en el pedido</h4>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Use esto si el proveedor envió algo de más o compraron un ítem no
-            previsto. Entra a inventario y queda listo para facturar con ese
-            proveedor.
+            Producto que llegó con este proveedor y no estaba en el pedido (o
+            compraron en sitio). Entra a inventario y a su factura.
           </p>
         </div>
         <button
@@ -1425,6 +1431,7 @@ function AddExtraReceivedForm({
           Cancelar
         </button>
       </div>
+      <input type="hidden" name="supplier_id" value={supplierId} />
       <div className="grid gap-3 md:grid-cols-2">
         <label className="block text-sm md:col-span-2">
           <span className="mb-1 block text-[var(--muted)]">Producto *</span>
@@ -1436,27 +1443,16 @@ function AddExtraReceivedForm({
             className={inputClass}
           >
             <option value="">Seleccione…</option>
-            {products.map((p) => (
+            {(productOptions.length > 0 ? productOptions : products).map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} · {p.category_name}
               </option>
             ))}
           </select>
         </label>
-        <label className="block text-sm md:col-span-2">
-          <span className="mb-1 block text-[var(--muted)]">Proveedor que lo trajo *</span>
-          <select name="supplier_id" required className={inputClass}>
-            <option value="">Seleccione…</option>
-            {supplierOptions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
         <label className="block text-sm">
           <span className="mb-1 block text-[var(--muted)]">
-            Cantidad recibida *{product ? ` (${product.unit})` : ""}
+            Cantidad *{product ? ` (${product.unit})` : ""}
           </span>
           <input
             name="quantity_received"
@@ -1468,7 +1464,7 @@ function AddExtraReceivedForm({
           />
         </label>
         <label className="block text-sm">
-          <span className="mb-1 block text-[var(--muted)]">Costo total de esta entrega</span>
+          <span className="mb-1 block text-[var(--muted)]">Costo total</span>
           <input
             value={totalCostRaw}
             onChange={(e) => setTotalCostRaw(e.target.value)}
@@ -1486,7 +1482,7 @@ function AddExtraReceivedForm({
           <span className="mb-1 block text-[var(--muted)]">Nota (opcional)</span>
           <input
             name="notes"
-            placeholder="Ej. lo mandaron de más / se compró en sitio"
+            placeholder="Ej. lo mandaron de más"
             className={inputClass}
           />
         </label>
@@ -1499,9 +1495,9 @@ function AddExtraReceivedForm({
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
       >
-        {pending ? "Guardando…" : "Agregar a recepción e inventario"}
+        {pending ? "Guardando…" : `Agregar a ${supplierName}`}
       </button>
     </form>
   );
@@ -1511,7 +1507,6 @@ function SupplierOperationsPanel({
   requestId,
   items,
   products,
-  suppliers,
   links,
   supplierMap,
   canReceive,
@@ -1524,7 +1519,6 @@ function SupplierOperationsPanel({
   requestId: string;
   items: ItemRow[];
   products: ProductOption[];
-  suppliers: SupplierOption[];
   links: CategorySupplierLink[];
   supplierMap: Map<string, string>;
   canReceive: boolean;
@@ -1538,7 +1532,7 @@ function SupplierOperationsPanel({
     includeCancelled: true,
   });
 
-  if (groups.length === 0 && !canReceiveExtras) return null;
+  if (groups.length === 0) return null;
 
   return (
     <section className="space-y-4">
@@ -1552,20 +1546,13 @@ function SupplierOperationsPanel({
             suyo).
           </li>
           <li>Cuando llegue otro proveedor, repita en su bloque.</li>
+          {canReceiveExtras ? (
+            <li>
+              Si llegó algo que no estaba en el pedido, use{" "}
+              <strong>+ Extra</strong> dentro del bloque de ese proveedor.
+            </li>
+          ) : null}
         </ol>
-        {canReceiveExtras ? (
-          <div className="mt-4">
-            <AddExtraReceivedForm
-              requestId={requestId}
-              products={products}
-              suppliers={suppliers}
-              links={links}
-              pending={pending}
-              startTransition={startTransition}
-              setError={setError}
-            />
-          </div>
-        ) : null}
       </div>
 
       <div className="space-y-3">
@@ -1583,7 +1570,10 @@ function SupplierOperationsPanel({
             canAcceptInvoice &&
             Boolean(group.supplierId) &&
             uninvoiced.length > 0;
-          const needsAttention = canShowReceive || canShowInvoice;
+          const canShowExtra =
+            canReceiveExtras && Boolean(group.supplierId);
+          const needsAttention =
+            canShowReceive || canShowInvoice || canShowExtra;
 
           if (!needsAttention && invoiced.length === 0 && closedItems.length === 0) {
             return null;
@@ -1672,6 +1662,19 @@ function SupplierOperationsPanel({
                         : `Registrar recepción · ${group.supplierName}`}
                     </button>
                   </form>
+                ) : null}
+
+                {canShowExtra && group.supplierId ? (
+                  <AddExtraReceivedForm
+                    requestId={requestId}
+                    supplierId={group.supplierId}
+                    supplierName={group.supplierName}
+                    products={products}
+                    links={links}
+                    pending={pending}
+                    startTransition={startTransition}
+                    setError={setError}
+                  />
                 ) : null}
 
                 {closedItems.length > 0 && !canShowInvoice ? (
@@ -2099,7 +2102,6 @@ export function RequestDetailClient({
           requestId={request.id}
           items={items}
           products={products}
-          suppliers={suppliers}
           links={links}
           supplierMap={supplierMap}
           canReceive={canReceive}
