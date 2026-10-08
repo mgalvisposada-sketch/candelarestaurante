@@ -10,8 +10,8 @@ export default async function ComprasIndexPage() {
   if (ctxCanAccess(ctx, "compras.solicitudes")) {
     redirect("/compras/solicitudes");
   }
-  if (ctxCanAccess(ctx, "compras.inventario")) {
-    redirect("/compras/inventario");
+  if (ctxCanAccess(ctx, "compras.sugeridos")) {
+    redirect("/compras/sugeridos");
   }
   if (ctxCanAccess(ctx, "compras.proveedores")) {
     redirect("/compras/proveedores");

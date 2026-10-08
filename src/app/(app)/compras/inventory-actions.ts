@@ -23,7 +23,7 @@ function canManageInventoryMaster(
   ctx: NonNullable<Awaited<ReturnType<typeof getOrgContext>>>,
 ) {
   return (
-    ctxCanAccess(ctx, "compras.inventario") ||
+    ctxCanAccess(ctx, "inventario.maestro") ||
     ctxCanAccess(ctx, "compras.proveedores") ||
     ctxCanAccess(ctx, "proveedores") ||
     ctxCanAccess(ctx, "proveedores.maestro")
@@ -52,7 +52,7 @@ export async function createProductCategoryAction(
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
   const canManageCategories =
     ctxCanAccess(ctx, "proveedores.categorias") ||
-    ctxCanAccess(ctx, "compras.inventario") ||
+    ctxCanAccess(ctx, "inventario.maestro") ||
     ctxCanAccess(ctx, "compras.proveedores") ||
     ctxCanAccess(ctx, "proveedores") ||
     ctxCanAccess(ctx, "proveedores.maestro");
@@ -93,7 +93,8 @@ export async function createProductCategoryAction(
     }
     return { ok: false, error: error.message };
   }
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
   revalidatePath("/compras/proveedores");
   revalidatePath("/proveedores");
   revalidatePath("/proveedores/maestro");
@@ -107,7 +108,7 @@ export async function softDeleteProductCategoryAction(
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
   const canManageCategories =
     ctxCanAccess(ctx, "proveedores.categorias") ||
-    ctxCanAccess(ctx, "compras.inventario") ||
+    ctxCanAccess(ctx, "inventario.maestro") ||
     ctxCanAccess(ctx, "compras.proveedores") ||
     ctxCanAccess(ctx, "proveedores") ||
     ctxCanAccess(ctx, "proveedores.maestro");
@@ -177,7 +178,8 @@ export async function softDeleteProductCategoryAction(
     return { ok: false, error: error.message };
   }
 
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
   revalidatePath("/compras/proveedores");
   revalidatePath("/compras/solicitudes");
   revalidatePath("/compras/sugeridos");
@@ -226,7 +228,8 @@ export async function createProductUnitAction(
     return { ok: false, error: error.message };
   }
 
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
   revalidatePath("/compras/solicitudes");
   return { ok: true, id: data.id };
 }
@@ -291,7 +294,8 @@ export async function updateProductUnitAction(
       .is("deleted_at", null);
   }
 
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
   revalidatePath("/compras/solicitudes");
   revalidatePath("/compras/sugeridos");
   return { ok: true, id: unitId };
@@ -334,7 +338,8 @@ export async function softDeleteProductUnitAction(
     .is("deleted_at", null);
 
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
   revalidatePath("/compras/solicitudes");
   return { ok: true, id: unitId };
 }
@@ -344,7 +349,7 @@ export async function createProductAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.inventario")) {
+  if (!ctxCanAccess(ctx, "inventario.maestro")) {
     return { ok: false, error: "Sin permiso" };
   }
 
@@ -431,7 +436,8 @@ export async function createProductAction(
     });
   }
 
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
   revalidatePath("/compras/sugeridos");
   revalidatePath("/compras/solicitudes");
   return { ok: true, id: data.id };
@@ -456,7 +462,7 @@ export async function createProductFromRequestAction(
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
   const canCreate =
-    ctxCanAccess(ctx, "compras.inventario") ||
+    ctxCanAccess(ctx, "inventario.maestro") ||
     ctxCanAccess(ctx, "compras.solicitudes.crear") ||
     ctxCanAccess(ctx, "compras.solicitudes.recibir.extras");
   if (!canCreate) return { ok: false, error: "Sin permiso para crear productos" };
@@ -525,7 +531,8 @@ export async function createProductFromRequestAction(
   }
 
   const requestId = String(formData.get("request_id") ?? "").trim();
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
   revalidatePath("/compras/sugeridos");
   revalidatePath("/compras/solicitudes");
   if (/^[0-9a-f-]{36}$/i.test(requestId)) {
@@ -552,7 +559,7 @@ export async function bulkImportProductsAction(
 ): Promise<BulkImportProductsResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.inventario")) {
+  if (!ctxCanAccess(ctx, "inventario.maestro")) {
     return { ok: false, error: "Sin permiso" };
   }
 
@@ -653,7 +660,8 @@ export async function bulkImportProductsAction(
   }
 
   if (created > 0) {
-    revalidatePath("/compras/inventario");
+    revalidatePath("/inventario/maestro");
+    revalidatePath("/inventario/lista");
     revalidatePath("/compras/sugeridos");
     revalidatePath("/compras/solicitudes");
   }
@@ -680,7 +688,7 @@ export async function updateProductAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.inventario")) {
+  if (!ctxCanAccess(ctx, "inventario.maestro")) {
     return { ok: false, error: "Sin permiso" };
   }
 
@@ -778,10 +786,11 @@ export async function updateProductAction(
     });
   }
 
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
   revalidatePath("/compras/sugeridos");
   revalidatePath("/compras/solicitudes");
-  revalidatePath("/compras/inventario-fisico");
+  revalidatePath("/inventario/fisico");
   return { ok: true, id: productId };
 }
 
@@ -791,7 +800,7 @@ export async function updateProductMinStockAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.inventario.minimo")) {
+  if (!ctxCanAccess(ctx, "inventario.minimo")) {
     return { ok: false, error: "Sin permiso para cambiar stock mínimo" };
   }
 
@@ -820,7 +829,8 @@ export async function updateProductMinStockAction(
     .eq("organization_id", ctx.organization.id);
 
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
   revalidatePath("/compras/sugeridos");
   revalidatePath("/compras/solicitudes");
   return { ok: true, id: productId };
@@ -831,7 +841,7 @@ export async function softDeleteProductAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.inventario")) {
+  if (!ctxCanAccess(ctx, "inventario.maestro")) {
     return { ok: false, error: "Sin permiso" };
   }
 
@@ -847,7 +857,8 @@ export async function softDeleteProductAction(
     .eq("organization_id", ctx.organization.id);
 
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
   revalidatePath("/compras/sugeridos");
   return { ok: true, id: productId };
 }

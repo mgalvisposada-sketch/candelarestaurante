@@ -177,7 +177,7 @@ export function InventoryListPrintClient({
 
       <div className="no-print space-y-4">
         <div>
-          <Link href="/compras/inventario" className="text-sm text-[var(--accent)]">
+          <Link href="/inventario/maestro" className="text-sm text-[var(--accent)]">
             ← Volver al inventario
           </Link>
         </div>

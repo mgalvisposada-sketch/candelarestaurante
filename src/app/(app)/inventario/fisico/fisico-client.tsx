@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { createPhysicalCountAction } from "../physical-inventory-actions";
+import { createPhysicalCountAction } from "../../compras/physical-inventory-actions";
 import { Badge } from "@/components/ui/primitives";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
 
@@ -49,7 +49,7 @@ export function CreatePhysicalCountForm() {
         startTransition(async () => {
           const r = await createPhysicalCountAction(fd);
           if (!r.ok) setError(r.error ?? "Error");
-          else if (r.id) window.location.href = `/compras/inventario-fisico/${r.id}`;
+          else if (r.id) window.location.href = `/inventario/fisico/${r.id}`;
         });
       }}
     >
@@ -60,7 +60,7 @@ export function CreatePhysicalCountForm() {
         </button>
       </div>
       <p className="text-sm text-[var(--muted)]">
-        El administrador del punto cuenta y envía. Los ajustes al stock los aplica Gestión tras revisar.
+        Conteo a ciegas: quien cuenta no ve el stock del sistema. Gestión compara y aplica (o rechaza) el ajuste.
       </p>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="block text-sm md:col-span-2">
@@ -94,7 +94,7 @@ export function PhysicalCountList({ counts }: { counts: CountListRow[] }) {
       {counts.map((c) => (
         <Link
           key={c.id}
-          href={`/compras/inventario-fisico/${c.id}`}
+          href={`/inventario/fisico/${c.id}`}
           className="block rounded-xl border border-[var(--line)] bg-white px-4 py-3 transition hover:border-[var(--ink)]"
         >
           <div className="flex flex-wrap items-start justify-between gap-3">

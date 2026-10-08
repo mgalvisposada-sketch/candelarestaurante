@@ -78,9 +78,9 @@ function revalidateCompras(requestId?: string) {
   revalidatePath("/compras");
   revalidatePath("/compras/solicitudes");
   if (requestId) revalidatePath(`/compras/solicitudes/${requestId}`);
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/maestro");
   revalidatePath("/compras/sugeridos");
-  revalidatePath("/compras/inventario-fisico");
+  revalidatePath("/inventario/fisico");
   revalidatePath("/solicitudes-pago");
   revalidatePath("/proveedores");
 }

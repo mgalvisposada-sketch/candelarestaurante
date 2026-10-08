@@ -1,89 +1,11 @@
-import { AppHeader } from "@/components/layout/app-header";
-import { getOrgContext } from "@/lib/org-context";
-import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
-import { isSuperAdmin } from "@/types/domain";
-import { createClient } from "@/lib/supabase/server";
-import { redirect, notFound } from "next/navigation";
-import Link from "next/link";
-import { ComprasNav } from "../../compras-nav";
-import {
-  PhysicalCountDetailClient,
-  type CountDetail,
-  type CountItem,
-  type ProductOption,
-} from "./detail-client";
+import { redirect } from "next/navigation";
 
-export default async function InventarioFisicoDetailPage({
+/** Ruta legacy → módulo Inventario. */
+export default async function LegacyComprasInventarioFisicoDetailRedirect({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const ctx = await getOrgContext();
-  if (!ctx) redirect("/login");
-  requireModuleAccess(ctx, "compras.inventario-fisico");
-  if (!ctx.organization) redirect("/empresa");
-
-  const supabase = await createClient();
-  const { data: count } = await supabase
-    .from("physical_inventory_counts")
-    .select(
-      "id, title, status, counted_at, location_label, notes, rejection_reason",
-    )
-    .eq("id", id)
-    .eq("organization_id", ctx.organization.id)
-    .is("deleted_at", null)
-    .maybeSingle();
-
-  if (!count) notFound();
-
-  const [{ data: itemRows }, { data: productRows }] = await Promise.all([
-    supabase
-      .from("physical_inventory_count_items")
-      .select("id, product_id, system_qty, counted_qty, difference_qty, notes")
-      .eq("count_id", id)
-      .eq("organization_id", ctx.organization.id)
-      .is("deleted_at", null),
-    supabase
-      .from("products")
-      .select("id, name, unit, current_stock")
-      .eq("organization_id", ctx.organization.id)
-      .is("deleted_at", null)
-      .eq("is_active", true)
-      .order("name"),
-  ]);
-
-  const productMap = new Map(
-    (productRows ?? []).map((p) => [p.id, p]),
-  );
-  const items: CountItem[] = ((itemRows ?? []) as CountItem[]).map((item) => {
-    const p = productMap.get(item.product_id);
-    return {
-      ...item,
-      product_name: p?.name ?? item.product_id,
-      unit: p?.unit ?? "",
-    };
-  });
-
-  return (
-    <>
-      <AppHeader title="Compras" subtitle="Detalle de inventario físico" />
-      <main className="space-y-6 p-8">
-        <ComprasNav
-          permissions={ctx.permissions}
-          isSuperAdmin={isSuperAdmin(ctx.role)}
-        />
-        <Link href="/compras/inventario-fisico" className="text-sm text-[var(--accent)]">
-          ← Volver a inventarios físicos
-        </Link>
-        <PhysicalCountDetailClient
-          count={count as CountDetail}
-          items={items}
-          products={(productRows ?? []) as ProductOption[]}
-          canEdit={ctxCanAccess(ctx, "compras.inventario-fisico")}
-          canAdjust={ctxCanAccess(ctx, "compras.inventario-fisico.ajustar")}
-        />
-      </main>
-    </>
-  );
+  redirect(`/inventario/fisico/${id}`);
 }

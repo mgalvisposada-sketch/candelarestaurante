@@ -141,7 +141,7 @@ export default async function CompraSolicitudDetailPage({
               Cree categorías y productos antes de armar la solicitud.
             </p>
             <Link
-              href="/compras/inventario"
+              href="/inventario/maestro"
               className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
             >
               Ir a Inventario
@@ -161,7 +161,7 @@ export default async function CompraSolicitudDetailPage({
           links={(linkRows ?? []) as CategorySupplierLink[]}
           canCreate={ctxCanAccess(ctx, "compras.solicitudes.crear")}
           canCreateProduct={
-            ctxCanAccess(ctx, "compras.inventario") ||
+            ctxCanAccess(ctx, "inventario.maestro") ||
             ctxCanAccess(ctx, "compras.solicitudes.crear") ||
             ctxCanAccess(ctx, "compras.solicitudes.recibir.extras")
           }

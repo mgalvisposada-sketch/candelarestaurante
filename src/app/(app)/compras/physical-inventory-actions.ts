@@ -28,9 +28,9 @@ function parseNumber(raw: string | null | undefined, fallback?: number) {
 }
 
 function revalidatePhysical(countId?: string) {
-  revalidatePath("/compras/inventario-fisico");
-  if (countId) revalidatePath(`/compras/inventario-fisico/${countId}`);
-  revalidatePath("/compras/inventario");
+  revalidatePath("/inventario/fisico");
+  if (countId) revalidatePath(`/inventario/fisico/${countId}`);
+  revalidatePath("/inventario/maestro");
   revalidatePath("/compras/sugeridos");
 }
 
@@ -39,7 +39,7 @@ export async function createPhysicalCountAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.inventario-fisico")) {
+  if (!ctxCanAccess(ctx, "inventario.fisico")) {
     return { ok: false, error: "Sin permiso" };
   }
 
@@ -81,7 +81,7 @@ export async function upsertPhysicalCountItemAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.inventario-fisico")) {
+  if (!ctxCanAccess(ctx, "inventario.fisico")) {
     return { ok: false, error: "Sin permiso" };
   }
 
@@ -114,7 +114,7 @@ export async function upsertPhysicalCountItemAction(
 
   const { data: product } = await supabase
     .from("products")
-    .select("id, current_stock")
+    .select("id")
     .eq("id", parsed.data.product_id)
     .eq("organization_id", ctx.organization.id)
     .is("deleted_at", null)
@@ -129,11 +129,11 @@ export async function upsertPhysicalCountItemAction(
     .is("deleted_at", null)
     .maybeSingle();
 
+  // Conteo a ciegas: system_qty se congela al enviar a revisión, no al registrar.
   if (existing) {
     const { error } = await supabase
       .from("physical_inventory_count_items")
       .update({
-        system_qty: Number(product.current_stock || 0),
         counted_qty: countedQty,
         notes: emptyToNull(parsed.data.notes),
         updated_by: ctx.userId,
@@ -150,7 +150,7 @@ export async function upsertPhysicalCountItemAction(
       organization_id: ctx.organization.id,
       count_id: countId,
       product_id: product.id,
-      system_qty: Number(product.current_stock || 0),
+      system_qty: 0,
       counted_qty: countedQty,
       notes: emptyToNull(parsed.data.notes),
       created_by: ctx.userId,
@@ -164,25 +164,86 @@ export async function upsertPhysicalCountItemAction(
   return { ok: true, id: data.id };
 }
 
+export async function removePhysicalCountItemAction(
+  countId: string,
+  itemId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "inventario.fisico")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const supabase = await createClient();
+  const { data: count } = await supabase
+    .from("physical_inventory_counts")
+    .select("id, status")
+    .eq("id", countId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!count) return { ok: false, error: "Conteo no encontrado" };
+  if (count.status !== "BORRADOR") {
+    return { ok: false, error: "Solo se editan conteos en borrador" };
+  }
+
+  const { error } = await supabase
+    .from("physical_inventory_count_items")
+    .delete()
+    .eq("id", itemId)
+    .eq("count_id", countId)
+    .eq("organization_id", ctx.organization.id);
+
+  if (error) return { ok: false, error: error.message };
+  revalidatePhysical(countId);
+  return { ok: true, id: itemId };
+}
+
 export async function submitPhysicalCountAction(
   countId: string,
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.inventario-fisico")) {
+  if (!ctxCanAccess(ctx, "inventario.fisico")) {
     return { ok: false, error: "Sin permiso" };
   }
 
   const supabase = await createClient();
-  const { count } = await supabase
+  const { data: items } = await supabase
     .from("physical_inventory_count_items")
-    .select("id", { count: "exact", head: true })
+    .select("id, product_id")
     .eq("count_id", countId)
     .eq("organization_id", ctx.organization.id)
     .is("deleted_at", null);
 
-  if (!count || count < 1) {
+  if (!items?.length) {
     return { ok: false, error: "Agregue al menos un producto contado" };
+  }
+
+  // Congela stock del sistema al enviar (auditoría a ciegas hasta este momento).
+  const productIds = [...new Set(items.map((i) => i.product_id))];
+  const { data: products } = await supabase
+    .from("products")
+    .select("id, current_stock")
+    .eq("organization_id", ctx.organization.id)
+    .in("id", productIds)
+    .is("deleted_at", null);
+
+  const stockByProduct = new Map(
+    (products ?? []).map((p) => [p.id, Number(p.current_stock || 0)]),
+  );
+
+  for (const item of items) {
+    const systemQty = stockByProduct.get(item.product_id) ?? 0;
+    const { error: snapError } = await supabase
+      .from("physical_inventory_count_items")
+      .update({
+        system_qty: systemQty,
+        updated_by: ctx.userId,
+      })
+      .eq("id", item.id)
+      .eq("organization_id", ctx.organization.id);
+    if (snapError) return { ok: false, error: snapError.message };
   }
 
   const { error } = await supabase
@@ -207,7 +268,7 @@ export async function rejectPhysicalCountAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.inventario-fisico.ajustar")) {
+  if (!ctxCanAccess(ctx, "inventario.fisico.ajustar")) {
     return { ok: false, error: "Sin permiso para rechazar/ajustar" };
   }
 
@@ -243,7 +304,7 @@ export async function applyPhysicalCountAdjustmentsAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.inventario-fisico.ajustar")) {
+  if (!ctxCanAccess(ctx, "inventario.fisico.ajustar")) {
     return { ok: false, error: "Sin permiso para ajustar inventario" };
   }
 

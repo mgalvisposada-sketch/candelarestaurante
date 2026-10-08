@@ -70,10 +70,16 @@ export const NAV_ITEMS = [
     hint: "Aprobar y pagar",
   },
   {
+    href: "/inventario",
+    label: "Inventario",
+    mvp: 2,
+    hint: "Maestro de productos e inventario físico",
+  },
+  {
     href: "/compras",
     label: "Compras",
     mvp: 2,
-    hint: "Inventario y solicitudes de insumos",
+    hint: "Solicitudes y pedidos de insumos",
   },
   {
     href: "/presupuesto",
@@ -142,7 +148,7 @@ export const NAV_GROUPS = [
   {
     id: "costos",
     label: "Costos",
-    hrefs: ["/proveedores", "/compras"] as const,
+    hrefs: ["/proveedores", "/inventario", "/compras"] as const,
   },
   {
     id: "gastos",

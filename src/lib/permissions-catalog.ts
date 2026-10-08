@@ -142,19 +142,35 @@ export const APP_MODULES: AppModuleDef[] = [
     ],
   },
   {
+    key: "inventario",
+    label: "Inventario",
+    href: "/inventario",
+    mvp: 2,
+    submodules: [
+      {
+        key: "inventario.maestro",
+        label: "Maestro (categorías, unidades y productos)",
+      },
+      {
+        key: "inventario.minimo",
+        label: "Cambiar stock mínimo",
+      },
+      {
+        key: "inventario.fisico",
+        label: "Inventario físico (conteo)",
+      },
+      {
+        key: "inventario.fisico.ajustar",
+        label: "Ajustar stock desde inventario físico",
+      },
+    ],
+  },
+  {
     key: "compras",
     label: "Compras",
     href: "/compras",
     mvp: 2,
     submodules: [
-      {
-        key: "compras.inventario",
-        label: "Inventario (categorías, unidades y productos)",
-      },
-      {
-        key: "compras.inventario.minimo",
-        label: "Cambiar stock mínimo",
-      },
       {
         key: "compras.sugeridos",
         label: "Sugerido comprar (bajo mínimo)",
@@ -186,14 +202,6 @@ export const APP_MODULES: AppModuleDef[] = [
       {
         key: "compras.proveedores",
         label: "Proveedores por categoría (lead times)",
-      },
-      {
-        key: "compras.inventario-fisico",
-        label: "Inventario físico (conteo)",
-      },
-      {
-        key: "compras.inventario-fisico.ajustar",
-        label: "Ajustar stock desde inventario físico",
       },
     ],
   },
@@ -302,11 +310,12 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
   ADMIN_LOCAL: [
     "personal",
     "personal.novedades",
+    "inventario",
+    "inventario.maestro",
+    "inventario.minimo",
+    "inventario.fisico",
     "compras",
-    "compras.inventario",
-    "compras.inventario.minimo",
     "compras.sugeridos",
-    "compras.inventario-fisico",
     "compras.solicitudes",
     "compras.solicitudes.crear",
     "compras.solicitudes.recibir",
@@ -378,6 +387,21 @@ export function moduleKeyFromPath(pathname: string): string | null {
   return mod?.key ?? null;
 }
 
+/**
+ * Claves legacy (cuando inventario vivía bajo Compras) ↔ claves actuales.
+ * Permite que permisos ya guardados en DB sigan funcionando.
+ */
+const PERMISSION_ALIASES: Record<string, readonly string[]> = {
+  "inventario.maestro": ["compras.inventario"],
+  "inventario.minimo": ["compras.inventario.minimo"],
+  "inventario.fisico": ["compras.inventario-fisico"],
+  "inventario.fisico.ajustar": ["compras.inventario-fisico.ajustar"],
+  "compras.inventario": ["inventario.maestro"],
+  "compras.inventario.minimo": ["inventario.minimo"],
+  "compras.inventario-fisico": ["inventario.fisico"],
+  "compras.inventario-fisico.ajustar": ["inventario.fisico.ajustar"],
+};
+
 export function hasPermission(
   granted: ReadonlySet<string> | readonly string[],
   key: string,
@@ -386,10 +410,19 @@ export function hasPermission(
   if (opts?.isSuperAdmin) return true;
   const set = granted instanceof Set ? granted : new Set(granted);
   if (set.has(key)) return true;
+  for (const alias of PERMISSION_ALIASES[key] ?? []) {
+    if (set.has(alias)) return true;
+  }
   // Entrar al módulo: basta con cualquier submódulo concedido
   if (!key.includes(".")) {
     for (const g of set) {
       if (g.startsWith(`${key}.`)) return true;
+    }
+    // Legacy: módulo inventario si tenía permisos de inventario bajo compras
+    if (key === "inventario") {
+      for (const g of set) {
+        if (g.startsWith("compras.inventario")) return true;
+      }
     }
   }
   return false;

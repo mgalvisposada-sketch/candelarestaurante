@@ -7,27 +7,28 @@ import { cn } from "@/lib/utils";
 
 const LINKS = [
   {
-    href: "/compras/solicitudes",
-    label: "Solicitudes",
-    permission: "compras.solicitudes",
+    href: "/inventario/maestro",
+    label: "Maestro",
+    permission: "inventario.maestro",
     active: (pathname: string) =>
-      pathname.startsWith("/compras/solicitudes") || pathname === "/compras",
+      pathname.startsWith("/inventario/maestro") ||
+      pathname === "/inventario",
   },
   {
-    href: "/compras/sugeridos",
-    label: "Sugeridos",
-    permission: "compras.sugeridos",
-    active: (pathname: string) => pathname.startsWith("/compras/sugeridos"),
+    href: "/inventario/lista",
+    label: "Lista / imprimir",
+    permission: "inventario.maestro",
+    active: (pathname: string) => pathname.startsWith("/inventario/lista"),
   },
   {
-    href: "/compras/proveedores",
-    label: "Proveedores",
-    permission: "compras.proveedores",
-    active: (pathname: string) => pathname.startsWith("/compras/proveedores"),
+    href: "/inventario/fisico",
+    label: "Inv. físico",
+    permission: "inventario.fisico",
+    active: (pathname: string) => pathname.startsWith("/inventario/fisico"),
   },
 ] as const;
 
-export function ComprasNav({
+export function InventarioNav({
   permissions = [],
   isSuperAdmin = false,
 }: {

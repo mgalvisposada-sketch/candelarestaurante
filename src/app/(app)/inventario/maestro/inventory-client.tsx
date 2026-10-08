@@ -12,7 +12,7 @@ import {
   updateProductAction,
   updateProductMinStockAction,
   updateProductUnitAction,
-} from "../inventory-actions";
+} from "../../compras/inventory-actions";
 import { money } from "@/lib/money";
 import { suggestedPurchaseQty } from "@/lib/inventory/cost";
 import {
