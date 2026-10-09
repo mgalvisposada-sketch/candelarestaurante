@@ -385,6 +385,33 @@ export function isValidPermissionKey(key: string): boolean {
   return ALL_PERMISSION_KEYS.includes(key);
 }
 
+/** Claves guardadas cuando Inventario vivía bajo Compras → claves actuales. */
+const LEGACY_PERMISSION_TO_CURRENT: Record<string, string> = {
+  "compras.inventario": "inventario.maestro",
+  "compras.inventario.minimo": "inventario.minimo",
+  "compras.inventario-fisico": "inventario.fisico",
+  "compras.inventario-fisico.ajustar": "inventario.fisico.ajustar",
+};
+
+/**
+ * Mapea aliases legacy y descarta claves que ya no existen en el catálogo.
+ * Usar al leer de DB y antes de guardar desde Configuración.
+ */
+export function normalizePermissionKeys(
+  keys: readonly string[] | null | undefined,
+): string[] {
+  const out = new Set<string>();
+  for (const raw of keys ?? []) {
+    const key = LEGACY_PERMISSION_TO_CURRENT[raw] ?? raw;
+    if (isValidPermissionKey(key)) out.add(key);
+  }
+  // Si hay submódulos de inventario, asegurar el módulo padre.
+  for (const key of [...out]) {
+    if (key.startsWith("inventario.")) out.add("inventario");
+  }
+  return [...out];
+}
+
 export function moduleKeyFromPath(pathname: string): string | null {
   const segment = pathname.split("/").filter(Boolean)[0];
   if (!segment) return null;

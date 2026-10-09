@@ -4,6 +4,7 @@ import {
   firstAllowedHref,
   hasPermission,
   moduleKeyFromPath,
+  normalizePermissionKeys,
   ROLE_DEFAULT_PERMISSIONS,
 } from "@/lib/permissions-catalog";
 import type { OrgContext } from "@/lib/org-context";
@@ -23,7 +24,8 @@ export function resolveEffectivePermissions(opts: {
     return ROLE_DEFAULT_PERMISSIONS.SUPER_ADMIN;
   }
   if (opts.storedKeys && opts.storedKeys.length > 0) {
-    return [...opts.storedKeys];
+    const normalized = normalizePermissionKeys(opts.storedKeys);
+    if (normalized.length > 0) return normalized;
   }
   if (opts.role && ROLE_DEFAULT_PERMISSIONS[opts.role]) {
     return [...ROLE_DEFAULT_PERMISSIONS[opts.role]];

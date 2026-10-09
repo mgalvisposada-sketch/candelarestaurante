@@ -5,7 +5,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { OrgContext } from "@/lib/org-context";
 import { getOrgContext } from "@/lib/org-context";
-import { ROLE_DEFAULT_PERMISSIONS } from "@/lib/permissions-catalog";
+import {
+  normalizePermissionKeys,
+  ROLE_DEFAULT_PERMISSIONS,
+} from "@/lib/permissions-catalog";
 import { ctxCanAccess } from "@/lib/permissions";
 import { isSuperAdmin, type AppRole } from "@/types/domain";
 import {
@@ -429,12 +432,19 @@ export async function saveUserPermissionsAction(
 
   const parsed = saveUserPermissionsSchema.safeParse({
     membership_id: membershipId,
-    permission_keys: permissionKeys,
+    // Normaliza legacy (compras.inventario* → inventario.*) y descarta basura.
+    permission_keys: normalizePermissionKeys(permissionKeys),
   });
   if (!parsed.success) {
+    const invalid = permissionKeys.filter(
+      (k) => !normalizePermissionKeys([k]).length,
+    );
     return {
       ok: false,
-      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+      error:
+        invalid.length > 0
+          ? `Hay claves de permiso inválidas: ${invalid.slice(0, 8).join(", ")}`
+          : (parsed.error.issues[0]?.message ?? "Datos inválidos"),
     };
   }
 
