@@ -21,18 +21,31 @@ function toggleKey(keys: Set<string>, key: string, on: boolean) {
   return next;
 }
 
+const PRIVILEGED_KEYS = new Set([
+  "configuracion.usuarios",
+  "configuracion.permisos",
+]);
+
 export function PermissionsManager({
   users,
+  canGrantPrivilegedConfig = false,
 }: {
   users: PermissionUserOption[];
+  /** Solo SUPER_ADMIN puede otorgar admin de usuarios/permisos. */
+  canGrantPrivilegedConfig?: boolean;
 }) {
-  const [selectedId, setSelectedId] = useState(users[0]?.membership_id ?? "");
+  const editableUsers = useMemo(
+    () => users.filter((u) => u.role !== "SUPER_ADMIN"),
+    [users],
+  );
+  const initialUser = editableUsers[0] ?? users[0] ?? null;
+  const [selectedId, setSelectedId] = useState(initialUser?.membership_id ?? "");
   const selected = useMemo(
     () => users.find((u) => u.membership_id === selectedId) ?? null,
     [users, selectedId],
   );
   const [draft, setDraft] = useState<Set<string>>(
-    () => new Set(users[0]?.permission_keys ?? []),
+    () => new Set(initialUser?.permission_keys ?? []),
   );
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
@@ -91,7 +104,8 @@ export function PermissionsManager({
             {users.map((u) => (
               <option key={u.membership_id} value={u.membership_id}>
                 {(u.full_name || u.email || "Sin nombre") +
-                  ` · ${ROLE_LABELS[u.role]}`}
+                  ` · ${ROLE_LABELS[u.role]}` +
+                  (u.role === "SUPER_ADMIN" ? " (no editable)" : "")}
               </option>
             ))}
           </select>
@@ -116,8 +130,15 @@ export function PermissionsManager({
           <div className="space-y-4">
             {APP_MODULES.filter((m) => m.mvp <= 3 || m.key === "reportes").map(
               (mod) => {
+                const subs = mod.submodules.filter(
+                  (s) =>
+                    canGrantPrivilegedConfig || !PRIVILEGED_KEYS.has(s.key),
+                );
                 const moduleOn = draft.has(mod.key);
-                const allSubsOn = mod.submodules.every((s) => draft.has(s.key));
+                const allSubsOn =
+                  subs.length === 0
+                    ? moduleOn
+                    : subs.every((s) => draft.has(s.key));
                 return (
                   <div
                     key={mod.key}
@@ -130,13 +151,13 @@ export function PermissionsManager({
                         ref={(el) => {
                           if (el) {
                             el.indeterminate =
-                              moduleOn && !allSubsOn && mod.submodules.length > 0;
+                              moduleOn && !allSubsOn && subs.length > 0;
                           }
                         }}
                         onChange={(e) =>
                           setModule(
                             mod.key,
-                            mod.submodules.map((s) => s.key),
+                            subs.map((s) => s.key),
                             e.target.checked,
                           )
                         }
@@ -149,9 +170,9 @@ export function PermissionsManager({
                         {mod.href}
                       </span>
                     </label>
-                    {mod.submodules.length > 0 ? (
+                    {subs.length > 0 ? (
                       <div className="mt-3 grid gap-2 border-t border-[var(--line)] pt-3 sm:grid-cols-2">
-                        {mod.submodules.map((sub) => (
+                        {subs.map((sub) => (
                           <label
                             key={sub.key}
                             className="flex items-center gap-2 text-sm"

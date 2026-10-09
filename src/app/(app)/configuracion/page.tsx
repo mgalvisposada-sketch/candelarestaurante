@@ -51,7 +51,10 @@ export default async function ConfiguracionPage() {
   }
 
   const canManageUsers = isSuperAdmin(ctx.role);
-  const canManagePermissions = isSuperAdmin(ctx.role);
+  const canManagePermissions =
+    isSuperAdmin(ctx.role) ||
+    ctx.role === "GESTION" ||
+    ctxCanAccess(ctx, "configuracion.permisos");
 
   const supabase = await createClient();
   const { data: memberships } = await supabase
@@ -136,7 +139,10 @@ export default async function ConfiguracionPage() {
               title="Permisos por módulo"
               description="Define a qué módulos y submódulos puede entrar cada usuario. El super admin siempre tiene acceso total."
             />
-            <PermissionsManager users={permissionUsers} />
+            <PermissionsManager
+              users={permissionUsers}
+              canGrantPrivilegedConfig={isSuperAdmin(ctx.role)}
+            />
           </section>
         ) : null}
 
@@ -165,7 +171,7 @@ export default async function ConfiguracionPage() {
                   {role === "SUPER_ADMIN"
                     ? " — usuarios, permisos y configuración crítica"
                     : role === "GESTION"
-                      ? " — operación diaria (sin admin de usuarios)"
+                      ? " — operación diaria y permisos de módulos (sin crear usuarios)"
                       : role === "ADMIN_LOCAL"
                         ? " — administrador del local: solo reportar novedades"
                         : role === "SOCIO"

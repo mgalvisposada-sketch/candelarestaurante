@@ -1076,6 +1076,195 @@ export async function receivePurchaseItemsAction(
 }
 
 /**
+ * Devuelve un ítem recibido (aún sin facturar) a pendiente por recibir.
+ * Revierte stock/costo de las recepciones COMPRA de ese ítem.
+ */
+export async function undoReceivePurchaseItemAction(
+  requestId: string,
+  itemId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.recibir")) {
+    return { ok: false, error: "Sin permiso para corregir recepción" };
+  }
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status, payment_request_id")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (
+    !["PEDIDA", "RECIBIDA_PARCIAL", "RECIBIDA", "FACTURA_ACEPTADA"].includes(
+      request.status,
+    )
+  ) {
+    return {
+      ok: false,
+      error: "La solicitud no admite corrección de recepción en este estado",
+    };
+  }
+
+  const { data: item } = await supabase
+    .from("purchase_request_items")
+    .select(
+      "id, product_id, quantity_received, status, invoice_payment_request_id, notes",
+    )
+    .eq("id", itemId)
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!item) return { ok: false, error: "Ítem no encontrado" };
+
+  const receivedQty = roundPurchaseQty(Number(item.quantity_received || 0));
+  if (receivedQty <= 0) {
+    return { ok: false, error: "Este ítem no tiene recepción para deshacer" };
+  }
+  if (item.invoice_payment_request_id) {
+    return {
+      ok: false,
+      error:
+        "Ya tiene factura enviada. No se puede devolver a pendiente; anule la factura en Solicitudes de pago si aplica.",
+    };
+  }
+
+  const { data: movements } = await supabase
+    .from("inventory_movements")
+    .select("id, quantity, unit_cost")
+    .eq("organization_id", ctx.organization.id)
+    .eq("product_id", item.product_id)
+    .eq("reference_type", "purchase_request_items")
+    .eq("reference_id", item.id)
+    .eq("movement_type", "COMPRA");
+
+  const movedQty = roundPurchaseQty(
+    (movements ?? []).reduce((sum, m) => sum + Number(m.quantity || 0), 0),
+  );
+  const qtyToReverse = movedQty > 0 ? movedQty : receivedQty;
+  const costBasis =
+    (movements ?? []).reduce(
+      (sum, m) => sum + Number(m.quantity || 0) * Number(m.unit_cost || 0),
+      0,
+    ) / (qtyToReverse || 1);
+
+  const { data: product } = await supabase
+    .from("products")
+    .select("id, current_stock, unit_cost")
+    .eq("id", item.product_id)
+    .eq("organization_id", ctx.organization.id)
+    .maybeSingle();
+
+  if (product && qtyToReverse > 0) {
+    const stockBefore = Number(product.current_stock || 0);
+    const costBefore = Number(product.unit_cost || 0);
+    if (stockBefore + 1e-9 < qtyToReverse) {
+      return {
+        ok: false,
+        error: `No hay stock suficiente para deshacer (${stockBefore} < ${qtyToReverse}). Ajuste inventario primero.`,
+      };
+    }
+    const stockAfter = roundPurchaseQty(stockBefore - qtyToReverse);
+    let costAfter = costBefore;
+    if (stockAfter <= 0) {
+      costAfter = 0;
+    } else {
+      const remainingValue = stockBefore * costBefore - qtyToReverse * costBasis;
+      costAfter = Math.max(0, remainingValue / stockAfter);
+    }
+
+    const { error: stockError } = await supabase
+      .from("products")
+      .update({
+        current_stock: stockAfter,
+        unit_cost: costAfter,
+        updated_by: ctx.userId,
+      })
+      .eq("id", product.id)
+      .eq("organization_id", ctx.organization.id);
+    if (stockError) return { ok: false, error: stockError.message };
+
+    const { error: movError } = await supabase.from("inventory_movements").insert({
+      organization_id: ctx.organization.id,
+      product_id: product.id,
+      movement_type: "AJUSTE_MANUAL",
+      quantity: -qtyToReverse,
+      unit_cost: costBasis,
+      stock_before: stockBefore,
+      stock_after: stockAfter,
+      unit_cost_before: costBefore,
+      unit_cost_after: costAfter,
+      reference_type: "purchase_request_items",
+      reference_id: item.id,
+      notes: `Reverso recepción solicitud ${requestId}`,
+      created_by: ctx.userId,
+    });
+    if (movError) return { ok: false, error: movError.message };
+  }
+
+  const cleanedNotes = (item.notes ?? "")
+    .split(" · ")
+    .map((part: string) => part.trim())
+    .filter(
+      (part: string) =>
+        Boolean(part) && !part.toLowerCase().startsWith("cierre faltante"),
+    )
+    .join(" · ");
+
+  const { error: itemError } = await supabase
+    .from("purchase_request_items")
+    .update({
+      quantity_received: 0,
+      status: "APROBADO",
+      notes: cleanedNotes || null,
+      updated_by: ctx.userId,
+    })
+    .eq("id", item.id)
+    .eq("organization_id", ctx.organization.id);
+  if (itemError) return { ok: false, error: itemError.message };
+
+  const { data: refreshed } = await supabase
+    .from("purchase_request_items")
+    .select("quantity_approved, quantity_requested, quantity_received, status")
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  const allClosed = (refreshed ?? []).every((i) => isPurchaseItemClosed(i));
+  const anyReceived = (refreshed ?? []).some(
+    (i) => Number(i.quantity_received || 0) > 0,
+  );
+  const alreadyInvoiced = Boolean(request.payment_request_id);
+
+  let nextStatus = request.status;
+  if (allClosed) {
+    nextStatus = alreadyInvoiced ? "FACTURA_ACEPTADA" : "RECIBIDA";
+  } else if (anyReceived) {
+    nextStatus = "RECIBIDA_PARCIAL";
+  } else {
+    nextStatus = "PEDIDA";
+  }
+
+  await supabase
+    .from("purchase_requests")
+    .update({
+      status: nextStatus,
+      received_at: allClosed ? new Date().toISOString() : null,
+      updated_by: ctx.userId,
+    })
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id);
+
+  revalidateCompras(requestId);
+  return { ok: true, id: itemId };
+}
+
+/**
  * Agrega un producto al pedido de un proveedor en recepción.
  * Queda pendiente (APROBADO), igual que los demás; se recibe después.
  */

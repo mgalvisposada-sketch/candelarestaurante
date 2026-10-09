@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { OrgContext } from "@/lib/org-context";
 import { getOrgContext } from "@/lib/org-context";
 import { ROLE_DEFAULT_PERMISSIONS } from "@/lib/permissions-catalog";
+import { ctxCanAccess } from "@/lib/permissions";
 import { isSuperAdmin, type AppRole } from "@/types/domain";
 import {
   createSystemUserSchema,
@@ -29,6 +30,29 @@ async function requireSuperAdmin(): Promise<
     return {
       ok: false,
       error: "Solo un super admin puede gestionar usuarios del sistema",
+    };
+  }
+  return {
+    ok: true,
+    ctx: ctx as AdminCtx,
+  };
+}
+
+async function requirePermissionsAdmin(): Promise<
+  { ok: true; ctx: AdminCtx } | { ok: false; error: string }
+> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) {
+    return { ok: false, error: "Sin organización" };
+  }
+  const canManage =
+    isSuperAdmin(ctx.role) ||
+    ctx.role === "GESTION" ||
+    ctxCanAccess(ctx, "configuracion.permisos");
+  if (!canManage) {
+    return {
+      ok: false,
+      error: "Sin permiso para editar permisos por módulo",
     };
   }
   return {
@@ -399,7 +423,7 @@ export async function saveUserPermissionsAction(
   membershipId: string,
   permissionKeys: string[],
 ): Promise<ActionResult> {
-  const gate = await requireSuperAdmin();
+  const gate = await requirePermissionsAdmin();
   if (!gate.ok) return { ok: false, error: gate.error };
   const { ctx } = gate;
 
@@ -427,7 +451,22 @@ export async function saveUserPermissionsAction(
     return { ok: false, error: loadError?.message ?? "Usuario no encontrado" };
   }
 
-  const uniqueKeys = [...new Set(parsed.data.permission_keys)];
+  if (membership.role === "SUPER_ADMIN") {
+    return {
+      ok: false,
+      error: "Los permisos del super admin no se editan (tiene acceso total)",
+    };
+  }
+
+  // Solo SUPER_ADMIN puede otorgar administración de usuarios/permisos.
+  let uniqueKeys = [...new Set(parsed.data.permission_keys)];
+  if (!isSuperAdmin(ctx.role)) {
+    const privileged = new Set([
+      "configuracion.usuarios",
+      "configuracion.permisos",
+    ]);
+    uniqueKeys = uniqueKeys.filter((k) => !privileged.has(k));
+  }
 
   if (uniqueKeys.length === 0) {
     return {
@@ -436,7 +475,21 @@ export async function saveUserPermissionsAction(
     };
   }
 
-  const { error: deleteError } = await supabase
+  // Service role: evita fallos RLS en producción tras el chequeo de app.
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch (e) {
+    return {
+      ok: false,
+      error:
+        e instanceof Error
+          ? e.message
+          : "Falta SUPABASE_SERVICE_ROLE_KEY en el servidor",
+    };
+  }
+
+  const { error: deleteError } = await admin
     .from("user_module_permissions")
     .delete()
     .eq("membership_id", membership.id)
@@ -451,7 +504,7 @@ export async function saveUserPermissionsAction(
     created_by: ctx.userId,
     updated_by: ctx.userId,
   }));
-  const { error: insertError } = await supabase
+  const { error: insertError } = await admin
     .from("user_module_permissions")
     .insert(rows);
   if (insertError) return { ok: false, error: insertError.message };

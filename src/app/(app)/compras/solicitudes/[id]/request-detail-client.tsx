@@ -20,6 +20,7 @@ import {
   rejectPurchaseRequestAction,
   removePurchaseRequestItemAction,
   submitPurchaseRequestAction,
+  undoReceivePurchaseItemAction,
   updatePurchaseRequestItemAction,
 } from "../../purchase-actions";
 import { createProductFromRequestAction } from "../../inventory-actions";
@@ -1055,7 +1056,67 @@ function isReceiveExtraItem(item: ItemRow) {
   );
 }
 
-function ReceiveItemRow({ item }: { item: ItemRow }) {
+function UndoReceiveButton({
+  requestId,
+  item,
+  pending,
+  startTransition,
+  setError,
+}: {
+  requestId: string;
+  item: ItemRow;
+  pending: boolean;
+  startTransition: TransitionStartFunction;
+  setError: Dispatch<SetStateAction<string | null>>;
+}) {
+  const router = useRouter();
+  const received = roundPurchaseQty(Number(item.quantity_received || 0));
+  const canUndo =
+    received > 0 && !item.invoice_payment_request_id;
+
+  if (!canUndo) return null;
+
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-100 disabled:opacity-50"
+      onClick={() => {
+        if (
+          !confirm(
+            `¿Devolver «${item.product_name}» a pendiente por recibir?\n\nSe quita la recepción (${formatPurchaseQty(received)} ${item.unit}) del stock para que pueda cargarla de nuevo correctamente.`,
+          )
+        ) {
+          return;
+        }
+        setError(null);
+        startTransition(async () => {
+          const r = await undoReceivePurchaseItemAction(requestId, item.id);
+          if (!r.ok) setError(r.error ?? "Error");
+          else router.refresh();
+        });
+      }}
+    >
+      Devolver a pendiente
+    </button>
+  );
+}
+
+function ReceiveItemRow({
+  item,
+  requestId,
+  canUndoReceive,
+  pending,
+  startTransition,
+  setError,
+}: {
+  item: ItemRow;
+  requestId?: string;
+  canUndoReceive?: boolean;
+  pending?: boolean;
+  startTransition?: TransitionStartFunction;
+  setError?: Dispatch<SetStateAction<string | null>>;
+}) {
   const [disposition, setDisposition] = useState<"pendiente" | "llego" | "no_llegara">(
     "pendiente",
   );
@@ -1079,6 +1140,21 @@ function ReceiveItemRow({ item }: { item: ItemRow }) {
       ? totalCost / qtyNow
       : null;
 
+  const undoControls =
+    canUndoReceive &&
+    requestId &&
+    startTransition &&
+    setError &&
+    pending !== undefined ? (
+      <UndoReceiveButton
+        requestId={requestId}
+        item={item}
+        pending={pending}
+        startTransition={startTransition}
+        setError={setError}
+      />
+    ) : null;
+
   if (closed) {
     return (
       <div className="rounded-lg border border-[var(--line)] bg-neutral-50 px-3 py-3 text-sm">
@@ -1090,24 +1166,33 @@ function ReceiveItemRow({ item }: { item: ItemRow }) {
               {formatPurchaseQty(received)} {item.unit}
             </p>
           </div>
-          <Badge
-            tone={
-              item.status === "CANCELADO" && received <= 0 ? "warn" : "ok"
-            }
-          >
-            {item.status === "CANCELADO"
-              ? received > 0
-                ? "Recibido parcial · resto no llega"
-                : "No llegará"
-              : isReceiveExtraItem(item)
-                ? "Agregado en recepción"
-                : received > ordered
-                  ? "Recibido (+extra)"
-                  : "Recibido completo"}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge
+              tone={
+                item.status === "CANCELADO" && received <= 0 ? "warn" : "ok"
+              }
+            >
+              {item.status === "CANCELADO"
+                ? received > 0
+                  ? "Recibido parcial · resto no llega"
+                  : "No llegará"
+                : isReceiveExtraItem(item)
+                  ? "Agregado en recepción"
+                  : received > ordered
+                    ? "Recibido (+extra)"
+                    : "Recibido completo"}
+            </Badge>
+            {undoControls}
+          </div>
         </div>
         {item.notes ? (
           <p className="mt-1 text-xs text-[var(--muted)]">{item.notes}</p>
+        ) : null}
+        {undoControls ? (
+          <p className="mt-2 text-xs text-amber-900/80">
+            Si digitó mal cantidad o costo, devuélvalo a pendiente y vuelva a
+            recibir.
+          </p>
         ) : null}
       </div>
     );
@@ -1134,6 +1219,7 @@ function ReceiveItemRow({ item }: { item: ItemRow }) {
               : ""}
           </p>
         </div>
+        {undoControls}
       </div>
 
       <fieldset className="flex flex-wrap gap-3 text-sm">
@@ -1296,6 +1382,7 @@ function SupplierInvoiceForm({
   supplierId,
   supplierName,
   items,
+  canUndoReceive,
   pending,
   startTransition,
   setError,
@@ -1304,6 +1391,7 @@ function SupplierInvoiceForm({
   supplierId: string;
   supplierName: string;
   items: ItemRow[];
+  canUndoReceive?: boolean;
   pending: boolean;
   startTransition: TransitionStartFunction;
   setError: Dispatch<SetStateAction<string | null>>;
@@ -1379,11 +1467,12 @@ function SupplierInvoiceForm({
         </h5>
         <p className="mt-1 text-xs text-[var(--muted)]">
           Solo lo recibido de este proveedor. Cargos suman y descuentos restan
-          al pago; con «Afecta costo» se prorratean en los productos.
+          al pago; con «Afecta costo» se prorratean en los productos. Si algo
+          quedó mal recibido, use «Devolver a pendiente» antes de facturar.
         </p>
       </div>
 
-      <ul className="space-y-1 rounded-lg bg-neutral-50 px-3 py-2 text-sm">
+      <ul className="space-y-2 rounded-lg bg-neutral-50 px-3 py-2 text-sm">
         {billable.map((item) => {
           const received = roundPurchaseQty(Number(item.quantity_received || 0));
           const unitCost = Number(item.unit_cost_estimate || 0);
@@ -1391,14 +1480,25 @@ function SupplierInvoiceForm({
           const lineBase = roundMoney(received * unitCost);
           return (
             <li key={item.id} className="space-y-0.5">
-              <div className="flex justify-between gap-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <span>
                   {item.product_name}{" "}
                   <span className="text-[var(--muted)]">
                     · {formatPurchaseQty(received)} {item.unit}
                   </span>
                 </span>
-                <span className="tabular-nums">{formatCOP(lineBase)}</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="tabular-nums">{formatCOP(lineBase)}</span>
+                  {canUndoReceive ? (
+                    <UndoReceiveButton
+                      requestId={requestId}
+                      item={item}
+                      pending={pending}
+                      startTransition={startTransition}
+                      setError={setError}
+                    />
+                  ) : null}
+                </div>
               </div>
               {alloc && alloc.allocatedExtra !== 0 ? (
                 <p className="text-xs text-[var(--muted)]">
@@ -1939,7 +2039,15 @@ function SupplierReceiveForm({
         entrega.
       </p>
       {openItems.map((item) => (
-        <ReceiveItemRow key={item.id} item={item} />
+        <ReceiveItemRow
+          key={item.id}
+          item={item}
+          requestId={requestId}
+          canUndoReceive
+          pending={pending}
+          startTransition={startTransition}
+          setError={setError}
+        />
       ))}
       <button
         type="submit"
@@ -2146,7 +2254,15 @@ function SupplierOperationsPanel({
               </summary>
               <div className="mt-2 space-y-2">
                 {closedItems.map((item) => (
-                  <ReceiveItemRow key={item.id} item={item} />
+                  <ReceiveItemRow
+                    key={item.id}
+                    item={item}
+                    requestId={requestId}
+                    canUndoReceive={canReceive && !item.invoice_payment_request_id}
+                    pending={pending}
+                    startTransition={startTransition}
+                    setError={setError}
+                  />
                 ))}
               </div>
             </details>
@@ -2157,7 +2273,8 @@ function SupplierOperationsPanel({
               {canShowReceive ? (
                 <p className="text-xs text-[var(--muted)]">
                   2 · Factura (opcional ahora): puede enviarla cuando ya haya
-                  recibido lo que va en esta factura.
+                  recibido lo que va en esta factura. Si se equivocó al recibir,
+                  devuelva el ítem a pendiente y corrija.
                 </p>
               ) : (
                 <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
@@ -2169,6 +2286,7 @@ function SupplierOperationsPanel({
                 supplierId={group.supplierId}
                 supplierName={group.supplierName}
                 items={group.items}
+                canUndoReceive={canReceive}
                 pending={pending}
                 startTransition={startTransition}
                 setError={setError}

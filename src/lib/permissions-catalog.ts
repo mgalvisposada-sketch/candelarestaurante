@@ -302,7 +302,12 @@ const ALL_EXCEPT_CONFIG_ADMIN = ALL_PERMISSION_KEYS.filter(
 /** Defaults por rol cuando se crea un usuario (SUPER_ADMIN no necesita filas). */
 export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
   SUPER_ADMIN: [...ALL_PERMISSION_KEYS],
-  GESTION: [...ALL_EXCEPT_CONFIG_ADMIN, "configuracion"],
+  // Gestión: puede ajustar permisos de módulos; crear/editar usuarios sigue siendo SUPER_ADMIN.
+  GESTION: [
+    ...ALL_EXCEPT_CONFIG_ADMIN,
+    "configuracion",
+    "configuracion.permisos",
+  ],
   /**
    * Admin del local: arma pedido, recibe y puede aceptar factura.
    * No aprueba compras (Gestión) ni ajusta inventario físico.
