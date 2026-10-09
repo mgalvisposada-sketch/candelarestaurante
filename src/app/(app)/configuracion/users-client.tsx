@@ -27,6 +27,7 @@ const ROLES: AppRole[] = [
   "SUPER_ADMIN",
   "GESTION",
   "ADMIN_LOCAL",
+  "TESORERIA",
   "SOCIO",
   "CONTADOR",
   "LECTURA",

@@ -2,6 +2,7 @@ export type AppRole =
   | "SUPER_ADMIN"
   | "GESTION"
   | "ADMIN_LOCAL"
+  | "TESORERIA"
   | "SOCIO"
   | "CONTADOR"
   | "LECTURA";
@@ -183,9 +184,25 @@ export const ROLE_LABELS: Record<AppRole, string> = {
   SUPER_ADMIN: "Super admin",
   GESTION: "Gestión",
   ADMIN_LOCAL: "Admin del local",
+  TESORERIA: "Tesorería / compras",
   SOCIO: "Socio",
   CONTADOR: "Contador",
   LECTURA: "Solo lectura",
+};
+
+/** Texto corto para Configuración → Roles (quién hace qué en la operación). */
+export const ROLE_DESCRIPTIONS: Record<AppRole, string> = {
+  SUPER_ADMIN:
+    "Auditor y dueño del sistema: autoriza compras, ajusta inventario físico, usuarios y permisos.",
+  GESTION:
+    "Operación administrativa amplia: puede autorizar, facturar y pagar; sin crear usuarios.",
+  ADMIN_LOCAL:
+    "Opera el local: solicita reposición, pide tras autorización, recibe mercancía (cantidades). No autoriza ni factura ni paga.",
+  TESORERIA:
+    "Compras + dinero: carga facturas de proveedores (precios), cola de pago, bancos/caja y CxP.",
+  SOCIO: "Gobierno societario y consulta de capital / estado financiero.",
+  CONTADOR: "Consulta financiera/tributaria y puede ejecutar pagos en la cola.",
+  LECTURA: "Solo consulta de lo expresamente autorizado.",
 };
 
 export function canWrite(role: AppRole | null | undefined): boolean {

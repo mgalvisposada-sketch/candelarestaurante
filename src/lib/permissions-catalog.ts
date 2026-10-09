@@ -132,13 +132,24 @@ export const APP_MODULES: AppModuleDef[] = [
     href: "/solicitudes-pago",
     mvp: 2,
     submodules: [
-      { key: "solicitudes-pago.bandeja", label: "Bandeja de solicitudes" },
+      {
+        key: "solicitudes-pago.bandeja",
+        label: "Ver bandeja de pagos",
+        description: "Cola de lo que hay que pagar (llega desde Compras o Gastos).",
+      },
       {
         key: "solicitudes-pago.crear",
         label: "Crear solicitudes (desactivado; alta en CxP / Compras)",
       },
-      { key: "solicitudes-pago.aprobar", label: "Aprobar / rechazar" },
-      { key: "solicitudes-pago.pagar", label: "Ejecutar pagos" },
+      {
+        key: "solicitudes-pago.aprobar",
+        label: "Aprobar / rechazar en cola",
+      },
+      {
+        key: "solicitudes-pago.pagar",
+        label: "Ejecutar pagos (banco / caja)",
+        description: "Tesorería: marca pagado y actualiza CxP o gasto.",
+      },
     ],
   },
   {
@@ -158,10 +169,12 @@ export const APP_MODULES: AppModuleDef[] = [
       {
         key: "inventario.fisico",
         label: "Inventario físico (conteo)",
+        description: "Admin del local: cuenta y envía. No aplica el ajuste a stock.",
       },
       {
         key: "inventario.fisico.ajustar",
-        label: "Ajustar stock desde inventario físico",
+        label: "Aprobar ajuste de stock (auditor)",
+        description: "Solo quien audita: aplica o rechaza el conteo físico.",
       },
     ],
   },
@@ -173,35 +186,53 @@ export const APP_MODULES: AppModuleDef[] = [
     submodules: [
       {
         key: "compras.sugeridos",
-        label: "Sugerido comprar (bajo mínimo)",
+        label: "Ver sugeridos (bajo mínimo)",
+        description: "Lista de productos a reponer según stock mínimo.",
       },
       {
         key: "compras.solicitudes",
-        label: "Ver solicitudes y pedidos por proveedor",
+        label: "Ver solicitudes de compra",
+        description: "Consulta el flujo completo (sin operar pasos).",
       },
       {
         key: "compras.solicitudes.crear",
-        label: "Crear / armar solicitudes (borrador)",
+        label: "1 · Solicitar reposición",
+        description:
+          "Admin del local: arma borrador, indica urgencia/efectivo y envía a autorización.",
       },
       {
         key: "compras.solicitudes.aprobar",
-        label: "Aprobar compras y marcar pedida",
+        label: "2 · Autorizar compra",
+        description:
+          "Auditor/gestión: sin esto el local no debe comprar. Confirma proveedor y cantidades.",
+      },
+      {
+        key: "compras.solicitudes.pedir",
+        label: "3 · Pedir / comprar al proveedor",
+        description:
+          "Tras autorización: marca pedida (efectivo o envío de lista). Admin local o tesorería.",
       },
       {
         key: "compras.solicitudes.recibir",
-        label: "Recibir mercancía (parcial o completa)",
+        label: "4 · Recibir mercancía (solo cantidades)",
+        description:
+          "Admin del local: acredita qué llegó vs lo pedido. No carga precios de factura.",
       },
       {
         key: "compras.solicitudes.recibir.extras",
-        label: "Agregar productos al pedido en recepción (admin)",
+        label: "4b · Agregar extras en recepción",
+        description: "Permite sumar productos que llegaron y no estaban en el pedido.",
       },
       {
         key: "compras.solicitudes.facturar",
-        label: "Aceptar factura → cola de pago (CxP)",
+        label: "5 · Cargar factura y enviar a cola de pago",
+        description:
+          "Tesorería/compras: pone precios, alias del proveedor, nº factura → CxP y solicitudes de pago.",
       },
       {
         key: "compras.proveedores",
         label: "Proveedores por categoría (lead times)",
+        description: "Vínculos categoría ↔ proveedor para armar pedidos.",
       },
     ],
   },
@@ -309,8 +340,8 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "configuracion.permisos",
   ],
   /**
-   * Admin del local: arma pedido, recibe y puede aceptar factura.
-   * No aprueba compras (Gestión) ni ajusta inventario físico.
+   * Admin del local (Chase): solicita, pide si autorizado, recibe cantidades.
+   * No autoriza, no factura, no paga, no ajusta inventario físico.
    */
   ADMIN_LOCAL: [
     "personal",
@@ -323,9 +354,39 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "compras.sugeridos",
     "compras.solicitudes",
     "compras.solicitudes.crear",
+    "compras.solicitudes.pedir",
     "compras.solicitudes.recibir",
     "compras.solicitudes.recibir.extras",
+  ],
+  /**
+   * Tesorería / compras (Juliana): factura, cola de pago, bancos y CxP.
+   * No opera el local (recibir/conteo) ni autoriza como auditor.
+   */
+  TESORERIA: [
+    "inicio",
+    "inicio.resumen",
+    "tesoreria",
+    "tesoreria.cuentas",
+    "tesoreria.saldos",
+    "proveedores",
+    "proveedores.maestro",
+    "proveedores.cxp",
+    "proveedores.cxp.editar",
+    "compras",
+    "compras.sugeridos",
+    "compras.solicitudes",
+    "compras.solicitudes.pedir",
     "compras.solicitudes.facturar",
+    "compras.proveedores",
+    "solicitudes-pago",
+    "solicitudes-pago.bandeja",
+    "solicitudes-pago.aprobar",
+    "solicitudes-pago.pagar",
+    "gastos",
+    "gastos.registro",
+    "gastos.categorias",
+    "documentos",
+    "documentos.archivo",
   ],
   SOCIO: [
     "inicio",

@@ -16,6 +16,7 @@ import {
   addSupplierPendingItemAction,
   approvePurchaseRequestAction,
   importSuggestedProductsAction,
+  markPurchaseOrderedAction,
   receivePurchaseItemsAction,
   rejectPurchaseRequestAction,
   removePurchaseRequestItemAction,
@@ -23,6 +24,7 @@ import {
   undoReceivePurchaseItemAction,
   updatePurchaseRequestItemAction,
 } from "../../purchase-actions";
+import { purchaseRequestStatusLabel } from "@/lib/purchases/status-labels";
 import { createProductFromRequestAction } from "../../inventory-actions";
 import { Badge } from "@/components/ui/primitives";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
@@ -92,6 +94,7 @@ export type ItemRow = {
   notes: string | null;
   invoice_payment_request_id?: string | null;
   invoice_ap_document_id?: string | null;
+  supplier_invoice_label?: string | null;
   product_name?: string;
   category_name?: string;
 };
@@ -105,6 +108,8 @@ export type RequestDetail = {
   needed_by: string | null;
   rejection_reason: string | null;
   payment_request_id: string | null;
+  is_urgent?: boolean | null;
+  payment_mode?: string | null;
 };
 
 const inputClass =
@@ -711,19 +716,21 @@ export function AddItemForm({
 
 function RequestProcessSteps({ status }: { status: string }) {
   const steps = [
-    { key: "BORRADOR", label: "Armar" },
-    { key: "ENVIADA", label: "Aprobar" },
-    { key: "PEDIDA", label: "Pedir (PDF)" },
-    { key: "RECIBIDA", label: "Recibir / facturar" },
+    { key: "BORRADOR", label: "Solicitar" },
+    { key: "ENVIADA", label: "Autorizar" },
+    { key: "APROBADA", label: "Pedir" },
+    { key: "PEDIDA", label: "Recibir" },
+    { key: "RECIBIDA", label: "Facturar" },
     { key: "FACTURA_ACEPTADA", label: "Cerrado" },
   ] as const;
 
   const activeIndex = (() => {
     if (status === "BORRADOR") return 0;
     if (status === "ENVIADA") return 1;
-    if (status === "PEDIDA") return 2;
-    if (["RECIBIDA", "RECIBIDA_PARCIAL"].includes(status)) return 3;
-    if (status === "FACTURA_ACEPTADA") return 4;
+    if (status === "APROBADA") return 2;
+    if (status === "PEDIDA") return 3;
+    if (["RECIBIDA", "RECIBIDA_PARCIAL"].includes(status)) return 4;
+    if (status === "FACTURA_ACEPTADA") return 5;
     if (["RECHAZADA", "ANULADA"].includes(status)) return -1;
     return 0;
   })();
@@ -1124,21 +1131,7 @@ function ReceiveItemRow({
   const received = roundPurchaseQty(Number(item.quantity_received || 0));
   const pendingQty = itemPendingQty(item);
   const closed = isItemClosed(item);
-  const estimate = Number(item.unit_cost_estimate || 0);
   const [qtyRaw, setQtyRaw] = useState(formatPurchaseQty(pendingQty));
-  const [totalCostRaw, setTotalCostRaw] = useState(() => {
-    if (estimate > 0 && pendingQty > 0) {
-      return String(Math.round(estimate * pendingQty));
-    }
-    return "";
-  });
-
-  const qtyNow = parseBulkNumber(qtyRaw);
-  const totalCost = parseBulkNumber(totalCostRaw);
-  const unitCost =
-    qtyNow != null && qtyNow > 0 && totalCost != null && totalCost > 0
-      ? totalCost / qtyNow
-      : null;
 
   const undoControls =
     canUndoReceive &&
@@ -1190,8 +1183,7 @@ function ReceiveItemRow({
         ) : null}
         {undoControls ? (
           <p className="mt-2 text-xs text-amber-900/80">
-            Si digitó mal cantidad o costo, devuélvalo a pendiente y vuelva a
-            recibir.
+            Si digitó mal la cantidad, devuélvalo a pendiente y vuelva a recibir.
           </p>
         ) : null}
       </div>
@@ -1263,7 +1255,7 @@ function ReceiveItemRow({
       </fieldset>
 
       {disposition === "llego" ? (
-        <div className="grid gap-2 md:grid-cols-2">
+        <div className="space-y-2">
           <label className="block text-sm">
             <span className="mb-1 block text-[var(--muted)]">
               Cantidad que llegó ahora *
@@ -1277,45 +1269,10 @@ function ReceiveItemRow({
               inputMode="decimal"
             />
           </label>
-          <label className="block text-sm">
-            <span className="mb-1 block text-[var(--muted)]">
-              Costo total de esta entrega *
-            </span>
-            <input
-              required
-              value={totalCostRaw}
-              onChange={(e) => setTotalCostRaw(e.target.value)}
-              placeholder="Ej. 20000"
-              className={inputClass}
-              inputMode="decimal"
-            />
-            <input
-              type="hidden"
-              name={`item_${item.id}_unit_cost`}
-              value={unitCost != null && unitCost > 0 ? String(unitCost) : ""}
-            />
-            {disposition === "llego" &&
-            (parseBulkNumber(totalCostRaw) == null ||
-              (parseBulkNumber(totalCostRaw) ?? 0) <= 0) ? (
-              <span className="mt-1 block text-xs text-amber-800">
-                Falta el costo total (mayor a 0).
-              </span>
-            ) : null}
-          </label>
-          <p className="text-xs text-[var(--muted)] md:col-span-2">
-            Obligatorio: lo que pagó por esta cantidad (ej. $20.000). Sin valor
-            no se puede recibir.{" "}
-            {unitCost != null && unitCost > 0 ? (
-              <>
-                Queda{" "}
-                <span className="font-medium text-[var(--ink)]">
-                  {formatCOP(unitCost)} / {item.unit}
-                </span>{" "}
-                en inventario.
-              </>
-            ) : (
-              <>Indique un costo total mayor a 0.</>
-            )}
+          <p className="text-xs text-[var(--muted)]">
+            Solo cantidades: confirme qué llegó vs lo pedido. Los precios de la
+            factura los carga tesorería/compras en el paso Facturar (aunque le
+            hayan entregado una copia).
           </p>
         </div>
       ) : null}
@@ -1401,14 +1358,42 @@ function SupplierInvoiceForm({
     (i) =>
       Number(i.quantity_received || 0) > 0 && !i.invoice_payment_request_id,
   );
-  const billableLines = billable.map((item) => ({
-    itemId: item.id,
-    productId: item.product_id,
-    receivedQty: roundPurchaseQty(Number(item.quantity_received || 0)),
-    unitCost: Number(item.unit_cost_estimate || 0),
-  }));
-  const merchandise = merchandiseSubtotal(billableLines);
+  const [lineTotals, setLineTotals] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const item of billable) {
+      const qty = roundPurchaseQty(Number(item.quantity_received || 0));
+      const unit = Number(item.unit_cost_estimate || 0);
+      init[item.id] =
+        qty > 0 && unit > 0 ? String(Math.round(unit * qty)) : "";
+    }
+    return init;
+  });
+  const [supplierLabels, setSupplierLabels] = useState<Record<string, string>>(
+    () => {
+      const init: Record<string, string> = {};
+      for (const item of billable) {
+        init[item.id] = item.supplier_invoice_label ?? "";
+      }
+      return init;
+    },
+  );
   const [charges, setCharges] = useState<ChargeDraft[]>([]);
+
+  const billableLines = billable.map((item) => {
+    const receivedQty = roundPurchaseQty(Number(item.quantity_received || 0));
+    const lineTotal = parseBulkNumber(lineTotals[item.id] ?? "");
+    const unitCost =
+      lineTotal != null && lineTotal > 0 && receivedQty > 0
+        ? lineTotal / receivedQty
+        : 0;
+    return {
+      itemId: item.id,
+      productId: item.product_id,
+      receivedQty,
+      unitCost,
+    };
+  });
+  const merchandise = merchandiseSubtotal(billableLines);
 
   const parsedCharges: InvoiceCharge[] = charges
     .map((c) => ({
@@ -1427,6 +1412,7 @@ function SupplierInvoiceForm({
   const invoiceTotal = roundMoney(merchandise + netAdjustments);
   const allocations = allocateInvoiceCharges(billableLines, parsedCharges);
   const allocByItem = new Map(allocations.map((a) => [a.itemId, a]));
+  const missingPrices = billableLines.some((l) => l.unitCost <= 0);
 
   function addCharge(
     kind: "cargo" | "descuento" = "cargo",
@@ -1463,32 +1449,39 @@ function SupplierInvoiceForm({
           Paso factura · solo {supplierName}
         </p>
         <h5 className="mt-1 text-sm font-medium">
-          Factura de {supplierName} (mercancía ± ajustes)
+          Factura de {supplierName} (según lo que se recibió)
         </h5>
         <p className="mt-1 text-xs text-[var(--muted)]">
-          Solo lo recibido de este proveedor. Cargos suman y descuentos restan
-          al pago; con «Afecta costo» se prorratean en los productos. Si algo
-          quedó mal recibido, use «Devolver a pendiente» antes de facturar.
+          Digite los precios de la factura contra <strong>nuestros</strong>{" "}
+          productos recibidos. Si el proveedor usa otro nombre, anótelo en
+          «Como aparece en factura» — no bloquea el envío. Cargos/descuentos
+          opcionales.
         </p>
       </div>
 
-      <ul className="space-y-2 rounded-lg bg-neutral-50 px-3 py-2 text-sm">
+      <ul className="space-y-3 rounded-lg bg-neutral-50 px-3 py-3 text-sm">
         {billable.map((item) => {
           const received = roundPurchaseQty(Number(item.quantity_received || 0));
-          const unitCost = Number(item.unit_cost_estimate || 0);
+          const line = billableLines.find((l) => l.itemId === item.id);
           const alloc = allocByItem.get(item.id);
-          const lineBase = roundMoney(received * unitCost);
+          const lineBase = roundMoney(received * (line?.unitCost ?? 0));
           return (
-            <li key={item.id} className="space-y-0.5">
+            <li
+              key={item.id}
+              className="space-y-2 border-b border-[var(--line)] pb-3 last:border-0 last:pb-0"
+            >
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <span>
-                  {item.product_name}{" "}
-                  <span className="text-[var(--muted)]">
-                    · {formatPurchaseQty(received)} {item.unit}
-                  </span>
-                </span>
+                <div>
+                  <p className="font-medium">{item.product_name}</p>
+                  <p className="text-xs text-[var(--muted)]">
+                    Recibido {formatPurchaseQty(received)} {item.unit} · nombre
+                    interno Candela
+                  </p>
+                </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="tabular-nums">{formatCOP(lineBase)}</span>
+                  <span className="tabular-nums font-medium">
+                    {formatCOP(lineBase)}
+                  </span>
                   {canUndoReceive ? (
                     <UndoReceiveButton
                       requestId={requestId}
@@ -1500,6 +1493,53 @@ function SupplierInvoiceForm({
                   ) : null}
                 </div>
               </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="block text-sm">
+                  <span className="mb-1 block text-[var(--muted)]">
+                    Como aparece en factura (opcional)
+                  </span>
+                  <input
+                    name={`item_${item.id}_supplier_invoice_label`}
+                    value={supplierLabels[item.id] ?? ""}
+                    onChange={(e) =>
+                      setSupplierLabels((prev) => ({
+                        ...prev,
+                        [item.id]: e.target.value,
+                      }))
+                    }
+                    placeholder="Ej. nombre o código del proveedor"
+                    className={inputClass}
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="mb-1 block text-[var(--muted)]">
+                    Total línea en factura *
+                  </span>
+                  <input
+                    name={`item_${item.id}_invoice_line_total`}
+                    value={lineTotals[item.id] ?? ""}
+                    onChange={(e) =>
+                      setLineTotals((prev) => ({
+                        ...prev,
+                        [item.id]: e.target.value,
+                      }))
+                    }
+                    placeholder="Ej. 45000"
+                    className={inputClass}
+                    inputMode="decimal"
+                    required
+                  />
+                  {line && line.unitCost > 0 ? (
+                    <span className="mt-1 block text-xs text-[var(--muted)]">
+                      → {formatCOP(line.unitCost)} / {item.unit}
+                    </span>
+                  ) : (
+                    <span className="mt-1 block text-xs text-amber-800">
+                      Obligatorio según la factura
+                    </span>
+                  )}
+                </label>
+              </div>
               {alloc && alloc.allocatedExtra !== 0 ? (
                 <p className="text-xs text-[var(--muted)]">
                   {alloc.allocatedExtra > 0 ? "+" : "−"} prorrateo{" "}
@@ -1510,7 +1550,7 @@ function SupplierInvoiceForm({
             </li>
           );
         })}
-        <li className="flex justify-between gap-2 border-t border-[var(--line)] pt-1">
+        <li className="flex justify-between gap-2 pt-1">
           <span>Mercancía</span>
           <span className="tabular-nums">{formatCOP(merchandise)}</span>
         </li>
@@ -1710,7 +1750,7 @@ function SupplierInvoiceForm({
       </div>
       <button
         type="submit"
-        disabled={pending || invoiceTotal <= 0}
+        disabled={pending || invoiceTotal <= 0 || missingPrices}
         className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm text-white disabled:opacity-60"
       >
         {pending
@@ -2270,17 +2310,9 @@ function SupplierOperationsPanel({
 
           {canShowInvoice && group.supplierId ? (
             <div className="space-y-2">
-              {canShowReceive ? (
-                <p className="text-xs text-[var(--muted)]">
-                  2 · Factura (opcional ahora): puede enviarla cuando ya haya
-                  recibido lo que va en esta factura. Si se equivocó al recibir,
-                  devuelva el ítem a pendiente y corrija.
-                </p>
-              ) : (
-                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-                  2 · Factura de lo recibido
-                </p>
-              )}
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                Factura · precios (tesorería / compras)
+              </p>
               <SupplierInvoiceForm
                 requestId={requestId}
                 supplierId={group.supplierId}
@@ -2317,7 +2349,11 @@ function SupplierOperationsPanel({
   return (
     <section className="space-y-4">
       <div className="rounded-xl border border-[var(--line)] bg-white p-4">
-        <h3 className="font-medium">Recibir y facturar por proveedor</h3>
+        <h3 className="font-medium">Recepción y factura por proveedor</h3>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          Recibir = cantidades (local). Facturar = precios y cola de pago
+          (tesorería). Son pasos distintos.
+        </p>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-[var(--muted)]">
           <li>Arriba: proveedores pendientes de recibir o facturar.</li>
           <li>Abajo: los que ya enviaron factura a cola de pago.</li>
@@ -2466,6 +2502,7 @@ export function RequestDetailClient({
   canCreate,
   canCreateProduct,
   canApprove,
+  canMarkOrdered,
   canReceive,
   canReceiveExtras = false,
   canAcceptInvoice,
@@ -2480,6 +2517,7 @@ export function RequestDetailClient({
   canCreate: boolean;
   canCreateProduct: boolean;
   canApprove: boolean;
+  canMarkOrdered: boolean;
   canReceive: boolean;
   canReceiveExtras?: boolean;
   canAcceptInvoice: boolean;
@@ -2491,6 +2529,7 @@ export function RequestDetailClient({
     [suppliers],
   );
   const existingProductIds = new Set(items.map((i) => i.product_id));
+  // PDF compact en recepción/factura (APROBADA ya muestra el panel completo arriba).
   const showSupplierOrders = [
     "PEDIDA",
     "RECIBIDA_PARCIAL",
@@ -2516,6 +2555,16 @@ export function RequestDetailClient({
               {request.location_label ? ` · ${request.location_label}` : ""}
               {request.needed_by ? ` · necesaria ${formatDateCO(request.needed_by)}` : ""}
             </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {request.is_urgent ? (
+                <Badge tone="danger">Urgente</Badge>
+              ) : null}
+              {request.payment_mode === "EFECTIVO_INMEDIATO" ? (
+                <Badge tone="warn">Efectivo inmediato</Badge>
+              ) : request.payment_mode === "CREDITO" ? (
+                <Badge tone="ok">A crédito</Badge>
+              ) : null}
+            </div>
             {request.notes ? (
               <p className="mt-2 text-sm text-[var(--muted)]">{request.notes}</p>
             ) : null}
@@ -2535,12 +2584,14 @@ export function RequestDetailClient({
             tone={
               ["RECHAZADA", "ANULADA"].includes(request.status)
                 ? "danger"
-                : ["PEDIDA", "RECIBIDA", "FACTURA_ACEPTADA"].includes(request.status)
+                : ["APROBADA", "PEDIDA", "RECIBIDA", "FACTURA_ACEPTADA"].includes(
+                      request.status,
+                    )
                   ? "ok"
                   : "warn"
             }
           >
-            {request.status}
+            {purchaseRequestStatusLabel(request.status)}
           </Badge>
         </div>
         <RequestProcessSteps status={request.status} />
@@ -2601,7 +2652,7 @@ export function RequestDetailClient({
             })
           }
         >
-          Enviar a compras
+          Enviar a autorización
         </button>
       ) : null}
 
@@ -2617,10 +2668,14 @@ export function RequestDetailClient({
           }}
         >
           <div className="rounded-xl border border-[var(--line)] bg-white p-5">
-            <h3 className="font-medium">Aprobar por proveedor</h3>
+            <h3 className="font-medium">Autorizar compra por proveedor</h3>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Revise cada grupo, confirme proveedor/cantidad/entrega. Al aprobar
-              podrá imprimir el pedido de cada proveedor.
+              Confirme proveedor, cantidad y entrega. Al autorizar, el local (o
+              tesorería) podrá pedir/comprar. Sin autorización no deben comprar.
+              {request.payment_mode === "EFECTIVO_INMEDIATO"
+                ? " Esta solicitud pide efectivo inmediato."
+                : ""}
+              {request.is_urgent ? " Marcada como urgente." : ""}
             </p>
           </div>
           {approveGroups.map((group) => (
@@ -2704,18 +2759,61 @@ export function RequestDetailClient({
               disabled={pending || items.length === 0}
               className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
             >
-              Aprobar y marcar pedida
+              Autorizar compra
             </button>
           </div>
         </form>
       ) : null}
 
       {request.status === "ENVIADA" && !canApprove ? (
-        <SupplierOrdersPanel
-          requestId={request.id}
-          items={items}
-          supplierMap={supplierMap}
-        />
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          Solicitud enviada. Esperando autorización. Sin autorización no se
+          debe comprar al proveedor.
+          <div className="mt-3">
+            <SupplierOrdersPanel
+              requestId={request.id}
+              items={items}
+              supplierMap={supplierMap}
+              compact
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {request.status === "APROBADA" ? (
+        <div className="space-y-3 rounded-xl border border-[var(--line)] bg-white p-5">
+          <h3 className="font-medium">Compra autorizada — pedir al proveedor</h3>
+          <p className="text-sm text-[var(--muted)]">
+            Ya puede comprar o enviar el pedido. Use el PDF por proveedor y, al
+            gestionar la compra, marque «Ya pedí / compré».
+          </p>
+          <SupplierOrdersPanel
+            requestId={request.id}
+            items={items}
+            supplierMap={supplierMap}
+          />
+          {canMarkOrdered ? (
+            <button
+              type="button"
+              disabled={pending}
+              className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
+              onClick={() =>
+                startTransition(async () => {
+                  setError(null);
+                  const r = await markPurchaseOrderedAction(request.id);
+                  if (!r.ok) setError(r.error ?? "Error");
+                })
+              }
+            >
+              Ya pedí / compré al proveedor
+            </button>
+          ) : (
+            <p className="text-sm text-amber-800">
+              No tiene permiso para marcar pedida. Quien compre debe tener
+              «Pedir / comprar al proveedor».
+            </p>
+          )}
+        </div>
       ) : null}
 
       {request.status === "ENVIADA" && canApprove ? (

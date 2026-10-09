@@ -130,12 +130,15 @@ export async function createPurchaseRequestAction(
     return { ok: false, error: "Sin permiso para crear solicitudes" };
   }
 
+  const urgentRaw = String(formData.get("is_urgent") ?? "").trim();
   const parsed = createPurchaseRequestSchema.safeParse({
     title: formData.get("title"),
     notes: formData.get("notes"),
     location_label: formData.get("location_label"),
     requested_at: formData.get("requested_at") || todayInBogota(),
     needed_by: formData.get("needed_by"),
+    is_urgent: urgentRaw === "on" || urgentRaw === "true" ? "true" : "false",
+    payment_mode: formData.get("payment_mode") || "CREDITO",
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
@@ -152,6 +155,8 @@ export async function createPurchaseRequestAction(
       location_label: emptyToNull(parsed.data.location_label),
       requested_at: parsed.data.requested_at,
       needed_by: emptyToNull(parsed.data.needed_by),
+      is_urgent: parsed.data.is_urgent === "true",
+      payment_mode: parsed.data.payment_mode || "CREDITO",
       requested_by: ctx.userId,
       created_by: ctx.userId,
       updated_by: ctx.userId,
@@ -789,9 +794,8 @@ export async function approvePurchaseRequestAction(
   const { error } = await supabase
     .from("purchase_requests")
     .update({
-      status: "PEDIDA",
+      status: "APROBADA",
       approved_at: new Date().toISOString(),
-      ordered_at: new Date().toISOString(),
       approved_by: ctx.userId,
       updated_by: ctx.userId,
     })
@@ -804,6 +808,75 @@ export async function approvePurchaseRequestAction(
     organization_id: ctx.organization.id,
     user_id: ctx.userId,
     action: "APPROVE",
+    entity: "purchase_requests",
+    entity_id: requestId,
+  });
+
+  revalidateCompras(requestId);
+  return { ok: true, id: requestId };
+}
+
+/**
+ * Tras autorización: el local o tesorería marca que ya se pidió/compró al proveedor.
+ * Sin autorización (APROBADA) no se puede pedir.
+ */
+export async function markPurchaseOrderedAction(
+  requestId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.pedir")) {
+    return { ok: false, error: "Sin permiso para marcar pedida / comprar" };
+  }
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (request.status !== "APROBADA") {
+    return {
+      ok: false,
+      error:
+        "Solo se puede pedir cuando la compra está autorizada. Espere la autorización.",
+    };
+  }
+
+  const { error: itemsError } = await supabase
+    .from("purchase_request_items")
+    .update({
+      status: "PEDIDO",
+      updated_by: ctx.userId,
+    })
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .eq("status", "APROBADO")
+    .is("deleted_at", null);
+
+  if (itemsError) return { ok: false, error: itemsError.message };
+
+  const { error } = await supabase
+    .from("purchase_requests")
+    .update({
+      status: "PEDIDA",
+      ordered_at: new Date().toISOString(),
+      updated_by: ctx.userId,
+    })
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .eq("status", "APROBADA");
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "ORDER",
     entity: "purchase_requests",
     entity_id: requestId,
   });
@@ -966,21 +1039,32 @@ export async function receivePurchaseItemsAction(
     const status =
       totalReceived >= target ? "RECIBIDO" : "RECIBIDO_PARCIAL";
 
-    const incomingCost = parseNumber(parsed.data.unit_cost);
-    if (incomingCost === null || incomingCost <= 0) {
-      return {
-        ok: false,
-        error:
-          "Indique el costo total de cada entrega (mayor a 0). No se puede recibir sin valor.",
-      };
-    }
+    const { data: product } = await supabase
+      .from("products")
+      .select("current_stock, unit_cost")
+      .eq("id", item.product_id)
+      .eq("organization_id", ctx.organization.id)
+      .maybeSingle();
+
+    // Recepción = cantidades. Costo provisional del maestro (o estimado); el real va en factura.
+    const fromForm = parseNumber(parsed.data.unit_cost);
+    const fromEstimate = Number(item.unit_cost_estimate || 0);
+    const fromProduct = Number(product?.unit_cost || 0);
+    const provisional =
+      fromForm != null && fromForm > 0
+        ? fromForm
+        : fromEstimate > 0
+          ? fromEstimate
+          : fromProduct > 0
+            ? fromProduct
+            : 0;
 
     const { error } = await supabase
       .from("purchase_request_items")
       .update({
         quantity_received: totalReceived,
         status,
-        unit_cost_estimate: incomingCost,
+        unit_cost_estimate: provisional,
         updated_by: ctx.userId,
       })
       .eq("id", item.id)
@@ -988,23 +1072,15 @@ export async function receivePurchaseItemsAction(
     if (error) return { ok: false, error: error.message };
     touched += 1;
 
-    const { data: product } = await supabase
-      .from("products")
-      .select("current_stock, unit_cost")
-      .eq("id", item.product_id)
-      .eq("organization_id", ctx.organization.id)
-      .maybeSingle();
     if (product) {
       const stockBefore = Number(product.current_stock || 0);
       const costBefore = Number(product.unit_cost || 0);
-      const costIn = incomingCost;
+      const costIn = provisional;
       const stockAfter = stockBefore + receivedNow;
-      const costAfter = weightedAverageUnitCost(
-        stockBefore,
-        costBefore,
-        receivedNow,
-        costIn,
-      );
+      const costAfter =
+        costIn > 0
+          ? weightedAverageUnitCost(stockBefore, costBefore, receivedNow, costIn)
+          : costBefore;
 
       await supabase
         .from("products")
@@ -1027,7 +1103,7 @@ export async function receivePurchaseItemsAction(
         unit_cost_after: costAfter,
         reference_type: "purchase_request_items",
         reference_id: item.id,
-        notes: `Recepción solicitud ${requestId}`,
+        notes: `Recepción solicitud ${requestId} (costo provisional; factura aparte)`,
         created_by: ctx.userId,
       });
     }
@@ -1473,12 +1549,12 @@ export async function acceptPurchaseInvoiceAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  const canFacturar =
-    ctxCanAccess(ctx, "compras.solicitudes.facturar") ||
-    ctxCanAccess(ctx, "compras.solicitudes.aprobar") ||
-    ctxCanAccess(ctx, "compras.solicitudes.recibir");
-  if (!canFacturar) {
-    return { ok: false, error: "Sin permiso para aceptar factura" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.facturar")) {
+    return {
+      ok: false,
+      error:
+        "Sin permiso para cargar factura. Quien recibe mercancía no factura; eso lo hace tesorería/compras.",
+    };
   }
 
   const parsed = acceptInvoiceSchema.safeParse({
@@ -1548,12 +1624,67 @@ export async function acceptPurchaseInvoiceAction(
     };
   }
 
+  // Precios reales de factura (nuestro producto; el nombre del proveedor es solo ayuda).
+  const priced: {
+    id: string;
+    product_id: string;
+    quantity_received: number;
+    prevUnitCost: number;
+    unitCost: number;
+    supplierLabel: string | null;
+  }[] = [];
+
+  for (const item of toInvoice) {
+    const qty = roundPurchaseQty(Number(item.quantity_received || 0));
+    const lineTotal = parseNumber(
+      String(formData.get(`item_${item.id}_invoice_line_total`) ?? ""),
+    );
+    const unitFromForm = parseNumber(
+      String(formData.get(`item_${item.id}_invoice_unit_cost`) ?? ""),
+    );
+    let unitCost: number | null = null;
+    if (lineTotal != null && lineTotal > 0 && qty > 0) {
+      unitCost = roundMoney(lineTotal / qty);
+    } else if (unitFromForm != null && unitFromForm > 0) {
+      unitCost = unitFromForm;
+    }
+    if (unitCost === null || unitCost <= 0) {
+      return {
+        ok: false,
+        error:
+          "Indique el costo (unitario o total de línea) de cada producto recibido según la factura.",
+      };
+    }
+    const label = emptyToNull(
+      String(formData.get(`item_${item.id}_supplier_invoice_label`) ?? ""),
+    );
+    priced.push({
+      id: item.id,
+      product_id: item.product_id,
+      quantity_received: qty,
+      prevUnitCost: Number(item.unit_cost_estimate || 0),
+      unitCost,
+      supplierLabel: label,
+    });
+
+    const { error: priceError } = await supabase
+      .from("purchase_request_items")
+      .update({
+        unit_cost_estimate: unitCost,
+        supplier_invoice_label: label,
+        updated_by: ctx.userId,
+      })
+      .eq("id", item.id)
+      .eq("organization_id", ctx.organization.id);
+    if (priceError) return { ok: false, error: priceError.message };
+  }
+
   const charges = parseInvoiceChargesFromForm(formData);
-  const billableLines = toInvoice.map((i) => ({
+  const billableLines = priced.map((i) => ({
     itemId: i.id,
     productId: i.product_id,
-    receivedQty: roundPurchaseQty(Number(i.quantity_received || 0)),
-    unitCost: Number(i.unit_cost_estimate || 0),
+    receivedQty: i.quantity_received,
+    unitCost: i.unitCost,
   }));
   const merchandise = merchandiseSubtotal(billableLines);
   const extras = chargesTotal(charges);
@@ -1669,23 +1800,31 @@ export async function acceptPurchaseInvoiceAction(
 
   if (payError) return { ok: false, error: payError.message };
 
-  // Costo aterrizado (cargos + / descuentos −): actualiza ítem y promedio del producto.
-  for (const alloc of allocations) {
-    if (alloc.allocatedExtra === 0) continue;
+  // Costo aterrizado: corrige provisional de recepción + prorrateo de cargos/descuentos.
+  const allocByItem = new Map(allocations.map((a) => [a.itemId, a]));
+  for (const row of priced) {
+    const alloc = allocByItem.get(row.id);
+    const landedUnitCost = alloc?.landedUnitCost ?? row.unitCost;
+    const deltaTotal =
+      (landedUnitCost - row.prevUnitCost) * row.quantity_received;
 
-    await supabase
-      .from("purchase_request_items")
-      .update({
-        unit_cost_estimate: alloc.landedUnitCost,
-        updated_by: ctx.userId,
-      })
-      .eq("id", alloc.itemId)
-      .eq("organization_id", ctx.organization.id);
+    if (alloc && alloc.allocatedExtra !== 0) {
+      await supabase
+        .from("purchase_request_items")
+        .update({
+          unit_cost_estimate: landedUnitCost,
+          updated_by: ctx.userId,
+        })
+        .eq("id", row.id)
+        .eq("organization_id", ctx.organization.id);
+    }
+
+    if (Math.abs(deltaTotal) < 0.005) continue;
 
     const { data: product } = await supabase
       .from("products")
       .select("id, current_stock, unit_cost")
-      .eq("id", alloc.productId)
+      .eq("id", row.product_id)
       .eq("organization_id", ctx.organization.id)
       .maybeSingle();
     if (!product) continue;
@@ -1694,8 +1833,8 @@ export async function acceptPurchaseInvoiceAction(
     const costBefore = Number(product.unit_cost || 0);
     const rawAfter =
       stock > 0
-        ? (stock * costBefore + alloc.allocatedExtra) / stock
-        : alloc.landedUnitCost;
+        ? (stock * costBefore + deltaTotal) / stock
+        : landedUnitCost;
     const costAfter = Math.max(0, rawAfter);
 
     await supabase

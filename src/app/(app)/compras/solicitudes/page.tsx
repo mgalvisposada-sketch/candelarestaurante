@@ -36,13 +36,16 @@ export default async function ComprasSolicitudesPage() {
   const supabase = await createClient();
   const { data: rows } = await supabase
     .from("purchase_requests")
-    .select("id, title, status, requested_at, needed_by, location_label")
+    .select(
+      "id, title, status, requested_at, needed_by, location_label, is_urgent, payment_mode",
+    )
     .eq("organization_id", ctx.organization.id)
     .is("deleted_at", null)
     .order("requested_at", { ascending: false });
 
   const requests = (rows ?? []) as PurchaseRequestListRow[];
   const enviadas = requests.filter((r) => r.status === "ENVIADA").length;
+  const autorizadas = requests.filter((r) => r.status === "APROBADA").length;
   const enCurso = requests.filter((r) =>
     ["PEDIDA", "RECIBIDA_PARCIAL"].includes(r.status),
   ).length;
@@ -59,12 +62,13 @@ export default async function ComprasSolicitudesPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Solicitudes de compra"
-            description="Arme la solicitud, envíela a compras, apruebe proveedores y use el documento «Pedidos por proveedor» para enviar a cada uno. Luego reciba mercancía y acepte la factura hacia tesorería."
+            description="Flujo: solicitar → autorizar → pedir/comprar → recibir (cantidades) → facturar (precios) → cola de pago. Sin autorización no se compra."
           />
           {canCreate ? <CreatePurchaseRequestForm /> : null}
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          <StatCard label="Por aprobar" value={String(enviadas)} />
+        <div className="grid gap-4 md:grid-cols-4">
+          <StatCard label="Por autorizar" value={String(enviadas)} />
+          <StatCard label="Autorizadas / por pedir" value={String(autorizadas)} />
           <StatCard label="En tránsito / parcial" value={String(enCurso)} />
           <StatCard label="Total" value={String(requests.length)} />
         </div>

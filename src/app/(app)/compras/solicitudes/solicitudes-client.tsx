@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createPurchaseRequestAction } from "../purchase-actions";
 import { Badge } from "@/components/ui/primitives";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
+import { purchaseRequestStatusLabel } from "@/lib/purchases/status-labels";
 
 export type PurchaseRequestListRow = {
   id: string;
@@ -13,6 +14,8 @@ export type PurchaseRequestListRow = {
   requested_at: string;
   needed_by: string | null;
   location_label: string | null;
+  is_urgent?: boolean | null;
+  payment_mode?: string | null;
 };
 
 const inputClass =
@@ -82,6 +85,23 @@ export function CreatePurchaseRequestForm() {
           <span className="mb-1.5 block text-[var(--muted)]">Se necesita para</span>
           <input type="date" name="needed_by" className={inputClass} />
         </label>
+        <label className="flex items-center gap-2 text-sm md:col-span-2">
+          <input type="checkbox" name="is_urgent" value="true" className="size-4" />
+          <span>Urgente (se agotó / hay que reponer ya)</span>
+        </label>
+        <label className="block text-sm md:col-span-2">
+          <span className="mb-1.5 block text-[var(--muted)]">Forma de compra</span>
+          <select name="payment_mode" defaultValue="CREDITO" className={inputClass}>
+            <option value="CREDITO">A crédito (factura al proveedor)</option>
+            <option value="EFECTIVO_INMEDIATO">
+              Efectivo inmediato (tras autorización)
+            </option>
+          </select>
+          <span className="mt-1 block text-xs text-[var(--muted)]">
+            Aunque sea efectivo, primero debe autorizarse. Sin autorización no
+            comprar.
+          </span>
+        </label>
         <label className="block text-sm md:col-span-2">
           <span className="mb-1.5 block text-[var(--muted)]">Notas</span>
           <textarea name="notes" rows={2} className={inputClass} />
@@ -115,9 +135,15 @@ export function PurchaseRequestList({
                 {formatDateCO(r.requested_at)}
                 {r.location_label ? ` · ${r.location_label}` : ""}
                 {r.needed_by ? ` · necesaria ${formatDateCO(r.needed_by)}` : ""}
+                {r.is_urgent ? " · urgente" : ""}
+                {r.payment_mode === "EFECTIVO_INMEDIATO"
+                  ? " · efectivo"
+                  : ""}
               </p>
             </div>
-            <Badge tone={statusTone(r.status)}>{r.status}</Badge>
+            <Badge tone={statusTone(r.status)}>
+              {purchaseRequestStatusLabel(r.status)}
+            </Badge>
           </div>
         </Link>
       ))}

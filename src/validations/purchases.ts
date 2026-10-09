@@ -56,6 +56,8 @@ export const createPurchaseRequestSchema = z.object({
   location_label: z.string().optional().nullable(),
   requested_at: z.string().min(1, "Fecha obligatoria"),
   needed_by: z.string().optional().nullable(),
+  is_urgent: z.enum(["true", "false", "on", ""]).optional(),
+  payment_mode: z.enum(["CREDITO", "EFECTIVO_INMEDIATO"]).optional(),
 });
 
 export const purchaseRequestItemSchema = z.object({
@@ -84,7 +86,8 @@ export const approvePurchaseItemSchema = z.object({
 export const receivePurchaseItemSchema = z.object({
   item_id: z.string().uuid(),
   quantity_received: z.string().min(1, "Cantidad recibida obligatoria"),
-  unit_cost: z.string().min(1, "Costo de la entrega obligatorio"),
+  /** Opcional: la recepción no exige precios; el costo se define al facturar. */
+  unit_cost: z.string().optional().nullable(),
 });
 
 /** Producto que se agrega al pedido de un proveedor en recepción (queda pendiente). */

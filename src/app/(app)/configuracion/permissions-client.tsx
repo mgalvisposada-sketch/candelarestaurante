@@ -2,8 +2,11 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { saveUserPermissionsAction } from "./actions";
-import { APP_MODULES } from "@/lib/permissions-catalog";
-import { ROLE_LABELS, type AppRole } from "@/types/domain";
+import {
+  APP_MODULES,
+  ROLE_DEFAULT_PERMISSIONS,
+} from "@/lib/permissions-catalog";
+import { ROLE_DESCRIPTIONS, ROLE_LABELS, type AppRole } from "@/types/domain";
 
 export type PermissionUserOption = {
   membership_id: string;
@@ -111,12 +114,20 @@ export function PermissionsManager({
           </select>
         </label>
         {selected ? (
-          <p className="pb-2 text-sm text-[var(--muted)]">
-            {selected.email}
-            {selected.role === "SUPER_ADMIN"
-              ? " — el super admin siempre tiene acceso total"
-              : null}
-          </p>
+          <div className="pb-2 text-sm text-[var(--muted)]">
+            <p>
+              {selected.email}
+              {selected.role === "SUPER_ADMIN"
+                ? " — el super admin siempre tiene acceso total"
+                : null}
+            </p>
+            {selected.role !== "SUPER_ADMIN" ? (
+              <p className="mt-1 max-w-xl text-xs">
+                Rol {ROLE_LABELS[selected.role]}:{" "}
+                {ROLE_DESCRIPTIONS[selected.role]}
+              </p>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -175,7 +186,7 @@ export function PermissionsManager({
                         {subs.map((sub) => (
                           <label
                             key={sub.key}
-                            className="flex items-center gap-2 text-sm"
+                            className="flex items-start gap-2 text-sm"
                           >
                             <input
                               type="checkbox"
@@ -183,9 +194,16 @@ export function PermissionsManager({
                               onChange={(e) =>
                                 setSubmodule(mod.key, sub.key, e.target.checked)
                               }
-                              className="size-4 accent-[var(--accent)]"
+                              className="mt-0.5 size-4 accent-[var(--accent)]"
                             />
-                            <span>{sub.label}</span>
+                            <span>
+                              <span className="block">{sub.label}</span>
+                              {sub.description ? (
+                                <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                                  {sub.description}
+                                </span>
+                              ) : null}
+                            </span>
                           </label>
                         ))}
                       </div>
@@ -241,6 +259,24 @@ export function PermissionsManager({
             >
               Restablecer
             </button>
+            {selected ? (
+              <button
+                type="button"
+                disabled={pending}
+                className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm"
+                onClick={() => {
+                  setDraft(
+                    new Set(ROLE_DEFAULT_PERMISSIONS[selected.role] ?? []),
+                  );
+                  setError(null);
+                  setOkMsg(
+                    `Borrador con defaults de ${ROLE_LABELS[selected.role]} (guarde para aplicar)`,
+                  );
+                }}
+              >
+                Cargar defaults del rol
+              </button>
+            ) : null}
           </div>
         </>
       )}

@@ -3,7 +3,12 @@ import { Card, PageIntro } from "@/components/ui/primitives";
 import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
 import { resolveEffectivePermissions, ctxCanAccess } from "@/lib/permissions";
-import { isSuperAdmin, ROLE_LABELS, type AppRole } from "@/types/domain";
+import {
+  isSuperAdmin,
+  ROLE_DESCRIPTIONS,
+  ROLE_LABELS,
+  type AppRole,
+} from "@/types/domain";
 import {
   CreateSystemUserForm,
   SystemUsersTable,
@@ -162,23 +167,13 @@ export default async function ConfiguracionPage() {
         <section className="grid gap-4 md:grid-cols-2">
           <Card>
             <h3 className="font-medium">Roles</h3>
-            <ul className="mt-3 space-y-2 text-sm text-[var(--muted)]">
+            <ul className="mt-3 space-y-3 text-sm text-[var(--muted)]">
               {(Object.keys(ROLE_LABELS) as AppRole[]).map((role) => (
                 <li key={role}>
                   <span className="font-medium text-[var(--ink)]">
                     {ROLE_LABELS[role]}
                   </span>
-                  {role === "SUPER_ADMIN"
-                    ? " — usuarios, permisos y configuración crítica"
-                    : role === "GESTION"
-                      ? " — operación diaria y permisos de módulos (sin crear usuarios)"
-                      : role === "ADMIN_LOCAL"
-                        ? " — administrador del local: solo reportar novedades"
-                        : role === "SOCIO"
-                          ? " — gobierno societario"
-                          : role === "CONTADOR"
-                            ? " — financiero / tributario"
-                            : " — solo consulta"}
+                  <span> — {ROLE_DESCRIPTIONS[role]}</span>
                 </li>
               ))}
             </ul>

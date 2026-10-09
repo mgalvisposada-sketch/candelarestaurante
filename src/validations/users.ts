@@ -4,6 +4,7 @@ export const APP_ROLES = [
   "SUPER_ADMIN",
   "GESTION",
   "ADMIN_LOCAL",
+  "TESORERIA",
   "SOCIO",
   "CONTADOR",
   "LECTURA",

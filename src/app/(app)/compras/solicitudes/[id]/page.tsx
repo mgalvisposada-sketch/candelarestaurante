@@ -33,7 +33,7 @@ export default async function CompraSolicitudDetailPage({
   const { data: request } = await supabase
     .from("purchase_requests")
     .select(
-      "id, title, status, notes, location_label, requested_at, needed_by, rejection_reason, payment_request_id",
+      "id, title, status, notes, location_label, requested_at, needed_by, rejection_reason, payment_request_id, is_urgent, payment_mode",
     )
     .eq("id", id)
     .eq("organization_id", ctx.organization.id)
@@ -53,7 +53,7 @@ export default async function CompraSolicitudDetailPage({
       supabase
         .from("purchase_request_items")
         .select(
-          "id, product_id, category_id, quantity_requested, quantity_approved, quantity_received, unit, suggested_supplier_id, approved_supplier_id, unit_cost_estimate, expected_delivery_date, status, notes, invoice_payment_request_id, invoice_ap_document_id",
+          "id, product_id, category_id, quantity_requested, quantity_approved, quantity_received, unit, suggested_supplier_id, approved_supplier_id, unit_cost_estimate, expected_delivery_date, status, notes, invoice_payment_request_id, invoice_ap_document_id, supplier_invoice_label",
         )
         .eq("purchase_request_id", id)
         .eq("organization_id", ctx.organization.id)
@@ -166,16 +166,13 @@ export default async function CompraSolicitudDetailPage({
             ctxCanAccess(ctx, "compras.solicitudes.recibir.extras")
           }
           canApprove={ctxCanAccess(ctx, "compras.solicitudes.aprobar")}
+          canMarkOrdered={ctxCanAccess(ctx, "compras.solicitudes.pedir")}
           canReceive={ctxCanAccess(ctx, "compras.solicitudes.recibir")}
           canReceiveExtras={ctxCanAccess(
             ctx,
             "compras.solicitudes.recibir.extras",
           )}
-          canAcceptInvoice={
-            ctxCanAccess(ctx, "compras.solicitudes.facturar") ||
-            ctxCanAccess(ctx, "compras.solicitudes.aprobar") ||
-            ctxCanAccess(ctx, "compras.solicitudes.recibir")
-          }
+          canAcceptInvoice={ctxCanAccess(ctx, "compras.solicitudes.facturar")}
         />
       </main>
     </>
