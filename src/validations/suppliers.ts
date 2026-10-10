@@ -12,6 +12,7 @@ export const supplierSchema = z.object({
   is_active: z.enum(["true", "false"]).optional(),
   is_purchase_supplier: z.enum(["true", "false"]).optional(),
   is_expense_supplier: z.enum(["true", "false"]).optional(),
+  purchase_payment_terms: z.enum(["CREDITO", "PREPAGO"]).optional(),
 });
 
 export const apDocumentSchema = z.object({

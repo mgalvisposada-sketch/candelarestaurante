@@ -6,6 +6,7 @@ import {
   createExpenseAction,
   softDeleteExpenseAction,
 } from "./actions";
+import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
@@ -65,7 +66,10 @@ export function CreateExpenseForm({
         startTransition(async () => {
           const r = await createExpenseAction(fd);
           if (!r.ok) setError(r.error ?? "Error");
-          else setOpen(false);
+          else {
+            setOpen(false);
+            notifyPendingActionsChanged();
+          }
         });
       }}
     >

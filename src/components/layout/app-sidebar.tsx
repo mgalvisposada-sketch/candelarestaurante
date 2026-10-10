@@ -28,6 +28,11 @@ import {
   X,
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand/logo";
+import {
+  NavUnreadBadge,
+  PendingActionsBell,
+  usePendingActions,
+} from "@/components/layout/pending-actions-inbox";
 import { SignOutButton } from "@/components/layout/sign-out-button";
 import { canAccessModuleHref, firstAllowedHref } from "@/lib/permissions-catalog";
 import {
@@ -38,6 +43,16 @@ import {
   type NavItem,
 } from "@/types/domain";
 import { cn } from "@/lib/utils";
+
+function pendingCountForHref(
+  href: NavItem["href"],
+  counts: { compras: number; personal: number; pagos: number },
+) {
+  if (href === "/compras") return counts.compras;
+  if (href === "/personal") return counts.personal;
+  if (href === "/solicitudes-pago") return counts.pagos;
+  return 0;
+}
 
 /** Habilita módulos implementados (MVP 1–3). Reportes queda para MVP 4. */
 const ENABLED_HREFS: Set<string> = new Set(
@@ -100,6 +115,8 @@ export function AppSidebar({
   const isAdmin = role === "SUPER_ADMIN";
   const homeHref =
     firstAllowedHref(permissions, { isSuperAdmin: isAdmin }) ?? "/login";
+  const { items: pendingItems, counts: pendingCounts, loading: pendingLoading } =
+    usePendingActions(true);
 
   const groups = useMemo(() => {
     const q = normalizeSearch(query);
@@ -196,6 +213,7 @@ export function AppSidebar({
                     const Icon = NAV_ICONS[item.href];
 
                     const showHint = Boolean(query) || !enabled;
+                    const unread = pendingCountForHref(item.href, pendingCounts);
 
                     return (
                       <li key={item.href}>
@@ -247,6 +265,7 @@ export function AppSidebar({
                               </span>
                             ) : null}
                           </span>
+                          <NavUnreadBadge count={unread} />
                         </Link>
                       </li>
                     );
@@ -258,7 +277,12 @@ export function AppSidebar({
         )}
       </nav>
 
-      <div className="space-y-3 border-t border-white/10 px-4 py-4">
+      <div className="space-y-3 border-t border-white/10 px-3 py-4">
+        <PendingActionsBell
+          items={pendingItems}
+          counts={pendingCounts}
+          loading={pendingLoading}
+        />
         {(userEmail || role) && (
           <div className="px-1 text-xs text-[var(--sidebar-muted)]">
             {userEmail ? (
@@ -271,7 +295,9 @@ export function AppSidebar({
             ) : null}
           </div>
         )}
-        <SignOutButton />
+        <div className="px-1">
+          <SignOutButton />
+        </div>
         <p className="px-1 text-[10px] text-[var(--sidebar-muted)]">
           Administración financiera · COP
         </p>

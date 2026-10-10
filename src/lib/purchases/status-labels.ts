@@ -2,11 +2,11 @@
 export const PURCHASE_REQUEST_STATUS_LABELS: Record<string, string> = {
   BORRADOR: "Borrador",
   ENVIADA: "Pendiente de autorización",
-  APROBADA: "Autorizada — por pedir",
-  PEDIDA: "Pedida — por recibir",
+  APROBADA: "Autorizada — pedir / facturar (prepago)",
+  PEDIDA: "Pedida — por recibir o facturar",
   RECIBIDA_PARCIAL: "Recibida parcial",
-  RECIBIDA: "Recibida — por facturar",
-  FACTURA_ACEPTADA: "Factura en cola de pago",
+  RECIBIDA: "Recibida — por facturar (crédito)",
+  FACTURA_ACEPTADA: "Factura en cola — pagar y/o recibir",
   RECHAZADA: "Rechazada",
   ANULADA: "Anulada",
 };

@@ -6,6 +6,7 @@ import {
   createNoveltyAction,
   reviewNoveltyAction,
 } from "../payroll-ops-actions";
+import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO } from "@/lib/dates";
@@ -99,7 +100,10 @@ export function NovedadesClient({
           startTransition(async () => {
             const r = await createNoveltyAction(fd);
             if (!r.ok) setError(r.error ?? "Error");
-            else setOk("Novedad enviada a aprobación del gerente");
+            else {
+              setOk("Novedad enviada a aprobación del gerente");
+              notifyPendingActionsChanged();
+            }
           });
         }}
       >
@@ -273,6 +277,7 @@ export function NovedadesClient({
                     onClick={() => {
                       startTransition(async () => {
                         await reviewNoveltyAction(n.id, "APROBADA");
+                        notifyPendingActionsChanged();
                       });
                     }}
                   >
@@ -286,6 +291,7 @@ export function NovedadesClient({
                       const note = prompt("Motivo del rechazo (opcional)") ?? "";
                       startTransition(async () => {
                         await reviewNoveltyAction(n.id, "RECHAZADA", note);
+                        notifyPendingActionsChanged();
                       });
                     }}
                   >

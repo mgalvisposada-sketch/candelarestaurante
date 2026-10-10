@@ -68,7 +68,7 @@ export default async function CompraSolicitudDetailPage({
         .order("name"),
       supabase
         .from("suppliers")
-        .select("id, name, lead_time_days")
+        .select("id, name, lead_time_days, purchase_payment_terms")
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
         .eq("is_active", true)
@@ -121,6 +121,20 @@ export default async function CompraSolicitudDetailPage({
     category_name: categories.get(item.category_id) ?? "Sin categoría",
   }));
 
+  const payReqIds = [
+    ...new Set(
+      items
+        .map((i) => i.invoice_payment_request_id)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+  const { data: payStatusRows } = payReqIds.length
+    ? await supabase.from("payment_requests").select("id, status").in("id", payReqIds)
+    : { data: [] as { id: string; status: string }[] };
+  const paymentStatusById = Object.fromEntries(
+    (payStatusRows ?? []).map((p) => [p.id, p.status]),
+  );
+
   return (
     <>
       <AppHeader title="Compras" subtitle="Detalle de solicitud" />
@@ -165,6 +179,7 @@ export default async function CompraSolicitudDetailPage({
             ctxCanAccess(ctx, "compras.solicitudes.crear") ||
             ctxCanAccess(ctx, "compras.solicitudes.recibir.extras")
           }
+          paymentStatusById={paymentStatusById}
           canApprove={ctxCanAccess(ctx, "compras.solicitudes.aprobar")}
           canMarkOrdered={ctxCanAccess(ctx, "compras.solicitudes.pedir")}
           canReceive={ctxCanAccess(ctx, "compras.solicitudes.recibir")}

@@ -36,6 +36,7 @@ export type SupplierRow = {
   notes: string | null;
   is_active: boolean;
   is_purchase_supplier: boolean;
+  purchase_payment_terms?: "CREDITO" | "PREPAGO" | null;
   is_expense_supplier: boolean;
   category_ids: string[];
 };
@@ -326,9 +327,32 @@ function SupplierFields({
         </span>
       </label>
       {isPurchase ? (
-        <div className="md:col-span-2">
-          <CategoryPicker categories={categories} selectedIds={s?.category_ids ?? []} />
-        </div>
+        <>
+          <div className="md:col-span-2">
+            <CategoryPicker categories={categories} selectedIds={s?.category_ids ?? []} />
+          </div>
+          <label className="block text-sm md:col-span-2">
+            <span className="mb-1 block text-[var(--muted)]">
+              Condición de pago (insumos) *
+            </span>
+            <select
+              name="purchase_payment_terms"
+              defaultValue={s?.purchase_payment_terms ?? "PREPAGO"}
+              className={inputClass}
+            >
+              <option value="PREPAGO">
+                Prepago — pagar antes de que despachen
+              </option>
+              <option value="CREDITO">
+                Crédito — recibir primero, pagar después
+              </option>
+            </select>
+            <span className="mt-1 block text-xs text-[var(--muted)]">
+              La mayoría de proveedores es prepago: factura → pago → recepción.
+              Solo marque crédito si realmente despachan sin pago previo.
+            </span>
+          </label>
+        </>
       ) : null}
       <label className="flex items-start gap-3 rounded-lg border border-[var(--line)] px-3 py-3 text-sm md:col-span-2">
         <input
@@ -571,6 +595,17 @@ export function SupplierMasterCard({
             {!supplier.is_active ? <Badge tone="neutral">Inactivo</Badge> : null}
             {supplier.is_purchase_supplier ? (
               <Badge tone="ok">Insumos</Badge>
+            ) : null}
+            {supplier.is_purchase_supplier ? (
+              <Badge
+                tone={
+                  supplier.purchase_payment_terms === "CREDITO" ? "ok" : "warn"
+                }
+              >
+                {supplier.purchase_payment_terms === "CREDITO"
+                  ? "Crédito"
+                  : "Prepago"}
+              </Badge>
             ) : null}
             {supplier.is_expense_supplier ? (
               <Badge tone="ok">Gastos</Badge>

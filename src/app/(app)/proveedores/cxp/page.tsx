@@ -57,7 +57,7 @@ export default async function ProveedoresCxpPage() {
     supabase
       .from("suppliers")
       .select(
-        "id, name, tax_id, contact_name, phone, email, category, bank_account_info, notes, is_active, is_purchase_supplier, is_expense_supplier",
+        "id, name, tax_id, contact_name, phone, email, category, bank_account_info, notes, is_active, is_purchase_supplier, is_expense_supplier, purchase_payment_terms",
       )
       .eq("organization_id", ctx.organization.id)
       .is("deleted_at", null)

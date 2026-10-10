@@ -237,6 +237,7 @@ export async function createSupplierAction(
     is_active: formData.get("is_active") || "true",
     is_purchase_supplier: formData.get("is_purchase_supplier") || "false",
     is_expense_supplier: formData.get("is_expense_supplier") || "false",
+    purchase_payment_terms: formData.get("purchase_payment_terms") || "PREPAGO",
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
@@ -268,6 +269,7 @@ export async function createSupplierAction(
       is_active: parsed.data.is_active !== "false",
       is_purchase_supplier: isPurchaseSupplier,
       is_expense_supplier: isExpenseSupplier,
+      purchase_payment_terms: parsed.data.purchase_payment_terms || "PREPAGO",
       created_by: ctx.userId,
       updated_by: ctx.userId,
     })
@@ -334,6 +336,7 @@ export async function updateSupplierAction(
     is_active: formData.get("is_active") || "true",
     is_purchase_supplier: formData.get("is_purchase_supplier") || "false",
     is_expense_supplier: formData.get("is_expense_supplier") || "false",
+    purchase_payment_terms: formData.get("purchase_payment_terms") || "PREPAGO",
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
@@ -373,6 +376,7 @@ export async function updateSupplierAction(
       is_active: parsed.data.is_active !== "false",
       is_purchase_supplier: isPurchaseSupplier,
       is_expense_supplier: isExpenseSupplier,
+      purchase_payment_terms: parsed.data.purchase_payment_terms || "PREPAGO",
       updated_by: ctx.userId,
     })
     .eq("id", supplierId)

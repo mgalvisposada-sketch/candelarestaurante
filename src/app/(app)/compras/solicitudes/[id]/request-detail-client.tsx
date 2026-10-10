@@ -25,7 +25,13 @@ import {
   updatePurchaseRequestItemAction,
 } from "../../purchase-actions";
 import { purchaseRequestStatusLabel } from "@/lib/purchases/status-labels";
+import {
+  isPrepagoTerms,
+  PURCHASE_PAYMENT_TERMS_LABELS,
+  type PurchasePaymentTerms,
+} from "@/lib/purchases/payment-terms";
 import { createProductFromRequestAction } from "../../inventory-actions";
+import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
 import { Badge } from "@/components/ui/primitives";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
 import { formatCOP } from "@/lib/money";
@@ -72,6 +78,7 @@ export type SupplierOption = {
   id: string;
   name: string;
   lead_time_days: number | null;
+  purchase_payment_terms?: PurchasePaymentTerms | string | null;
 };
 export type CategorySupplierLink = {
   supplier_id: string;
@@ -714,24 +721,49 @@ export function AddItemForm({
   );
 }
 
-function RequestProcessSteps({ status }: { status: string }) {
-  const steps = [
-    { key: "BORRADOR", label: "Solicitar" },
-    { key: "ENVIADA", label: "Autorizar" },
-    { key: "APROBADA", label: "Pedir" },
-    { key: "PEDIDA", label: "Recibir" },
-    { key: "RECIBIDA", label: "Facturar" },
-    { key: "FACTURA_ACEPTADA", label: "Cerrado" },
-  ] as const;
+function RequestProcessSteps({
+  status,
+  hasPrepago,
+}: {
+  status: string;
+  hasPrepago: boolean;
+}) {
+  // Prepago (mayoría): autorizar → facturar/pagar → recibir
+  // Crédito: autorizar → pedir → recibir → facturar → pagar
+  const steps = hasPrepago
+    ? ([
+        { key: "BORRADOR", label: "Solicitar" },
+        { key: "ENVIADA", label: "Autorizar" },
+        { key: "APROBADA", label: "Facturar" },
+        { key: "FACTURA_ACEPTADA", label: "Pagar" },
+        { key: "PEDIDA", label: "Recibir" },
+        { key: "CERRADO", label: "Cerrado" },
+      ] as const)
+    : ([
+        { key: "BORRADOR", label: "Solicitar" },
+        { key: "ENVIADA", label: "Autorizar" },
+        { key: "APROBADA", label: "Pedir" },
+        { key: "PEDIDA", label: "Recibir" },
+        { key: "RECIBIDA", label: "Facturar" },
+        { key: "FACTURA_ACEPTADA", label: "Cerrado" },
+      ] as const);
 
   const activeIndex = (() => {
+    if (["RECHAZADA", "ANULADA"].includes(status)) return -1;
+    if (hasPrepago) {
+      if (status === "BORRADOR") return 0;
+      if (status === "ENVIADA") return 1;
+      if (status === "APROBADA" || status === "PEDIDA") return 2;
+      if (status === "FACTURA_ACEPTADA") return 3;
+      if (["RECIBIDA", "RECIBIDA_PARCIAL"].includes(status)) return 4;
+      return 2;
+    }
     if (status === "BORRADOR") return 0;
     if (status === "ENVIADA") return 1;
     if (status === "APROBADA") return 2;
     if (status === "PEDIDA") return 3;
     if (["RECIBIDA", "RECIBIDA_PARCIAL"].includes(status)) return 4;
     if (status === "FACTURA_ACEPTADA") return 5;
-    if (["RECHAZADA", "ANULADA"].includes(status)) return -1;
     return 0;
   })();
 
@@ -1339,6 +1371,7 @@ function SupplierInvoiceForm({
   supplierId,
   supplierName,
   items,
+  billingMode = "received",
   canUndoReceive,
   pending,
   startTransition,
@@ -1348,20 +1381,31 @@ function SupplierInvoiceForm({
   supplierId: string;
   supplierName: string;
   items: ItemRow[];
+  /** ordered = prepago (cantidad pedida); received = crédito */
+  billingMode?: "ordered" | "received";
   canUndoReceive?: boolean;
   pending: boolean;
   startTransition: TransitionStartFunction;
   setError: Dispatch<SetStateAction<string | null>>;
 }) {
   const router = useRouter();
-  const billable = items.filter(
-    (i) =>
-      Number(i.quantity_received || 0) > 0 && !i.invoice_payment_request_id,
-  );
+  const billable = items.filter((i) => {
+    if (i.invoice_payment_request_id) return false;
+    if (i.status === "CANCELADO" && Number(i.quantity_received || 0) <= 0) {
+      return false;
+    }
+    if (billingMode === "ordered") {
+      return itemOrderedQty(i) > 0;
+    }
+    return Number(i.quantity_received || 0) > 0;
+  });
   const [lineTotals, setLineTotals] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     for (const item of billable) {
-      const qty = roundPurchaseQty(Number(item.quantity_received || 0));
+      const qty =
+        billingMode === "ordered"
+          ? itemOrderedQty(item)
+          : roundPurchaseQty(Number(item.quantity_received || 0));
       const unit = Number(item.unit_cost_estimate || 0);
       init[item.id] =
         qty > 0 && unit > 0 ? String(Math.round(unit * qty)) : "";
@@ -1380,16 +1424,19 @@ function SupplierInvoiceForm({
   const [charges, setCharges] = useState<ChargeDraft[]>([]);
 
   const billableLines = billable.map((item) => {
-    const receivedQty = roundPurchaseQty(Number(item.quantity_received || 0));
+    const billedQty =
+      billingMode === "ordered"
+        ? itemOrderedQty(item)
+        : roundPurchaseQty(Number(item.quantity_received || 0));
     const lineTotal = parseBulkNumber(lineTotals[item.id] ?? "");
     const unitCost =
-      lineTotal != null && lineTotal > 0 && receivedQty > 0
-        ? lineTotal / receivedQty
+      lineTotal != null && lineTotal > 0 && billedQty > 0
+        ? lineTotal / billedQty
         : 0;
     return {
       itemId: item.id,
       productId: item.product_id,
-      receivedQty,
+      receivedQty: billedQty,
       unitCost,
     };
   });
@@ -1440,7 +1487,10 @@ function SupplierInvoiceForm({
         startTransition(async () => {
           const r = await acceptPurchaseInvoiceAction(requestId, fd);
           if (!r.ok) setError(r.error ?? "Error");
-          else router.refresh();
+          else {
+            notifyPendingActionsChanged();
+            router.refresh();
+          }
         });
       }}
     >
@@ -1449,22 +1499,36 @@ function SupplierInvoiceForm({
           Paso factura · solo {supplierName}
         </p>
         <h5 className="mt-1 text-sm font-medium">
-          Factura de {supplierName} (según lo que se recibió)
+          Factura de {supplierName}{" "}
+          {billingMode === "ordered"
+            ? "(prepago · según lo pedido)"
+            : "(crédito · según lo recibido)"}
         </h5>
         <p className="mt-1 text-xs text-[var(--muted)]">
-          Digite los precios de la factura contra <strong>nuestros</strong>{" "}
-          productos recibidos. Si el proveedor usa otro nombre, anótelo en
-          «Como aparece en factura» — no bloquea el envío. Cargos/descuentos
-          opcionales.
+          {billingMode === "ordered" ? (
+            <>
+              Proveedor prepago: cargue la factura <strong>antes</strong> de
+              recibir. Luego pague en Solicitudes de pago, notifique el
+              comprobante al proveedor y recién ahí Chase recibe.
+            </>
+          ) : (
+            <>
+              Digite precios contra lo <strong>recibido</strong>. Si el
+              proveedor usa otro nombre, use «Como aparece en factura».
+            </>
+          )}
         </p>
       </div>
 
       <ul className="space-y-3 rounded-lg bg-neutral-50 px-3 py-3 text-sm">
         {billable.map((item) => {
-          const received = roundPurchaseQty(Number(item.quantity_received || 0));
+          const billed =
+            billingMode === "ordered"
+              ? itemOrderedQty(item)
+              : roundPurchaseQty(Number(item.quantity_received || 0));
           const line = billableLines.find((l) => l.itemId === item.id);
           const alloc = allocByItem.get(item.id);
-          const lineBase = roundMoney(received * (line?.unitCost ?? 0));
+          const lineBase = roundMoney(billed * (line?.unitCost ?? 0));
           return (
             <li
               key={item.id}
@@ -1474,8 +1538,9 @@ function SupplierInvoiceForm({
                 <div>
                   <p className="font-medium">{item.product_name}</p>
                   <p className="text-xs text-[var(--muted)]">
-                    Recibido {formatPurchaseQty(received)} {item.unit} · nombre
-                    interno Candela
+                    {billingMode === "ordered" ? "Pedido" : "Recibido"}{" "}
+                    {formatPurchaseQty(billed)} {item.unit} · nombre interno
+                    Candela
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -2102,12 +2167,15 @@ function SupplierReceiveForm({
 
 function SupplierOperationsPanel({
   requestId,
+  requestStatus,
   items,
   products,
   categories,
   units,
   links,
   supplierMap,
+  supplierTerms,
+  paymentStatusById,
   canReceive,
   canReceiveExtras,
   canCreateProduct,
@@ -2117,12 +2185,15 @@ function SupplierOperationsPanel({
   setError,
 }: {
   requestId: string;
+  requestStatus: string;
   items: ItemRow[];
   products: ProductOption[];
   categories: CategoryOption[];
   units: UnitOption[];
   links: CategorySupplierLink[];
   supplierMap: Map<string, string>;
+  supplierTerms: Map<string, string>;
+  paymentStatusById: Map<string, string>;
   canReceive: boolean;
   canReceiveExtras: boolean;
   canCreateProduct: boolean;
@@ -2148,43 +2219,107 @@ function SupplierOperationsPanel({
     canShowExtra: boolean;
     isSettled: boolean;
     statusLabel: string;
+    prepago: boolean;
+    billingMode: "ordered" | "received";
+    payGateLabel: string | null;
   };
 
   const views: GroupView[] = groups
     .map((group) => {
+      const terms = group.supplierId
+        ? supplierTerms.get(group.supplierId) ?? "PREPAGO"
+        : "PREPAGO";
+      const prepago = isPrepagoTerms(terms);
+      const billingMode: "ordered" | "received" = prepago
+        ? "ordered"
+        : "received";
       const openItems = group.items.filter((i) => !isItemClosed(i));
       const closedItems = group.items.filter((i) => isItemClosed(i));
-      const uninvoiced = group.items.filter(
-        (i) =>
-          Number(i.quantity_received || 0) > 0 &&
-          !i.invoice_payment_request_id,
-      );
+      const uninvoiced = group.items.filter((i) => {
+        if (i.invoice_payment_request_id) return false;
+        if (i.status === "CANCELADO" && Number(i.quantity_received || 0) <= 0) {
+          return false;
+        }
+        if (prepago) return itemOrderedQty(i) > 0;
+        return Number(i.quantity_received || 0) > 0;
+      });
       const invoiced = group.items.filter((i) => i.invoice_payment_request_id);
+      const allInvoicedPaid =
+        invoiced.length > 0 &&
+        invoiced.every((i) => {
+          const st = i.invoice_payment_request_id
+            ? paymentStatusById.get(i.invoice_payment_request_id)
+            : null;
+          return st === "PAGADA";
+        });
+      const awaitingPay =
+        prepago &&
+        invoiced.length > 0 &&
+        !allInvoicedPaid &&
+        openItems.length > 0;
+
       const isSettled =
         openItems.length === 0 &&
         uninvoiced.length === 0 &&
         invoiced.length > 0;
-      const canShowReceive = canReceive && openItems.length > 0;
+
       const canShowInvoice =
         canAcceptInvoice &&
         Boolean(group.supplierId) &&
-        uninvoiced.length > 0;
+        uninvoiced.length > 0 &&
+        ["APROBADA", "PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
+          requestStatus,
+        ) &&
+        (prepago ||
+          ["PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
+            requestStatus,
+          ));
+
+      // Prepago: recibir solo con factura pagada. Crédito: tras pedir.
+      const canShowReceive =
+        canReceive &&
+        openItems.length > 0 &&
+        ["PEDIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
+          requestStatus,
+        ) &&
+        (!prepago || allInvoicedPaid);
+
       const canShowExtra =
-        canReceiveExtras && Boolean(group.supplierId) && !isSettled;
-      const statusLabel = canShowReceive
-        ? `${openItems.length} por recibir`
-        : canShowInvoice
-          ? "Listo para facturar"
-          : isSettled
-            ? "Factura en cola de pago"
-            : invoiced.length > 0
-              ? "Factura enviada"
-              : "Sin acción";
+        canReceiveExtras &&
+        Boolean(group.supplierId) &&
+        !isSettled &&
+        (!prepago || allInvoicedPaid || canShowReceive);
+
+      let payGateLabel: string | null = null;
+      if (prepago && openItems.length > 0 && !canShowReceive) {
+        if (uninvoiced.length > 0) {
+          payGateLabel =
+            "Prepago: cargue la factura y págala antes de recibir.";
+        } else if (awaitingPay) {
+          payGateLabel =
+            "Factura en cola: pague en Solicitudes de pago y notifique el comprobante al proveedor. Luego podrá recibir.";
+        }
+      }
+
+      const statusLabel = canShowInvoice
+        ? prepago
+          ? "Prepago · facturar ahora"
+          : "Listo para facturar"
+        : awaitingPay
+          ? "Esperando pago"
+          : canShowReceive
+            ? `${openItems.length} por recibir`
+            : isSettled
+              ? "Cerrado"
+              : invoiced.length > 0
+                ? "Factura enviada"
+                : "Sin acción";
 
       if (
         !canShowReceive &&
         !canShowInvoice &&
         !canShowExtra &&
+        !payGateLabel &&
         invoiced.length === 0 &&
         closedItems.length === 0
       ) {
@@ -2202,6 +2337,9 @@ function SupplierOperationsPanel({
         canShowExtra,
         isSettled,
         statusLabel,
+        prepago,
+        billingMode,
+        payGateLabel,
       };
     })
     .filter((v): v is GroupView => v != null);
@@ -2219,8 +2357,14 @@ function SupplierOperationsPanel({
       canShowInvoice,
       canShowExtra,
       statusLabel,
+      prepago,
+      billingMode,
+      payGateLabel,
     } = view;
     const settled = Boolean(opts?.settled);
+    const termsLabel = prepago
+      ? PURCHASE_PAYMENT_TERMS_LABELS.PREPAGO
+      : PURCHASE_PAYMENT_TERMS_LABELS.CREDITO;
 
     return (
       <details
@@ -2228,10 +2372,11 @@ function SupplierOperationsPanel({
         className={`overflow-hidden rounded-xl border bg-white ${
           settled
             ? "border-[var(--line)] opacity-90"
-            : canShowReceive || canShowInvoice
+            : canShowReceive || canShowInvoice || payGateLabel
               ? "border-[var(--ink)]"
               : "border-[var(--line)]"
         }`}
+        open={!settled && Boolean(canShowInvoice || payGateLabel || canShowReceive)}
       >
         <summary className="cursor-pointer list-none bg-neutral-50 px-4 py-3 marker:content-none [&::-webkit-details-marker]:hidden">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2241,6 +2386,7 @@ function SupplierOperationsPanel({
                 {group.items.length} producto
                 {group.items.length === 1 ? "" : "s"} · {statusLabel}
               </p>
+              <p className="text-xs text-[var(--muted)]">{termsLabel}</p>
             </div>
             <span className="text-sm text-[var(--muted)]">Ver / ocultar</span>
           </div>
@@ -2249,11 +2395,16 @@ function SupplierOperationsPanel({
         <div className="space-y-4 border-t border-[var(--line)] px-3 py-3">
           {settled ? (
             <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-              Todo recibido y factura en{" "}
+              Todo recibido y factura gestionada. Ya no requiere recepción.
+            </p>
+          ) : null}
+
+          {payGateLabel ? (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+              {payGateLabel}{" "}
               <a className="underline" href="/solicitudes-pago">
-                Solicitudes de pago
+                Ir a Solicitudes de pago
               </a>
-              . Ya no requiere recepción.
             </p>
           ) : null}
 
@@ -2318,7 +2469,8 @@ function SupplierOperationsPanel({
                 supplierId={group.supplierId}
                 supplierName={group.supplierName}
                 items={group.items}
-                canUndoReceive={canReceive}
+                billingMode={billingMode}
+                canUndoReceive={canReceive && billingMode === "received"}
                 pending={pending}
                 startTransition={startTransition}
                 setError={setError}
@@ -2499,6 +2651,7 @@ export function RequestDetailClient({
   units,
   suppliers,
   links,
+  paymentStatusById = {},
   canCreate,
   canCreateProduct,
   canApprove,
@@ -2514,6 +2667,7 @@ export function RequestDetailClient({
   units: UnitOption[];
   suppliers: SupplierOption[];
   links: CategorySupplierLink[];
+  paymentStatusById?: Record<string, string>;
   canCreate: boolean;
   canCreateProduct: boolean;
   canApprove: boolean;
@@ -2528,12 +2682,42 @@ export function RequestDetailClient({
     () => new Map(suppliers.map((s) => [s.id, s.name])),
     [suppliers],
   );
+  const supplierTerms = useMemo(
+    () =>
+      new Map(
+        suppliers.map((s) => [
+          s.id,
+          s.purchase_payment_terms ?? "PREPAGO",
+        ]),
+      ),
+    [suppliers],
+  );
+  const hasPrepago = useMemo(() => {
+    const ids = new Set(
+      items
+        .map((i) => i.approved_supplier_id ?? i.suggested_supplier_id)
+        .filter(Boolean) as string[],
+    );
+    if (ids.size === 0) {
+      return suppliers.some((s) => isPrepagoTerms(s.purchase_payment_terms));
+    }
+    return [...ids].some((id) =>
+      isPrepagoTerms(supplierTerms.get(id) ?? "PREPAGO"),
+    );
+  }, [items, suppliers, supplierTerms]);
   const existingProductIds = new Set(items.map((i) => i.product_id));
   // PDF compact en recepción/factura (APROBADA ya muestra el panel completo arriba).
   const showSupplierOrders = [
     "PEDIDA",
     "RECIBIDA_PARCIAL",
     "RECIBIDA",
+    "FACTURA_ACEPTADA",
+  ].includes(request.status);
+  const showOpsPanel = [
+    "APROBADA",
+    "PEDIDA",
+    "RECIBIDA",
+    "RECIBIDA_PARCIAL",
     "FACTURA_ACEPTADA",
   ].includes(request.status);
   const approveGroups = useMemo(
@@ -2594,7 +2778,13 @@ export function RequestDetailClient({
             {purchaseRequestStatusLabel(request.status)}
           </Badge>
         </div>
-        <RequestProcessSteps status={request.status} />
+        <RequestProcessSteps status={request.status} hasPrepago={hasPrepago} />
+        {hasPrepago ? (
+          <p className="mt-3 text-xs text-[var(--muted)]">
+            Hay proveedores prepago: tras autorizar, tesorería factura y paga;
+            Chase recibe cuando el pago está listo (comprobante al proveedor).
+          </p>
+        ) : null}
       </div>
 
       {request.status === "BORRADOR" && canCreate ? (
@@ -2649,6 +2839,7 @@ export function RequestDetailClient({
               setError(null);
               const r = await submitPurchaseRequestAction(request.id);
               if (!r.ok) setError(r.error ?? "Error");
+              else notifyPendingActionsChanged();
             })
           }
         >
@@ -2664,6 +2855,7 @@ export function RequestDetailClient({
             startTransition(async () => {
               const r = await approvePurchaseRequestAction(request.id, fd);
               if (!r.ok) setError(r.error ?? "Error");
+              else notifyPendingActionsChanged();
             });
           }}
         >
@@ -2782,10 +2974,12 @@ export function RequestDetailClient({
 
       {request.status === "APROBADA" ? (
         <div className="space-y-3 rounded-xl border border-[var(--line)] bg-white p-5">
-          <h3 className="font-medium">Compra autorizada — pedir al proveedor</h3>
+            <h3 className="font-medium">Compra autorizada</h3>
           <p className="text-sm text-[var(--muted)]">
-            Ya puede comprar o enviar el pedido. Use el PDF por proveedor y, al
-            gestionar la compra, marque «Ya pedí / compré».
+            Use el PDF por proveedor. Si el proveedor es <strong>prepago</strong>,
+            tesorería factura y paga abajo (antes de recibir). Si es{" "}
+            <strong>crédito</strong>, marque «Ya pedí / compré» y Chase recibe;
+            la factura va después.
           </p>
           <SupplierOrdersPanel
             requestId={request.id}
@@ -2824,6 +3018,7 @@ export function RequestDetailClient({
             startTransition(async () => {
               const r = await rejectPurchaseRequestAction(request.id, fd);
               if (!r.ok) setError(r.error ?? "Error");
+              else notifyPendingActionsChanged();
             });
           }}
         >
@@ -2839,18 +3034,19 @@ export function RequestDetailClient({
         </form>
       ) : null}
 
-      {["PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
-        request.status,
-      ) &&
+      {showOpsPanel &&
       (canReceive || canAcceptInvoice || canReceiveExtras) ? (
         <SupplierOperationsPanel
           requestId={request.id}
+          requestStatus={request.status}
           items={items}
           products={products}
           categories={categories}
           units={units}
           links={links}
           supplierMap={supplierMap}
+          supplierTerms={supplierTerms}
+          paymentStatusById={new Map(Object.entries(paymentStatusById))}
           canReceive={canReceive}
           canReceiveExtras={canReceiveExtras}
           canCreateProduct={canCreateProduct}

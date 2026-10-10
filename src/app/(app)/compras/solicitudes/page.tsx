@@ -62,7 +62,7 @@ export default async function ComprasSolicitudesPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Solicitudes de compra"
-            description="Flujo: solicitar → autorizar → pedir/comprar → recibir (cantidades) → facturar (precios) → cola de pago. Sin autorización no se compra."
+            description="Sin autorización no se compra. Prepago (mayoría): autorizar → facturar → pagar → recibir. Crédito: autorizar → pedir → recibir → facturar → pagar."
           />
           {canCreate ? <CreatePurchaseRequestForm /> : null}
         </div>

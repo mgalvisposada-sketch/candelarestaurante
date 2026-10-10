@@ -8,6 +8,7 @@ import {
   rejectPaymentRequestAction,
   softDeletePaymentRequestAction,
 } from "./actions";
+import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP, money } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
@@ -114,6 +115,7 @@ function PayForm({
         startTransition(async () => {
           const r = await payPaymentRequestAction(requestId, fd);
           if (!r.ok) setError(r.error ?? "Error");
+          else notifyPendingActionsChanged();
         });
       }}
     >
@@ -206,7 +208,10 @@ function RejectForm({ requestId }: { requestId: string }) {
         startTransition(async () => {
           const r = await rejectPaymentRequestAction(requestId, fd);
           if (!r.ok) setError(r.error ?? "Error");
-          else setOpen(false);
+          else {
+            setOpen(false);
+            notifyPendingActionsChanged();
+          }
         });
       }}
     >
@@ -352,6 +357,7 @@ function RequestCard({
               startTransition(async () => {
                 const r = await approvePaymentRequestAction(request.id);
                 if (!r.ok) setActionError(r.error ?? "Error");
+                else notifyPendingActionsChanged();
               });
             }}
           >
@@ -368,6 +374,7 @@ function RequestCard({
               startTransition(async () => {
                 const r = await softDeletePaymentRequestAction(request.id);
                 if (!r.ok) setActionError(r.error ?? "Error");
+                else notifyPendingActionsChanged();
               });
             }}
           >
