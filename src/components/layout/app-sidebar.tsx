@@ -105,11 +105,13 @@ export function AppSidebar({
   userEmail,
   role,
   permissions = [],
+  onNavigate,
 }: {
   pathname: string;
   userEmail?: string | null;
   role?: AppRole | null;
   permissions?: string[];
+  onNavigate?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const isAdmin = role === "SUPER_ADMIN";
@@ -156,10 +158,11 @@ export function AppSidebar({
   const totalVisible = groups.reduce((acc, g) => acc + g.items.length, 0);
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col bg-[var(--sidebar)] text-[var(--sidebar-text)]">
+    <aside className="flex h-dvh w-full flex-col bg-[var(--sidebar)] text-[var(--sidebar-text)] md:h-auto md:min-h-screen md:w-72 md:shrink-0">
       <div className="border-b border-white/10 px-4 py-5">
         <Link
           href={homeHref}
+          onClick={onNavigate}
           className="flex flex-col items-center gap-2.5 text-center"
         >
           <BrandLogo size="md" priority className="shrink-0 drop-shadow-sm" />
@@ -233,7 +236,11 @@ export function AppSidebar({
                             !allowed && "cursor-not-allowed opacity-45",
                           )}
                           onClick={(e) => {
-                            if (!allowed) e.preventDefault();
+                            if (!allowed) {
+                              e.preventDefault();
+                              return;
+                            }
+                            onNavigate?.();
                           }}
                         >
                           <Icon

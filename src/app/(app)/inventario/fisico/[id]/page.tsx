@@ -39,16 +39,14 @@ export default async function InventarioFisicoDetailPage({
   if (!count) notFound();
 
   const canAdjust = ctxCanAccess(ctx, "inventario.fisico.ajustar");
-  // Solo tras enviar: la comparación es para revisión (Gestión) o resultado final.
-  const showSystemComparison =
-    count.status !== "BORRADOR" &&
-    (canAdjust || count.status === "AJUSTADO" || count.status === "RECHAZADO");
 
   const [{ data: itemRows }, { data: productRows }, { data: categoryRows }] =
     await Promise.all([
       supabase
         .from("physical_inventory_count_items")
-        .select("id, product_id, system_qty, counted_qty, difference_qty, notes")
+        .select(
+          "id, product_id, system_qty, counted_qty, difference_qty, notes, status, rejection_reason",
+        )
         .eq("count_id", id)
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
@@ -71,6 +69,9 @@ export default async function InventarioFisicoDetailPage({
   const productMap = new Map((productRows ?? []).map((p) => [p.id, p]));
   const items: CountItem[] = (itemRows ?? []).map((item) => {
     const p = productMap.get(item.product_id);
+    const status = (item.status as string | undefined) ?? "BORRADOR";
+    const revealSystem =
+      canAdjust && (status === "ENVIADO" || status === "AJUSTADO");
     return {
       id: item.id,
       product_id: item.product_id,
@@ -78,22 +79,27 @@ export default async function InventarioFisicoDetailPage({
       notes: item.notes,
       product_name: p?.name ?? item.product_id,
       unit: p?.unit ?? "",
-      system_qty: showSystemComparison ? item.system_qty : null,
-      difference_qty: showSystemComparison ? item.difference_qty : null,
+      status,
+      rejection_reason: item.rejection_reason,
+      category_id: p?.category_id ?? null,
+      system_qty: revealSystem ? item.system_qty : null,
+      difference_qty: revealSystem ? item.difference_qty : null,
     };
   });
 
   return (
     <>
       <AppHeader title="Inventario" subtitle="Detalle de inventario físico" />
-      <main className="space-y-6 p-8">
-        <InventarioNav
-          permissions={ctx.permissions}
-          isSuperAdmin={isSuperAdmin(ctx.role)}
-        />
+      <main className="space-y-4 p-4 pb-28 sm:p-6 md:space-y-6 md:p-8 md:pb-8">
+        <div className="hidden md:block">
+          <InventarioNav
+            permissions={ctx.permissions}
+            isSuperAdmin={isSuperAdmin(ctx.role)}
+          />
+        </div>
         <Link
           href="/inventario/fisico"
-          className="inline-flex text-sm text-[var(--accent)] hover:underline"
+          className="inline-flex min-h-10 items-center text-sm text-[var(--accent)] hover:underline"
         >
           ← Volver a inventarios físicos
         </Link>
@@ -104,7 +110,6 @@ export default async function InventarioFisicoDetailPage({
           categories={(categoryRows ?? []) as CategoryOption[]}
           canEdit={ctxCanAccess(ctx, "inventario.fisico")}
           canAdjust={canAdjust}
-          showSystemComparison={showSystemComparison}
         />
       </main>
     </>

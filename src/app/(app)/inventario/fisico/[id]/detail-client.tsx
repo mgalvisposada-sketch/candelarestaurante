@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
-  applyPhysicalCountAdjustmentsAction,
-  rejectPhysicalCountAction,
+  applyPhysicalCountCategoryAction,
+  rejectPhysicalCountCategoryAction,
   removePhysicalCountItemAction,
-  submitPhysicalCountAction,
+  submitPhysicalCountCategoryAction,
   upsertPhysicalCountItemAction,
 } from "../../../compras/physical-inventory-actions";
 import { Badge } from "@/components/ui/primitives";
@@ -29,6 +29,9 @@ export type CountItem = {
   notes: string | null;
   product_name?: string;
   unit?: string;
+  status?: string;
+  rejection_reason?: string | null;
+  category_id?: string | null;
 };
 export type CategoryOption = {
   id: string;
@@ -42,15 +45,17 @@ export type ProductOption = {
   category_id: string;
 };
 
+const NONE_CATEGORY = "__none__";
+
 const inputClass =
-  "w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2.5 text-sm outline-none ring-[var(--accent)] focus:ring-2";
+  "w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2.5 text-base outline-none ring-[var(--accent)] focus:ring-2 sm:text-sm";
 
 const STATUS_META: Record<
   string,
   { label: string; tone: "neutral" | "ok" | "warn" | "danger" | "info" }
 > = {
   BORRADOR: { label: "Contando", tone: "info" },
-  ENVIADO: { label: "En revisión", tone: "warn" },
+  ENVIADO: { label: "En progreso", tone: "warn" },
   AJUSTADO: { label: "Ajustado", tone: "ok" },
   RECHAZADO: { label: "Rechazado", tone: "danger" },
 };
@@ -73,6 +78,14 @@ function normalize(value: string) {
     .trim();
 }
 
+function catKey(categoryId: string | null | undefined) {
+  return categoryId && categoryId.trim() !== "" ? categoryId : NONE_CATEGORY;
+}
+
+function itemEditable(status: string | undefined) {
+  return !status || status === "BORRADOR";
+}
+
 export function PhysicalCountDetailClient({
   count,
   items,
@@ -80,7 +93,6 @@ export function PhysicalCountDetailClient({
   categories,
   canEdit,
   canAdjust,
-  showSystemComparison,
 }: {
   count: CountDetail;
   items: CountItem[];
@@ -88,7 +100,6 @@ export function PhysicalCountDetailClient({
   categories: CategoryOption[];
   canEdit: boolean;
   canAdjust: boolean;
-  showSystemComparison: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -97,9 +108,14 @@ export function PhysicalCountDetailClient({
   const [openCategoryId, setOpenCategoryId] = useState<string | null>(null);
   const [draftQty, setDraftQty] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [localItems, setLocalItems] = useState(items);
+  const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
 
-  const isDraft = count.status === "BORRADOR";
-  const isSubmitted = count.status === "ENVIADO";
+  useEffect(() => {
+    setLocalItems(items);
+  }, [items]);
+
+  const isClosed = count.status === "AJUSTADO";
   const statusMeta = STATUS_META[count.status] ?? {
     label: count.status,
     tone: "neutral" as const,
@@ -107,11 +123,14 @@ export function PhysicalCountDetailClient({
 
   const itemByProduct = useMemo(() => {
     const map = new Map<string, CountItem>();
-    for (const item of items) map.set(item.product_id, item);
+    for (const item of localItems) map.set(item.product_id, item);
     return map;
-  }, [items]);
+  }, [localItems]);
 
-  const countedCount = items.length;
+  const countedCount = localItems.length;
+  const draftCount = localItems.filter((i) => itemEditable(i.status)).length;
+  const reviewCount = localItems.filter((i) => i.status === "ENVIADO").length;
+  const adjustedCount = localItems.filter((i) => i.status === "AJUSTADO").length;
   const totalProducts = products.length;
   const progressPct =
     totalProducts === 0 ? 0 : Math.round((countedCount / totalProducts) * 100);
@@ -121,63 +140,150 @@ export function PhysicalCountDetailClient({
     return map;
   }, [categories]);
 
+  const productById = useMemo(() => {
+    const map = new Map(products.map((p) => [p.id, p]));
+    return map;
+  }, [products]);
+
+  /** Categoría con ítems en borrador: solo esa se puede contar hasta enviarla. */
+  const focusCategoryId = useMemo(() => {
+    for (const item of localItems) {
+      if (!itemEditable(item.status)) continue;
+      const product = productById.get(item.product_id);
+      if (!product) {
+        if (item.category_id != null) return catKey(item.category_id);
+        continue;
+      }
+      return catKey(product.category_id);
+    }
+    return null;
+  }, [localItems, productById]);
+
+  const focusCategoryLabel = useMemo(() => {
+    if (!focusCategoryId) return null;
+    if (focusCategoryId === NONE_CATEGORY) return "Sin categoría";
+    return categoryById.get(focusCategoryId)?.name ?? "categoría en curso";
+  }, [focusCategoryId, categoryById]);
+
   const groups = useMemo(() => {
     const q = normalize(query);
+
+    const statsPerCat = new Map<
+      string,
+      {
+        total: number;
+        counted: number;
+        draft: number;
+        review: number;
+        adjusted: number;
+        label: string;
+      }
+    >();
+
+    for (const product of products) {
+      const categoryId = catKey(product.category_id);
+      const cat = categoryById.get(product.category_id);
+      const stats = statsPerCat.get(categoryId) ?? {
+        total: 0,
+        counted: 0,
+        draft: 0,
+        review: 0,
+        adjusted: 0,
+        label: cat?.name ?? "Sin categoría",
+      };
+      stats.total += 1;
+      const item = itemByProduct.get(product.id);
+      if (item) {
+        stats.counted += 1;
+        if (itemEditable(item.status)) stats.draft += 1;
+        else if (item.status === "ENVIADO") stats.review += 1;
+        else if (item.status === "AJUSTADO") stats.adjusted += 1;
+      }
+      statsPerCat.set(categoryId, stats);
+    }
+
     const byCat = new Map<
       string,
       {
         categoryId: string;
         label: string;
         products: ProductOption[];
-        counted: number;
       }
     >();
 
     for (const product of products) {
-      const counted = itemByProduct.has(product.id);
+      const item = itemByProduct.get(product.id);
+      const counted = Boolean(item);
+
       if (filter === "pending" && counted) continue;
       if (filter === "counted" && !counted) continue;
       if (q && !normalize(product.name).includes(q)) continue;
 
-      const cat = categoryById.get(product.category_id);
-      const categoryId = product.category_id || "__none__";
-      const label = cat?.name ?? "Sin categoría";
+      const categoryId = catKey(product.category_id);
+      const stats = statsPerCat.get(categoryId);
       const group = byCat.get(categoryId) ?? {
         categoryId,
-        label,
+        label: stats?.label ?? "Sin categoría",
         products: [],
-        counted: 0,
       };
       group.products.push(product);
       byCat.set(categoryId, group);
     }
 
-    // Conteos reales por categoría (sobre catálogo completo, no filtro).
-    const countedPerCat = new Map<string, { total: number; counted: number }>();
-    for (const product of products) {
-      const categoryId = product.category_id || "__none__";
-      const stats = countedPerCat.get(categoryId) ?? { total: 0, counted: 0 };
-      stats.total += 1;
-      if (itemByProduct.has(product.id)) stats.counted += 1;
-      countedPerCat.set(categoryId, stats);
+    // Con filtro Pendientes: si ya contó todo lo digitable pero hay borradores
+    // por enviar (o hay revisión), la categoría debe seguir visible.
+    if (filter === "pending" && !q) {
+      for (const [categoryId, stats] of statsPerCat) {
+        if (byCat.has(categoryId)) continue;
+        if (stats.draft === 0 && stats.review === 0) continue;
+        byCat.set(categoryId, {
+          categoryId,
+          label: stats.label,
+          products: products.filter((p) => {
+            if (catKey(p.category_id) !== categoryId) return false;
+            const item = itemByProduct.get(p.id);
+            return Boolean(item && itemEditable(item.status));
+          }),
+        });
+      }
     }
 
     return [...byCat.values()]
       .map((g) => {
-        const stats = countedPerCat.get(g.categoryId) ?? {
+        const stats = statsPerCat.get(g.categoryId) ?? {
           total: g.products.length,
           counted: 0,
+          draft: 0,
+          review: 0,
+          adjusted: 0,
+          label: g.label,
         };
-        return { ...g, totalInCategory: stats.total, countedInCategory: stats.counted };
+        return {
+          ...g,
+          totalInCategory: stats.total,
+          countedInCategory: stats.counted,
+          draftInCategory: stats.draft,
+          reviewInCategory: stats.review,
+          adjustedInCategory: stats.adjusted,
+        };
       })
       .sort((a, b) => a.label.localeCompare(b.label, "es"));
   }, [products, itemByProduct, categoryById, filter, query]);
 
   const categoryInit = useRef(false);
   useEffect(() => {
-    if (!isDraft) return;
+    if (isClosed) return;
+
+    // Con categoría en borrador, forzar foco ahí.
+    if (focusCategoryId) {
+      setOpenCategoryId(focusCategoryId);
+      categoryInit.current = true;
+      return;
+    }
+
     const nextIncomplete =
       groups.find((g) => g.countedInCategory < g.totalInCategory)?.categoryId ??
+      groups.find((g) => g.draftInCategory > 0)?.categoryId ??
       groups[0]?.categoryId ??
       null;
 
@@ -187,27 +293,12 @@ export function PhysicalCountDetailClient({
       return;
     }
 
-    // Si la categoría abierta desaparece del filtro (p. ej. quedó completa en Pendientes), pasar a la siguiente.
     setOpenCategoryId((prev) => {
       if (prev == null) return prev;
       if (groups.some((g) => g.categoryId === prev)) return prev;
       return nextIncomplete;
     });
-  }, [groups, isDraft]);
-
-  const reviewStats = useMemo(() => {
-    if (!showSystemComparison) return null;
-    let match = 0;
-    let surplus = 0;
-    let deficit = 0;
-    for (const item of items) {
-      const diff = Number(item.difference_qty ?? 0);
-      if (diff === 0) match += 1;
-      else if (diff > 0) surplus += 1;
-      else deficit += 1;
-    }
-    return { match, surplus, deficit };
-  }, [items, showSystemComparison]);
+  }, [groups, isClosed, focusCategoryId]);
 
   function qtyValue(productId: string) {
     if (draftQty[productId] !== undefined) return draftQty[productId];
@@ -221,36 +312,134 @@ export function PhysicalCountDetailClient({
       setError("Indique la cantidad contada");
       return;
     }
+    const countedQty = Number(String(raw).replace(/,/g, "").trim());
+    if (Number.isNaN(countedQty) || countedQty < 0) {
+      setError("Cantidad contada inválida");
+      return;
+    }
+
+    const previous = itemByProduct.get(product.id) ?? null;
+    if (previous && !itemEditable(previous.status)) {
+      setError("Este producto ya fue enviado; no se puede editar");
+      return;
+    }
+
+    const productCat = catKey(product.category_id);
+    if (focusCategoryId && productCat !== focusCategoryId && !previous) {
+      setError(
+        `Termine y envíe “${focusCategoryLabel}” a revisión antes de contar otra categoría`,
+      );
+      return;
+    }
+
     setError(null);
-    setSavingId(product.id);
+    const optimisticId = previous?.id ?? `tmp-${product.id}`;
+    setLocalItems((prev) => {
+      if (previous) {
+        return prev.map((item) =>
+          item.product_id === product.id
+            ? {
+                ...item,
+                counted_qty: countedQty,
+                status: "BORRADOR",
+                rejection_reason: null,
+              }
+            : item,
+        );
+      }
+      return [
+        ...prev,
+        {
+          id: optimisticId,
+          product_id: product.id,
+          counted_qty: countedQty,
+          notes: null,
+          product_name: product.name,
+          unit: product.unit,
+          status: "BORRADOR",
+          category_id: product.category_id,
+        },
+      ];
+    });
+    setDraftQty((prev) => {
+      const next = { ...prev };
+      delete next[product.id];
+      return next;
+    });
+
     const fd = new FormData();
     fd.set("product_id", product.id);
     fd.set("counted_qty", raw);
-    startTransition(async () => {
-      const r = await upsertPhysicalCountItemAction(count.id, fd);
-      setSavingId(null);
-      if (!r.ok) setError(r.error ?? "Error");
-      else {
-        setDraftQty((prev) => {
-          const next = { ...prev };
-          delete next[product.id];
-          return next;
-        });
+
+    setSavingId(product.id);
+    void (async () => {
+      try {
+        const r = await upsertPhysicalCountItemAction(count.id, fd);
+        if (!r.ok) {
+          setError(r.error ?? "Error");
+          setLocalItems((prev) => {
+            if (previous) {
+              return prev.map((item) =>
+                item.product_id === product.id ? previous : item,
+              );
+            }
+            return prev.filter((item) => item.product_id !== product.id);
+          });
+          setDraftQty((prev) => ({ ...prev, [product.id]: raw }));
+          return;
+        }
+        if (r.id && r.id !== optimisticId) {
+          setLocalItems((prev) =>
+            prev.map((item) =>
+              item.product_id === product.id ? { ...item, id: r.id! } : item,
+            ),
+          );
+        }
+      } finally {
+        setSavingId((current) => (current === product.id ? null : current));
       }
+    })();
+  }
+
+  function submitCategory(group: {
+    categoryId: string;
+    label: string;
+    draftInCategory: number;
+    totalInCategory: number;
+    countedInCategory: number;
+  }) {
+    if (group.draftInCategory === 0) {
+      setError("Cuente al menos un producto de la categoría antes de enviar");
+      return;
+    }
+    const missing = group.totalInCategory - group.countedInCategory;
+    const msg =
+      missing > 0
+        ? `Categoría “${group.label}”: faltan ${missing} productos. ¿Enviar los ${group.draftInCategory} contados a revisión? Después no podrá editarlos.`
+        : `¿Enviar “${group.label}” (${group.draftInCategory} productos) a revisión? Después no podrá editar las cantidades.`;
+    if (!confirm(msg)) return;
+
+    startTransition(async () => {
+      setError(null);
+      const r = await submitPhysicalCountCategoryAction(
+        count.id,
+        group.categoryId,
+      );
+      if (!r.ok) setError(r.error ?? "Error");
     });
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       <header className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
         <div
           aria-hidden
           className="h-1 bg-[linear-gradient(90deg,var(--accent),var(--gold))]"
         />
-        <div className="flex flex-wrap items-start justify-between gap-4 p-5 md:p-6">
+        <div className="flex flex-col gap-4 p-4 sm:p-5 md:flex-row md:items-start md:justify-between md:p-6">
           <div className="min-w-0 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-display text-2xl font-semibold tracking-tight">
+              <h2 className="font-display text-xl font-semibold tracking-tight sm:text-2xl">
                 {count.title}
               </h2>
               <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
@@ -262,74 +451,88 @@ export function PhysicalCountDetailClient({
             {count.notes ? (
               <p className="max-w-2xl text-sm text-[var(--muted)]">{count.notes}</p>
             ) : null}
-            {count.rejection_reason ? (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
-                Rechazo: {count.rejection_reason}
-              </p>
-            ) : null}
+            <p className="text-sm text-[var(--muted)]">
+              Una categoría a la vez: cuente, envíe a revisión y recién ahí
+              pase a la siguiente. Gestión puede revisar mientras usted sigue.
+            </p>
           </div>
-          <div className="min-w-[160px] rounded-xl bg-white/80 px-4 py-3 shadow-[0_1px_0_rgba(18,18,18,0.04)]">
-            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
-              Avance
-            </p>
-            <p className="font-display text-3xl font-bold tabular-nums">
-              {countedCount}
-              <span className="text-lg font-medium text-[var(--muted)]">
-                /{totalProducts}
-              </span>
-            </p>
+          <div className="w-full rounded-xl bg-white/80 px-4 py-3 shadow-[0_1px_0_rgba(18,18,18,0.04)] md:min-w-[180px] md:w-auto">
+            <div className="flex items-end justify-between gap-3 md:block">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
+                  Avance
+                </p>
+                <p className="font-display text-2xl font-bold tabular-nums sm:text-3xl">
+                  {countedCount}
+                  <span className="text-base font-medium text-[var(--muted)] sm:text-lg">
+                    /{totalProducts}
+                  </span>
+                </p>
+              </div>
+              <p className="pb-1 text-sm font-medium tabular-nums text-[var(--muted)] md:hidden">
+                {progressPct}%
+              </p>
+            </div>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--line)]">
               <div
                 className="h-full rounded-full bg-[var(--ink)] transition-all"
                 style={{ width: `${progressPct}%` }}
               />
             </div>
+            <p className="mt-2 text-xs text-[var(--muted)]">
+              {draftCount} por enviar · {reviewCount} en revisión ·{" "}
+              {adjustedCount} ajustados
+            </p>
           </div>
         </div>
       </header>
 
-      {isDraft ? (
-        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-          <p className="font-medium">Auditoría a ciegas por categoría</p>
-          <p className="mt-0.5 text-sky-900/80">
-            Vea qué falta por categoría. No se muestra el stock del sistema:
-            solo registre lo físico.
-          </p>
-        </div>
-      ) : null}
+      {!isClosed && canEdit ? (
+        <section className="space-y-3 md:space-y-4">
+          {focusCategoryId && focusCategoryLabel ? (
+            <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+              <p className="font-medium">
+                Concentrado en “{focusCategoryLabel}”
+              </p>
+              <p className="mt-0.5 text-sky-900/80">
+                Envíe esta categoría a revisión para poder abrir otra.
+              </p>
+            </div>
+          ) : null}
 
-      {isDraft && canEdit ? (
-        <section className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar producto…"
-              className={cn(inputClass, "max-w-sm")}
-              autoComplete="off"
-            />
-            <div className="flex rounded-xl border border-[var(--line)] bg-white p-1 text-sm">
-              {(
-                [
-                  ["pending", "Pendientes"],
-                  ["counted", "Contados"],
-                  ["all", "Todos"],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setFilter(value)}
-                  className={cn(
-                    "rounded-lg px-3 py-1.5 transition",
-                    filter === value
-                      ? "bg-[var(--ink)] text-white"
-                      : "text-[var(--muted)] hover:text-[var(--ink)]",
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
+          <div className="sticky top-[3.25rem] z-20 -mx-4 space-y-2 border-b border-[var(--line)] bg-[var(--bg)]/95 px-4 py-3 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:p-0 md:backdrop-blur-none">
+            <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar producto…"
+                className={cn(inputClass, "w-full md:max-w-sm")}
+                autoComplete="off"
+                enterKeyHint="search"
+              />
+              <div className="grid grid-cols-3 rounded-xl border border-[var(--line)] bg-white p-1 text-sm md:inline-flex md:w-auto">
+                {(
+                  [
+                    ["pending", "Pendientes"],
+                    ["counted", "Contados"],
+                    ["all", "Todos"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setFilter(value)}
+                    className={cn(
+                      "min-h-10 rounded-lg px-2 py-2 transition md:min-h-0 md:px-3 md:py-1.5",
+                      filter === value
+                        ? "bg-[var(--ink)] text-white"
+                        : "text-[var(--muted)] hover:text-[var(--ink)]",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -337,14 +540,14 @@ export function PhysicalCountDetailClient({
             <div className="rounded-2xl border border-dashed border-[var(--line)] bg-white px-5 py-10 text-center">
               <p className="font-medium">
                 {filter === "pending"
-                  ? "Todo contado"
+                  ? "No hay pendientes de digitar"
                   : filter === "counted"
                     ? "Aún no hay productos contados"
                     : "Sin productos para mostrar"}
               </p>
               <p className="mt-1 text-sm text-[var(--muted)]">
                 {filter === "pending"
-                  ? "Puede enviar a revisión o revisar contados."
+                  ? "Revise Contados para enviar una categoría, o siga en Todos."
                   : "Cambie el filtro o la búsqueda."}
               </p>
             </div>
@@ -355,175 +558,411 @@ export function PhysicalCountDetailClient({
                 const complete =
                   group.countedInCategory >= group.totalInCategory &&
                   group.totalInCategory > 0;
+                const allSentOrAdjusted =
+                  group.draftInCategory === 0 &&
+                  group.countedInCategory > 0 &&
+                  group.countedInCategory ===
+                    group.reviewInCategory + group.adjustedInCategory;
+                const isFocus = focusCategoryId === group.categoryId;
+                const lockedByFocus = Boolean(
+                  focusCategoryId && !isFocus,
+                );
+                // Gestión puede abrir categorías en revisión aunque haya otra en foco.
+                const canOpenWhileLocked =
+                  canAdjust && group.reviewInCategory > 0;
+
                 return (
                   <div
                     key={group.categoryId}
-                    className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white"
+                    className={cn(
+                      "overflow-hidden rounded-2xl border border-[var(--line)] bg-white",
+                      lockedByFocus && !canOpenWhileLocked && "opacity-60",
+                    )}
                   >
                     <button
                       type="button"
-                      onClick={() =>
-                        setOpenCategoryId(open ? null : group.categoryId)
-                      }
-                      className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left transition hover:bg-[var(--surface)]"
+                      onClick={() => {
+                        if (lockedByFocus && !canOpenWhileLocked) {
+                          setError(
+                            `Envíe “${focusCategoryLabel}” a revisión para pasar a otra categoría`,
+                          );
+                          return;
+                        }
+                        setError(null);
+                        setOpenCategoryId(open ? null : group.categoryId);
+                      }}
+                      className="flex w-full items-center justify-between gap-3 px-3 py-3.5 text-left transition hover:bg-[var(--surface)] sm:px-4"
                     >
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="font-medium">{group.label}</p>
-                          {complete ? (
-                            <Badge tone="ok">Completa</Badge>
-                          ) : (
+                          {isFocus ? (
+                            <Badge tone="info">En curso</Badge>
+                          ) : null}
+                          {lockedByFocus && !canOpenWhileLocked ? (
+                            <Badge tone="neutral">Bloqueada</Badge>
+                          ) : null}
+                          {group.reviewInCategory > 0 ? (
                             <Badge tone="warn">
-                              Faltan {group.totalInCategory - group.countedInCategory}
+                              {group.reviewInCategory} en revisión
                             </Badge>
-                          )}
+                          ) : null}
+                          {group.adjustedInCategory > 0 ? (
+                            <Badge tone="ok">
+                              {group.adjustedInCategory} ajustados
+                            </Badge>
+                          ) : null}
+                          {complete && group.draftInCategory > 0 ? (
+                            <Badge tone="info">Lista para enviar</Badge>
+                          ) : null}
+                          {!complete ? (
+                            <Badge tone="warn">
+                              Faltan{" "}
+                              {group.totalInCategory - group.countedInCategory}
+                            </Badge>
+                          ) : null}
+                          {allSentOrAdjusted &&
+                          group.reviewInCategory === 0 &&
+                          complete ? (
+                            <Badge tone="ok">Completa</Badge>
+                          ) : null}
                         </div>
                         <p className="mt-0.5 text-sm text-[var(--muted)]">
-                          {group.countedInCategory}/{group.totalInCategory} contados
+                          {group.countedInCategory}/{group.totalInCategory}{" "}
+                          contados
+                          {group.draftInCategory > 0
+                            ? ` · ${group.draftInCategory} por enviar`
+                            : ""}
                           {filter !== "all"
-                            ? ` · mostrando ${group.products.length}`
+                            ? ` · ${group.products.length} en vista`
                             : ""}
                         </p>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <div className="hidden h-1.5 w-20 overflow-hidden rounded-full bg-[var(--line)] sm:block">
-                          <div
-                            className={cn(
-                              "h-full rounded-full",
-                              complete ? "bg-emerald-600" : "bg-[var(--ink)]",
-                            )}
-                            style={{
-                              width: `${
-                                group.totalInCategory === 0
-                                  ? 0
-                                  : Math.round(
-                                      (group.countedInCategory /
-                                        group.totalInCategory) *
-                                        100,
-                                    )
-                              }%`,
-                            }}
-                          />
-                        </div>
-                        <span className="text-sm text-[var(--muted)]">
-                          {open ? "Ocultar" : "Abrir"}
-                        </span>
-                      </div>
+                      <span
+                        className={cn(
+                          "shrink-0 text-xs text-[var(--muted)] transition-transform",
+                          open && "rotate-180",
+                        )}
+                        aria-hidden
+                      >
+                        ▼
+                      </span>
                     </button>
 
                     {open ? (
-                      <ul className="divide-y divide-[var(--line)] border-t border-[var(--line)]">
-                        {group.products.map((product) => {
-                          const item = itemByProduct.get(product.id);
-                          const counted = Boolean(item);
-                          const dirty =
-                            draftQty[product.id] !== undefined &&
-                            draftQty[product.id] !==
-                              (item ? String(item.counted_qty) : "");
-                          return (
-                            <li
-                              key={product.id}
-                              className={cn(
-                                "grid gap-3 px-4 py-3 sm:grid-cols-[1fr_auto] sm:items-center",
-                                counted ? "bg-emerald-50/40" : "",
-                              )}
-                            >
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span
-                                    className={cn(
-                                      "inline-flex h-2 w-2 rounded-full",
-                                      counted ? "bg-emerald-600" : "bg-amber-400",
-                                    )}
-                                    aria-hidden
-                                  />
-                                  <p className="font-medium">{product.name}</p>
-                                  <span className="text-xs text-[var(--muted)]">
-                                    {product.unit}
-                                  </span>
-                                  {counted ? (
-                                    <span className="text-xs font-medium text-emerald-800">
-                                      Contado
-                                    </span>
-                                  ) : (
-                                    <span className="text-xs text-amber-800">
-                                      Pendiente
-                                    </span>
-                                  )}
+                      <div className="border-t border-[var(--line)]">
+                        <ul className="divide-y divide-[var(--line)]">
+                          {group.products.map((product) => {
+                            const item = itemByProduct.get(product.id);
+                            const counted = Boolean(item);
+                            const editable = !item || itemEditable(item.status);
+                            const dirty =
+                              draftQty[product.id] !== undefined &&
+                              draftQty[product.id] !==
+                                (item ? String(item.counted_qty) : "");
+                            const showCompare =
+                              canAdjust &&
+                              item &&
+                              (item.status === "ENVIADO" ||
+                                item.status === "AJUSTADO");
+
+                            return (
+                              <li
+                                key={product.id}
+                                className={cn(
+                                  "space-y-3 px-3 py-3.5 sm:grid sm:grid-cols-[1fr_auto] sm:items-center sm:gap-3 sm:space-y-0 sm:px-4",
+                                  item?.status === "AJUSTADO"
+                                    ? "bg-emerald-50/50"
+                                    : item?.status === "ENVIADO"
+                                      ? "bg-amber-50/40"
+                                      : counted
+                                        ? "bg-emerald-50/40"
+                                        : "",
+                                )}
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-start gap-2">
+                                    <span
+                                      className={cn(
+                                        "mt-1.5 inline-flex h-2.5 w-2.5 shrink-0 rounded-full",
+                                        item?.status === "AJUSTADO"
+                                          ? "bg-emerald-600"
+                                          : item?.status === "ENVIADO"
+                                            ? "bg-amber-500"
+                                            : counted
+                                              ? "bg-emerald-600"
+                                              : "bg-amber-400",
+                                      )}
+                                      aria-hidden
+                                    />
+                                    <div className="min-w-0">
+                                      <p className="font-medium leading-snug">
+                                        {product.name}
+                                      </p>
+                                      <p className="mt-0.5 text-xs text-[var(--muted)]">
+                                        {product.unit}
+                                        {item?.status === "ENVIADO" ? (
+                                          <span className="ml-2 font-medium text-amber-800">
+                                            En revisión
+                                          </span>
+                                        ) : item?.status === "AJUSTADO" ? (
+                                          <span className="ml-2 font-medium text-emerald-800">
+                                            Ajustado
+                                          </span>
+                                        ) : counted ? (
+                                          <span className="ml-2 font-medium text-emerald-800">
+                                            Contado
+                                          </span>
+                                        ) : (
+                                          <span className="ml-2 text-amber-800">
+                                            Pendiente
+                                          </span>
+                                        )}
+                                      </p>
+                                      {item?.rejection_reason ? (
+                                        <p className="mt-1 text-xs text-red-700">
+                                          Rechazo: {item.rejection_reason}
+                                        </p>
+                                      ) : null}
+                                      {showCompare ? (
+                                        <p className="mt-1 text-xs text-[var(--muted)]">
+                                          Sistema {formatQty(item.system_qty)} ·
+                                          Dif.{" "}
+                                          <span
+                                            className={cn(
+                                              "font-medium",
+                                              Number(item.difference_qty) < 0
+                                                ? "text-red-700"
+                                                : Number(item.difference_qty) > 0
+                                                  ? "text-emerald-700"
+                                                  : "",
+                                            )}
+                                          >
+                                            {Number(item.difference_qty) > 0
+                                              ? `+${formatQty(item.difference_qty)}`
+                                              : formatQty(item.difference_qty)}
+                                          </span>
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  </div>
                                 </div>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2">
+
+                                {editable ? (
+                                  <div className="flex items-stretch gap-2">
+                                    <input
+                                      inputMode="decimal"
+                                      value={qtyValue(product.id)}
+                                      onChange={(e) =>
+                                        setDraftQty((prev) => ({
+                                          ...prev,
+                                          [product.id]: e.target.value,
+                                        }))
+                                      }
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          e.preventDefault();
+                                          saveProduct(product);
+                                        }
+                                      }}
+                                      placeholder="Cant."
+                                      aria-label={`Cantidad de ${product.name}`}
+                                      className={cn(
+                                        inputClass,
+                                        "min-h-12 flex-1 font-display text-xl font-semibold tabular-nums sm:w-28 sm:flex-none sm:text-lg",
+                                      )}
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        savingId === product.id ||
+                                        qtyValue(product.id).trim() === "" ||
+                                        (!dirty && counted)
+                                      }
+                                      className="min-h-12 min-w-[5.5rem] rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-40 sm:min-w-0"
+                                      onClick={() => saveProduct(product)}
+                                    >
+                                      {savingId === product.id
+                                        ? "…"
+                                        : counted
+                                          ? dirty
+                                            ? "Actualizar"
+                                            : "Guardado"
+                                          : "Contar"}
+                                    </button>
+                                    {counted && item ? (
+                                      <button
+                                        type="button"
+                                        disabled={savingId === product.id}
+                                        className="min-h-12 rounded-xl px-3 text-sm text-red-700 hover:bg-red-50"
+                                        onClick={() => {
+                                          if (
+                                            !confirm(
+                                              "¿Quitar este producto del conteo?",
+                                            )
+                                          ) {
+                                            return;
+                                          }
+                                          setError(null);
+                                          const removed = item;
+                                          setLocalItems((prev) =>
+                                            prev.filter(
+                                              (row) => row.id !== item.id,
+                                            ),
+                                          );
+                                          void (async () => {
+                                            const r =
+                                              await removePhysicalCountItemAction(
+                                                count.id,
+                                                item.id,
+                                              );
+                                            if (!r.ok) {
+                                              setError(r.error ?? "Error");
+                                              setLocalItems((prev) => [
+                                                ...prev,
+                                                removed,
+                                              ]);
+                                            }
+                                          })();
+                                        }}
+                                      >
+                                        Quitar
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                ) : (
+                                  <div className="text-right tabular-nums">
+                                    <p className="font-display text-xl font-semibold">
+                                      {formatQty(item?.counted_qty)}
+                                    </p>
+                                  </div>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+
+                        {group.draftInCategory > 0 && canEdit ? (
+                          <div className="border-t border-[var(--line)] bg-[var(--surface)]/80 p-3 sm:p-4">
+                            <button
+                              type="button"
+                              disabled={pending}
+                              className="min-h-12 w-full rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-50"
+                              onClick={() => submitCategory(group)}
+                            >
+                              Enviar “{group.label}” a revisión
+                              {group.draftInCategory > 0
+                                ? ` (${group.draftInCategory})`
+                                : ""}
+                            </button>
+                            <p className="mt-2 text-center text-xs text-[var(--muted)]">
+                              Congela el stock del sistema solo para esta
+                              categoría. Siga contando las demás.
+                            </p>
+                          </div>
+                        ) : null}
+
+                        {canAdjust && group.reviewInCategory > 0 ? (
+                          <div className="space-y-3 border-t border-[var(--line)] bg-amber-50/50 p-3 sm:p-4">
+                            <div>
+                              <p className="text-sm font-medium">
+                                Revisión Gestión · {group.label}
+                              </p>
+                              <p className="text-xs text-[var(--muted)]">
+                                {group.reviewInCategory} productos en revisión.
+                                Al aplicar, el stock se iguala a lo contado.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={pending}
+                              className="min-h-12 w-full rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-50 sm:w-auto"
+                              onClick={() => {
+                                if (
+                                  !confirm(
+                                    `¿Aplicar ajustes de “${group.label}” al stock del sistema?`,
+                                  )
+                                ) {
+                                  return;
+                                }
+                                startTransition(async () => {
+                                  setError(null);
+                                  const r = await applyPhysicalCountCategoryAction(
+                                    count.id,
+                                    group.categoryId,
+                                  );
+                                  if (!r.ok) setError(r.error ?? "Error");
+                                });
+                              }}
+                            >
+                              Aplicar “{group.label}”
+                            </button>
+                            <form
+                              className="flex flex-col gap-2 border-t border-amber-200/80 pt-3 sm:flex-row sm:items-end"
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                const reason =
+                                  rejectReason[group.categoryId]?.trim() ?? "";
+                                if (!reason) {
+                                  setError("Indique el motivo de rechazo");
+                                  return;
+                                }
+                                const fd = new FormData();
+                                fd.set("rejection_reason", reason);
+                                startTransition(async () => {
+                                  setError(null);
+                                  const r =
+                                    await rejectPhysicalCountCategoryAction(
+                                      count.id,
+                                      group.categoryId,
+                                      fd,
+                                    );
+                                  if (!r.ok) setError(r.error ?? "Error");
+                                  else {
+                                    setRejectReason((prev) => {
+                                      const next = { ...prev };
+                                      delete next[group.categoryId];
+                                      return next;
+                                    });
+                                  }
+                                });
+                              }}
+                            >
+                              <label className="w-full flex-1 text-sm">
+                                <span className="mb-1.5 block text-[var(--muted)]">
+                                  Motivo de rechazo
+                                </span>
                                 <input
-                                  inputMode="decimal"
-                                  value={qtyValue(product.id)}
+                                  value={rejectReason[group.categoryId] ?? ""}
                                   onChange={(e) =>
-                                    setDraftQty((prev) => ({
+                                    setRejectReason((prev) => ({
                                       ...prev,
-                                      [product.id]: e.target.value,
+                                      [group.categoryId]: e.target.value,
                                     }))
                                   }
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      saveProduct(product);
-                                    }
-                                  }}
-                                  placeholder="Cantidad"
-                                  className={cn(
-                                    inputClass,
-                                    "w-28 font-display text-lg font-semibold tabular-nums",
-                                  )}
+                                  required
+                                  placeholder="Ej. reconteo de Aseo"
+                                  className={inputClass}
                                 />
-                                <button
-                                  type="button"
-                                  disabled={
-                                    pending ||
-                                    qtyValue(product.id).trim() === "" ||
-                                    (!dirty && counted)
-                                  }
-                                  className="rounded-xl bg-[var(--ink)] px-3 py-2 text-sm font-medium text-white disabled:opacity-40"
-                                  onClick={() => saveProduct(product)}
-                                >
-                                  {savingId === product.id
-                                    ? "…"
-                                    : counted
-                                      ? dirty
-                                        ? "Actualizar"
-                                        : "Guardado"
-                                      : "Contar"}
-                                </button>
-                                {counted && item ? (
-                                  <button
-                                    type="button"
-                                    disabled={pending}
-                                    className="rounded-xl px-2.5 py-2 text-xs text-red-700 hover:bg-red-50"
-                                    onClick={() => {
-                                      if (
-                                        !confirm(
-                                          "¿Quitar este producto del conteo?",
-                                        )
-                                      ) {
-                                        return;
-                                      }
-                                      setError(null);
-                                      startTransition(async () => {
-                                        const r =
-                                          await removePhysicalCountItemAction(
-                                            count.id,
-                                            item.id,
-                                          );
-                                        if (!r.ok) setError(r.error ?? "Error");
-                                      });
-                                    }}
-                                  >
-                                    Quitar
-                                  </button>
-                                ) : null}
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
+                              </label>
+                              <button
+                                type="submit"
+                                disabled={pending}
+                                className="min-h-12 rounded-xl px-4 text-sm font-medium text-red-700 hover:bg-red-50 sm:min-h-0 sm:py-2.5"
+                              >
+                                Rechazar categoría
+                              </button>
+                            </form>
+                          </div>
+                        ) : null}
+
+                        {!canAdjust && group.reviewInCategory > 0 ? (
+                          <div className="border-t border-[var(--line)] bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                            “{group.label}” enviado. Esperando revisión de
+                            Gestión.
+                          </div>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 );
@@ -533,186 +972,63 @@ export function PhysicalCountDetailClient({
         </section>
       ) : null}
 
-      {!isDraft || !canEdit ? (
+      {isClosed ? (
         <section className="space-y-3">
-          <div className="flex flex-wrap items-end justify-between gap-2">
-            <div>
-              <h3 className="text-base font-medium">Hoja de conteo</h3>
-              <p className="text-sm text-[var(--muted)]">
-                {showSystemComparison
-                  ? "Comparación sistema vs. físico (revisión)."
-                  : "Cantidades registradas en esta auditoría."}
-              </p>
-            </div>
-            {reviewStats ? (
-              <div className="flex flex-wrap gap-2 text-xs">
-                <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">
-                  Igual: {reviewStats.match}
-                </span>
-                <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-900">
-                  Sobra: {reviewStats.surplus}
-                </span>
-                <span className="rounded-md bg-red-50 px-2 py-1 text-red-800">
-                  Falta: {reviewStats.deficit}
-                </span>
-              </div>
-            ) : null}
-          </div>
-
-          {items.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-[var(--line)] bg-white px-5 py-10 text-center">
-              <p className="font-medium">Sin productos contados</p>
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
-              <ul className="divide-y divide-[var(--line)]">
-                {items.map((item) => {
-                  const diff = Number(item.difference_qty ?? 0);
-                  return (
-                    <li
-                      key={item.id}
-                      className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"
-                    >
-                      <div>
-                        <p className="font-medium">{item.product_name}</p>
-                        {item.notes ? (
-                          <p className="text-xs text-[var(--muted)]">{item.notes}</p>
-                        ) : null}
-                      </div>
-                      <div className="text-right tabular-nums">
-                        <p className="font-display text-lg font-semibold">
-                          {formatQty(item.counted_qty)}{" "}
-                          <span className="text-xs font-sans font-normal text-[var(--muted)]">
-                            {item.unit}
-                          </span>
-                        </p>
-                        {showSystemComparison ? (
-                          <p className="text-xs text-[var(--muted)]">
-                            Sistema {formatQty(item.system_qty)} · Dif.{" "}
-                            <span
-                              className={cn(
-                                "font-medium",
-                                diff === 0
-                                  ? ""
-                                  : diff < 0
-                                    ? "text-red-700"
-                                    : "text-emerald-700",
-                              )}
-                            >
-                              {diff > 0 ? `+${formatQty(diff)}` : formatQty(diff)}
-                            </span>
-                          </p>
-                        ) : null}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
-        </section>
-      ) : null}
-
-      {isDraft && canEdit ? (
-        <div className="sticky bottom-4 z-10 rounded-2xl border border-[var(--line)] bg-white/95 p-4 shadow-lg backdrop-blur">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="font-medium">
-                {countedCount === 0
-                  ? "Cuente al menos un producto para enviar"
-                  : countedCount < totalProducts
-                    ? `${totalProducts - countedCount} pendientes · ${countedCount} contados`
-                    : "Catálogo completo contado"}
-              </p>
-              <p className="text-sm text-[var(--muted)]">
-                Puede enviar aunque falten productos. Al enviar se congela el
-                stock del sistema para la comparación.
-              </p>
-            </div>
-            <button
-              type="button"
-              disabled={pending || countedCount === 0}
-              className="rounded-xl bg-[var(--ink)] px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-              onClick={() => {
-                const missing = totalProducts - countedCount;
-                const msg =
-                  missing > 0
-                    ? `Aún faltan ${missing} productos. ¿Enviar de todos modos? Después no podrá editar.`
-                    : "¿Enviar el conteo a revisión? Después no podrá editar las cantidades.";
-                if (!confirm(msg)) return;
-                startTransition(async () => {
-                  setError(null);
-                  const r = await submitPhysicalCountAction(count.id);
-                  if (!r.ok) setError(r.error ?? "Error");
-                });
-              }}
-            >
-              Enviar a revisión
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {isSubmitted && canAdjust ? (
-        <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-white p-5 md:p-6">
           <div>
-            <h3 className="text-base font-medium">Revisión Gestión</h3>
+            <h3 className="text-base font-medium">Conteo cerrado</h3>
             <p className="text-sm text-[var(--muted)]">
-              Al aplicar, el stock del sistema se iguala a lo contado y queda
-              trazabilidad en movimientos.
+              Todas las categorías enviadas quedaron ajustadas.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={pending}
-              className="rounded-xl bg-[var(--ink)] px-5 py-2.5 text-sm font-medium text-white"
-              onClick={() => {
-                if (!confirm("¿Aplicar ajustes de inventario al stock del sistema?"))
-                  return;
-                startTransition(async () => {
-                  setError(null);
-                  const r = await applyPhysicalCountAdjustmentsAction(count.id);
-                  if (!r.ok) setError(r.error ?? "Error");
-                });
-              }}
-            >
-              Aplicar ajustes
-            </button>
+          <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
+            <ul className="divide-y divide-[var(--line)]">
+              {localItems.map((item) => (
+                <li
+                  key={item.id}
+                  className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"
+                >
+                  <p className="font-medium">{item.product_name}</p>
+                  <div className="text-right tabular-nums">
+                    <p className="font-display text-lg font-semibold">
+                      {formatQty(item.counted_qty)}{" "}
+                      <span className="text-xs font-sans font-normal text-[var(--muted)]">
+                        {item.unit}
+                      </span>
+                    </p>
+                    {canAdjust ? (
+                      <p className="text-xs text-[var(--muted)]">
+                        Sistema {formatQty(item.system_qty)} · Dif.{" "}
+                        {Number(item.difference_qty) > 0
+                          ? `+${formatQty(item.difference_qty)}`
+                          : formatQty(item.difference_qty)}
+                      </p>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
           </div>
-          <form
-            className="flex flex-wrap items-end gap-2 border-t border-[var(--line)] pt-4"
-            action={(fd) => {
-              setError(null);
-              startTransition(async () => {
-                const r = await rejectPhysicalCountAction(count.id, fd);
-                if (!r.ok) setError(r.error ?? "Error");
-              });
-            }}
-          >
-            <label className="min-w-[240px] flex-1 text-sm">
-              <span className="mb-1.5 block text-[var(--muted)]">Motivo de rechazo</span>
-              <input
-                name="rejection_reason"
-                required
-                placeholder="Ej. conteo incompleto / revisar de nuevo"
-                className={inputClass}
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={pending}
-              className="rounded-xl px-4 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50"
-            >
-              Rechazar
-            </button>
-          </form>
         </section>
       ) : null}
 
-      {isSubmitted && !canAdjust ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-          Enviado. Esperando que Gestión revise y aplique o rechace el ajuste.
+      {!isClosed && canEdit ? (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--line)] bg-white/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(18,18,18,0.08)] backdrop-blur md:sticky md:bottom-4 md:inset-x-auto md:rounded-2xl md:border md:p-4 md:shadow-lg">
+          <div className="mx-auto max-w-3xl">
+            <p className="text-sm font-medium md:text-base">
+              {focusCategoryLabel && draftCount > 0
+                ? `“${focusCategoryLabel}”: ${draftCount} por enviar`
+                : countedCount === 0
+                  ? "Abra una categoría y empiece a contar"
+                  : reviewCount > 0
+                    ? `${reviewCount} en revisión · elija la siguiente categoría`
+                    : "Sin borradores por enviar"}
+            </p>
+            <p className="mt-0.5 text-xs text-[var(--muted)] md:text-sm">
+              {focusCategoryLabel
+                ? `Envíe “${focusCategoryLabel}” para desbloquear las demás.`
+                : "Una categoría a la vez hasta enviarla a revisión."}
+            </p>
+          </div>
         </div>
       ) : null}
 

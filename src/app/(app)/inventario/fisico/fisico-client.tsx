@@ -29,7 +29,7 @@ const STATUS_META: Record<
   { label: string; tone: "neutral" | "ok" | "warn" | "danger" | "info" }
 > = {
   BORRADOR: { label: "Contando", tone: "info" },
-  ENVIADO: { label: "Por revisar", tone: "warn" },
+  ENVIADO: { label: "En progreso", tone: "warn" },
   AJUSTADO: { label: "Ajustado", tone: "ok" },
   RECHAZADO: { label: "Rechazado", tone: "danger" },
 };
@@ -76,8 +76,8 @@ export function CreatePhysicalCountForm() {
         </button>
       </div>
       <p className="text-sm text-[var(--muted)]">
-        Conteo a ciegas: quien cuenta no ve el stock del sistema. Gestión compara
-        y aplica (o rechaza) el ajuste.
+        Conteo a ciegas por categoría: quien cuenta no ve el stock del sistema.
+        Puede enviar cada categoría a revisión y seguir con la siguiente.
       </p>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="block text-sm md:col-span-2">

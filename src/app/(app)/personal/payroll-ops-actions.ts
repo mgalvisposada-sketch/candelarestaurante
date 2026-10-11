@@ -434,31 +434,79 @@ export async function calculatePayrollPeriodAction(
     })),
   });
 
-  // Replace lines
-  await supabase
+  // Replace lines without ON CONFLICT: absolute UNIQUE and partial unique
+  // indexes behave differently; update-or-insert works with both.
+  const nowIso = new Date().toISOString();
+  const { data: existingLines, error: existingErr } = await supabase
     .from("payroll_period_lines")
-    .update({ deleted_at: new Date().toISOString() })
+    .select("id, employee_id, deleted_at")
     .eq("period_id", periodId)
-    .eq("organization_id", orgId)
-    .is("deleted_at", null);
+    .eq("organization_id", orgId);
+  if (existingErr) return { ok: false, error: existingErr.message };
 
-  if (result.lines.length > 0) {
-    const { error: lErr } = await supabase.from("payroll_period_lines").insert(
-      result.lines.map((l) => ({
+  const existingByEmployee = new Map<
+    string,
+    { id: string; employee_id: string; deleted_at: string | null }
+  >();
+  for (const row of existingLines ?? []) {
+    const prev = existingByEmployee.get(row.employee_id);
+    // Prefer active row if several exist after soft-delete + reinsert.
+    if (!prev || (prev.deleted_at && !row.deleted_at)) {
+      existingByEmployee.set(row.employee_id, row);
+    }
+  }
+
+  const keepEmployeeIds = new Set(result.lines.map((l) => l.employeeId));
+  const toInsert: Array<Record<string, unknown>> = [];
+
+  for (const l of result.lines) {
+    const payload = {
+      employee_name: l.employeeName,
+      position_title: l.positionTitle,
+      novelty_count: l.noveltyCount,
+      net_pay: l.netPay,
+      employer_cost: l.employerCost,
+      earnings_total: l.earningsTotal,
+      deductions_total: l.deductionsTotal,
+      snapshot: l.simulation as unknown as Record<string, unknown>,
+      deleted_at: null,
+      updated_at: nowIso,
+    };
+    const existing = existingByEmployee.get(l.employeeId);
+    if (existing) {
+      const { error: updErr } = await supabase
+        .from("payroll_period_lines")
+        .update(payload)
+        .eq("id", existing.id)
+        .eq("organization_id", orgId);
+      if (updErr) return { ok: false, error: updErr.message };
+    } else {
+      toInsert.push({
         organization_id: orgId,
         period_id: periodId,
         employee_id: l.employeeId,
-        employee_name: l.employeeName,
-        position_title: l.positionTitle,
-        novelty_count: l.noveltyCount,
-        net_pay: l.netPay,
-        employer_cost: l.employerCost,
-        earnings_total: l.earningsTotal,
-        deductions_total: l.deductionsTotal,
-        snapshot: l.simulation as unknown as Record<string, unknown>,
-      })),
-    );
+        ...payload,
+      });
+    }
+  }
+
+  if (toInsert.length > 0) {
+    const { error: lErr } = await supabase
+      .from("payroll_period_lines")
+      .insert(toInsert);
     if (lErr) return { ok: false, error: lErr.message };
+  }
+
+  const staleIds = (existingLines ?? [])
+    .filter((r) => !keepEmployeeIds.has(r.employee_id) && r.deleted_at == null)
+    .map((r) => r.id);
+  if (staleIds.length > 0) {
+    const { error: softDelErr } = await supabase
+      .from("payroll_period_lines")
+      .update({ deleted_at: nowIso })
+      .eq("organization_id", orgId)
+      .in("id", staleIds);
+    if (softDelErr) return { ok: false, error: softDelErr.message };
   }
 
   const { error: uErr } = await supabase
