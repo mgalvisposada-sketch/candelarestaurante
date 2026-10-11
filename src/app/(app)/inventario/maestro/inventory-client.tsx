@@ -6,15 +6,17 @@ import {
   createProductAction,
   createProductCategoryAction,
   createProductUnitAction,
+  indexProductUnitCostsAction,
   softDeleteProductAction,
   softDeleteProductCategoryAction,
   softDeleteProductUnitAction,
   updateProductAction,
   updateProductMinStockAction,
   updateProductUnitAction,
+  updateProductUnitCostAction,
 } from "../../compras/inventory-actions";
 import { money } from "@/lib/money";
-import { suggestedPurchaseQty } from "@/lib/inventory/cost";
+import { indexUnitCost, suggestedPurchaseQty } from "@/lib/inventory/cost";
 import {
   BULK_PRODUCT_COLUMN_META,
   BULK_PRODUCT_HEADER_REQUIRED,
@@ -679,12 +681,18 @@ function ProductCard({
 }) {
   const [editing, setEditing] = useState(false);
   const [editingMin, setEditingMin] = useState(false);
+  const [editingCost, setEditingCost] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const stock = Number(product.current_stock);
   const suggest = suggestedPurchaseQty(stock, Number(product.min_stock));
   const underMin = suggest > 0;
   const zeroStock = !Number.isNaN(stock) && stock <= 0;
+
+  function closeQuickPanels() {
+    setEditingMin(false);
+    setEditingCost(false);
+  }
 
   return (
     <article className="border-t border-[var(--line)] bg-white px-4 py-3 first:border-t-0">
@@ -714,6 +722,18 @@ function ProductCard({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
+            onClick={() => {
+              setError(null);
+              setEditing(false);
+              setEditingMin(false);
+              setEditingCost((v) => !v);
+            }}
+          >
+            {editingCost ? "Cerrar costo" : "Costo"}
+          </button>
           {canEditMinStock ? (
             <button
               type="button"
@@ -721,6 +741,7 @@ function ProductCard({
               onClick={() => {
                 setError(null);
                 setEditing(false);
+                setEditingCost(false);
                 setEditingMin((v) => !v);
               }}
             >
@@ -732,7 +753,7 @@ function ProductCard({
             className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
             onClick={() => {
               setError(null);
-              setEditingMin(false);
+              closeQuickPanels();
               setEditing((v) => !v);
             }}
           >
@@ -753,6 +774,39 @@ function ProductCard({
           </button>
         </div>
       </div>
+
+      {editingCost ? (
+        <form
+          className="mt-3 flex flex-wrap items-end gap-2 border-t border-[var(--line)] pt-3"
+          action={(fd) => {
+            setError(null);
+            startTransition(async () => {
+              const r = await updateProductUnitCostAction(product.id, fd);
+              if (!r.ok) setError(r.error ?? "Error");
+              else setEditingCost(false);
+            });
+          }}
+        >
+          <label className="block text-sm">
+            <span className="mb-1 block text-[var(--muted)]">Costo unitario</span>
+            <input
+              name="unit_cost"
+              required
+              autoFocus
+              defaultValue={String(product.unit_cost)}
+              className={`${inputClass} w-40`}
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={pending}
+            className="rounded-lg bg-[var(--ink)] px-3 py-2 text-sm text-white disabled:opacity-60"
+          >
+            {pending ? "Guardando…" : "Guardar"}
+          </button>
+          {error ? <p className="w-full text-sm text-red-700">{error}</p> : null}
+        </form>
+      ) : null}
 
       {editingMin && canEditMinStock ? (
         <form
@@ -927,6 +981,194 @@ function CategoryGroup({
   );
 }
 
+function IndexCostsPanel({
+  categories,
+  products,
+  filteredProducts,
+  searching,
+}: {
+  categories: CategoryRow[];
+  products: ProductRow[];
+  filteredProducts: ProductRow[];
+  searching: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [percent, setPercent] = useState("5");
+  const [scope, setScope] = useState<"visible" | "category" | "all">(
+    searching ? "visible" : "all",
+  );
+  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (searching) setScope("visible");
+  }, [searching]);
+
+  useEffect(() => {
+    if (!categoryId && categories[0]?.id) setCategoryId(categories[0].id);
+  }, [categories, categoryId]);
+
+  const pct = Number(String(percent).replace(/,/g, "").trim());
+  const pctValid = Number.isFinite(pct) && pct !== 0;
+
+  const targetProducts = useMemo(() => {
+    if (scope === "visible") return filteredProducts;
+    if (scope === "category") {
+      return products.filter((p) => p.category_id === categoryId);
+    }
+    return products;
+  }, [scope, filteredProducts, products, categoryId]);
+
+  const sample = useMemo(() => {
+    if (!pctValid || targetProducts.length === 0) return null;
+    const first = targetProducts[0];
+    const before = Number(first.unit_cost || 0);
+    return {
+      name: first.name,
+      before,
+      after: indexUnitCost(before, pct),
+    };
+  }, [pctValid, pct, targetProducts]);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setError(null);
+          setMessage(null);
+          setOpen(true);
+        }}
+        className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm"
+      >
+        Indexar costos
+      </button>
+    );
+  }
+
+  return (
+    <div className="w-full space-y-3 rounded-xl border border-[var(--line)] bg-white p-4 sm:max-w-xl">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="font-medium">Indexar costos al mercado</h4>
+          <p className="text-sm text-[var(--muted)]">
+            Ajusta el costo unitario por porcentaje (ej. +5 o −3).
+          </p>
+        </div>
+        <button
+          type="button"
+          className="text-sm text-[var(--muted)]"
+          onClick={() => setOpen(false)}
+        >
+          Cerrar
+        </button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block text-sm">
+          <span className="mb-1 block text-[var(--muted)]">Variación %</span>
+          <input
+            value={percent}
+            onChange={(e) => setPercent(e.target.value)}
+            inputMode="decimal"
+            placeholder="5"
+            className={inputClass}
+          />
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block text-[var(--muted)]">Aplicar a</span>
+          <select
+            value={scope}
+            onChange={(e) =>
+              setScope(e.target.value as "visible" | "category" | "all")
+            }
+            className={inputClass}
+          >
+            <option value="visible">
+              Productos visibles ({filteredProducts.length})
+            </option>
+            <option value="category">Una categoría</option>
+            <option value="all">Todo el inventario ({products.length})</option>
+          </select>
+        </label>
+        {scope === "category" ? (
+          <label className="block text-sm sm:col-span-2">
+            <span className="mb-1 block text-[var(--muted)]">Categoría</span>
+            <select
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+              className={inputClass}
+            >
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
+
+      <p className="text-sm text-[var(--muted)]">
+        Se actualizarán {targetProducts.length}{" "}
+        {targetProducts.length === 1 ? "producto" : "productos"}
+        {sample ? (
+          <>
+            . Ejemplo: {sample.name} {formatUnitCost(sample.before)} →{" "}
+            {formatUnitCost(sample.after)}
+          </>
+        ) : null}
+        .
+      </p>
+
+      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {message ? <p className="text-sm text-emerald-800">{message}</p> : null}
+
+      <button
+        type="button"
+        disabled={pending || !pctValid || targetProducts.length === 0}
+        className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
+        onClick={() => {
+          setError(null);
+          setMessage(null);
+          if (!pctValid) {
+            setError("Indique un porcentaje distinto de 0");
+            return;
+          }
+          const sign = pct > 0 ? "+" : "";
+          if (
+            !confirm(
+              `¿Aplicar ${sign}${pct}% a ${targetProducts.length} producto(s)?`,
+            )
+          ) {
+            return;
+          }
+          const fd = new FormData();
+          fd.set("percent", String(pct));
+          if (scope === "all") {
+            fd.set("scope", "all");
+          } else if (scope === "category") {
+            fd.set("scope", "category");
+            fd.set("category_id", categoryId);
+          } else {
+            fd.set("scope", "ids");
+            fd.set("product_ids", targetProducts.map((p) => p.id).join(","));
+          }
+          startTransition(async () => {
+            const r = await indexProductUnitCostsAction(fd);
+            if (!r.ok) setError(r.error ?? "Error");
+            else setMessage(`Costos actualizados: ${r.updated ?? 0}`);
+          });
+        }}
+      >
+        {pending ? "Indexando…" : "Aplicar indexación"}
+      </button>
+    </div>
+  );
+}
+
 export function InventoryLists({
   categories,
   units,
@@ -1033,15 +1275,23 @@ export function InventoryLists({
               Los productos viven dentro de su categoría
             </p>
           </div>
-          <label className="block min-w-[220px] flex-1 text-sm sm:max-w-sm">
-            <span className="mb-1 block text-[var(--muted)]">Buscar inventario</span>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Nombre, SKU, categoría o unidad…"
-              className={inputClass}
+          <div className="flex w-full flex-wrap items-end gap-2 sm:w-auto">
+            <IndexCostsPanel
+              categories={categories}
+              products={products}
+              filteredProducts={filteredProducts}
+              searching={searching}
             />
-          </label>
+            <label className="block min-w-[220px] flex-1 text-sm sm:max-w-sm">
+              <span className="mb-1 block text-[var(--muted)]">Buscar inventario</span>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Nombre, SKU, categoría o unidad…"
+                className={inputClass}
+              />
+            </label>
+          </div>
         </div>
         {groups.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">

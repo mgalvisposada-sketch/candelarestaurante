@@ -77,6 +77,12 @@ export const NAV_ITEMS = [
     hint: "Maestro de productos e inventario físico",
   },
   {
+    href: "/cocina",
+    label: "Cocina",
+    mvp: 2,
+    hint: "Insumos, merma, preparaciones y carta",
+  },
+  {
     href: "/compras",
     label: "Compras",
     mvp: 2,
@@ -149,7 +155,7 @@ export const NAV_GROUPS = [
   {
     id: "costos",
     label: "Costos",
-    hrefs: ["/proveedores", "/inventario", "/compras"] as const,
+    hrefs: ["/proveedores", "/inventario", "/cocina", "/compras"] as const,
   },
   {
     id: "gastos",

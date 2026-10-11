@@ -63,6 +63,7 @@ export default async function InventarioMaestroPage() {
           "id, category_id, unit_id, sku, name, unit, min_stock, current_stock, unit_cost, notes",
         )
         .eq("organization_id", ctx.organization.id)
+        .eq("item_kind", "MATERIA_PRIMA")
         .is("deleted_at", null)
         .order("name"),
     ]);
@@ -81,8 +82,8 @@ export default async function InventarioMaestroPage() {
         />
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
-            title="Maestro de inventario"
-            description="Categorías y unidades son maestros únicos. Cada producto elige de esos catálogos para mantener uniformidad."
+            title="Maestro de materias primas"
+            description="Inventario comprable (proteínas, fruver, lácteos…). Los insumos de cocina, preparaciones y carta viven en Cocina."
           />
           <div className="flex w-full flex-wrap gap-2">
             <Link

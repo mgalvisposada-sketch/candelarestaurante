@@ -10,6 +10,7 @@ import {
   productUnitSchema,
 } from "@/validations/purchases";
 import { parseBulkProductPaste } from "@/lib/inventory/bulk-paste";
+import { indexUnitCost } from "@/lib/inventory/cost";
 import type { ActionResult } from "../empresa/actions";
 
 export type BulkImportProductsResult = {
@@ -394,6 +395,7 @@ export async function createProductAction(
       organization_id: ctx.organization.id,
       category_id: parsed.data.category_id,
       unit_id: unitRow.id,
+      item_kind: "MATERIA_PRIMA",
       sku: emptyToNull(parsed.data.sku),
       name: parsed.data.name.trim(),
       unit: unitRow.code,
@@ -507,6 +509,7 @@ export async function createProductFromRequestAction(
       organization_id: ctx.organization.id,
       category_id: parsed.data.category_id,
       unit_id: unitRow.id,
+      item_kind: "MATERIA_PRIMA",
       sku: emptyToNull(parsed.data.sku),
       name: parsed.data.name.trim(),
       unit: unitRow.code,
@@ -617,6 +620,7 @@ export async function bulkImportProductsAction(
         organization_id: ctx.organization.id,
         category_id: categoryId,
         unit_id: unit.id,
+        item_kind: "MATERIA_PRIMA",
         sku: row.sku,
         name: row.name,
         unit: unit.code,
@@ -834,6 +838,152 @@ export async function updateProductMinStockAction(
   revalidatePath("/compras/sugeridos");
   revalidatePath("/compras/solicitudes");
   return { ok: true, id: productId };
+}
+
+function revalidateInventoryCostPaths() {
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
+  revalidatePath("/compras/sugeridos");
+  revalidatePath("/compras/solicitudes");
+  revalidatePath("/inventario/fisico");
+}
+
+export async function updateProductUnitCostAction(
+  productId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "inventario.maestro")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const unitCost = parseNumber(String(formData.get("unit_cost") ?? ""));
+  if (unitCost === null || unitCost < 0) {
+    return { ok: false, error: "Costo unitario inválido" };
+  }
+
+  const supabase = await createClient();
+  const { data: existing } = await supabase
+    .from("products")
+    .select("id")
+    .eq("id", productId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!existing) return { ok: false, error: "Producto no encontrado" };
+
+  const { error } = await supabase
+    .from("products")
+    .update({
+      unit_cost: unitCost,
+      updated_by: ctx.userId,
+    })
+    .eq("id", productId)
+    .eq("organization_id", ctx.organization.id);
+
+  if (error) return { ok: false, error: error.message };
+  revalidateInventoryCostPaths();
+  return { ok: true, id: productId };
+}
+
+export type IndexProductUnitCostsResult = ActionResult & {
+  updated?: number;
+};
+
+export async function indexProductUnitCostsAction(
+  formData: FormData,
+): Promise<IndexProductUnitCostsResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "inventario.maestro")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+  const orgId = ctx.organization.id;
+
+  const percent = parseNumber(String(formData.get("percent") ?? ""));
+  if (percent === null) {
+    return { ok: false, error: "Porcentaje inválido" };
+  }
+  if (percent === 0) {
+    return { ok: false, error: "Indique un porcentaje distinto de 0" };
+  }
+  if (percent < -99 || percent > 500) {
+    return { ok: false, error: "Porcentaje fuera de rango (−99 a 500)" };
+  }
+
+  const scope = String(formData.get("scope") ?? "all").trim();
+  const categoryId = String(formData.get("category_id") ?? "").trim();
+  const productIdsRaw = String(formData.get("product_ids") ?? "").trim();
+  const productIds = productIdsRaw
+    ? productIdsRaw
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean)
+    : [];
+
+  if (scope === "category" && !categoryId) {
+    return { ok: false, error: "Seleccione una categoría" };
+  }
+  if (scope === "ids" && productIds.length === 0) {
+    return { ok: false, error: "No hay productos para indexar" };
+  }
+
+  const supabase = await createClient();
+  let query = supabase
+    .from("products")
+    .select("id, unit_cost")
+    .eq("organization_id", orgId)
+    .is("deleted_at", null);
+
+  if (scope === "category") {
+    query = query.eq("category_id", categoryId);
+  } else if (scope === "ids") {
+    query = query.in("id", productIds);
+  }
+
+  const { data: rows, error: loadError } = await query;
+  if (loadError) return { ok: false, error: loadError.message };
+  if (!rows?.length) {
+    return { ok: false, error: "No hay productos para indexar" };
+  }
+
+  const updates = rows.map((row) => ({
+    id: row.id as string,
+    unit_cost: indexUnitCost(Number(row.unit_cost || 0), percent),
+  }));
+
+  let updated = 0;
+  const chunkSize = 40;
+  for (let i = 0; i < updates.length; i += chunkSize) {
+    const chunk = updates.slice(i, i + chunkSize);
+    const results = await Promise.all(
+      chunk.map((row) =>
+        supabase
+          .from("products")
+          .update({
+            unit_cost: row.unit_cost,
+            updated_by: ctx.userId,
+          })
+          .eq("id", row.id)
+          .eq("organization_id", orgId)
+          .is("deleted_at", null),
+      ),
+    );
+    for (const result of results) {
+      if (result.error) {
+        return {
+          ok: false,
+          error: result.error.message,
+          updated,
+        };
+      }
+      updated += 1;
+    }
+  }
+
+  revalidateInventoryCostPaths();
+  return { ok: true, updated };
 }
 
 export async function softDeleteProductAction(

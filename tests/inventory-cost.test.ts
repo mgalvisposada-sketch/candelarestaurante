@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  indexUnitCost,
   suggestedPurchaseQty,
   weightedAverageUnitCost,
 } from "@/lib/inventory/cost";
@@ -26,5 +27,19 @@ describe("suggestedPurchaseQty", () => {
 
   it("no recomienda si está sobre el mínimo", () => {
     expect(suggestedPurchaseQty(12, 10)).toBe(0);
+  });
+});
+
+describe("indexUnitCost", () => {
+  it("sube el costo por porcentaje de mercado", () => {
+    expect(indexUnitCost(1000, 5)).toBe(1050);
+  });
+
+  it("baja el costo por porcentaje negativo", () => {
+    expect(indexUnitCost(1000, -10)).toBe(900);
+  });
+
+  it("no deja costos negativos", () => {
+    expect(indexUnitCost(100, -150)).toBe(0);
   });
 });

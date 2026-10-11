@@ -64,6 +64,7 @@ export default async function CompraSolicitudDetailPage({
         .from("products")
         .select("id, name, unit, category_id, current_stock, min_stock, unit_cost")
         .eq("organization_id", ctx.organization.id)
+        .eq("item_kind", "MATERIA_PRIMA")
         .is("deleted_at", null)
         .eq("is_active", true)
         .order("name"),

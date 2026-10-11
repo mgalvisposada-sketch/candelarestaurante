@@ -179,6 +179,29 @@ export const APP_MODULES: AppModuleDef[] = [
     ],
   },
   {
+    key: "cocina",
+    label: "Cocina",
+    href: "/cocina",
+    mvp: 2,
+    submodules: [
+      {
+        key: "cocina.maestro",
+        label: "Maestro (insumos, preparaciones, carta)",
+        description: "Crear ítems de cocina que no se compran: insumos, preparaciones y productos de carta.",
+      },
+      {
+        key: "cocina.produccion",
+        label: "Producciones (merma y costeo)",
+        description: "Convertir materia prima en insumos/preparaciones con merma y aprovechamiento.",
+      },
+      {
+        key: "cocina.recetas",
+        label: "Recetas (BOM)",
+        description: "Definir componentes de preparaciones y productos de carta.",
+      },
+    ],
+  },
+  {
     key: "compras",
     label: "Compras",
     href: "/compras",
@@ -350,6 +373,10 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "inventario.maestro",
     "inventario.minimo",
     "inventario.fisico",
+    "cocina",
+    "cocina.maestro",
+    "cocina.produccion",
+    "cocina.recetas",
     "compras",
     "compras.sugeridos",
     "compras.solicitudes",
