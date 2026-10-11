@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createPurchaseRequestAction } from "../purchase-actions";
 import { Badge } from "@/components/ui/primitives";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
+import { PURCHASE_PAYMENT_MODE_LABELS } from "@/lib/purchases/payment-terms";
 import { purchaseRequestStatusLabel } from "@/lib/purchases/status-labels";
 
 export type PurchaseRequestListRow = {
@@ -90,16 +91,21 @@ export function CreatePurchaseRequestForm() {
           <span>Urgente (se agotó / hay que reponer ya)</span>
         </label>
         <label className="block text-sm md:col-span-2">
-          <span className="mb-1.5 block text-[var(--muted)]">Forma de compra</span>
+          <span className="mb-1.5 block text-[var(--muted)]">
+            ¿Sale efectivo de caja?
+          </span>
           <select name="payment_mode" defaultValue="CREDITO" className={inputClass}>
-            <option value="CREDITO">A crédito (factura al proveedor)</option>
+            <option value="CREDITO">
+              {PURCHASE_PAYMENT_MODE_LABELS.CREDITO}
+            </option>
             <option value="EFECTIVO_INMEDIATO">
-              Efectivo inmediato (tras autorización)
+              {PURCHASE_PAYMENT_MODE_LABELS.EFECTIVO_INMEDIATO}
             </option>
           </select>
           <span className="mt-1 block text-xs text-[var(--muted)]">
-            Aunque sea efectivo, primero debe autorizarse. Sin autorización no
-            comprar.
+            Esto no es el crédito del proveedor: eso se ve al elegir cada
+            proveedor en el pedido. Aquí solo indica si el local pagará con
+            efectivo de caja. Aunque sea efectivo, primero debe autorizarse.
           </span>
         </label>
         <label className="block text-sm md:col-span-2">
@@ -137,7 +143,7 @@ export function PurchaseRequestList({
                 {r.needed_by ? ` · necesaria ${formatDateCO(r.needed_by)}` : ""}
                 {r.is_urgent ? " · urgente" : ""}
                 {r.payment_mode === "EFECTIVO_INMEDIATO"
-                  ? " · efectivo"
+                  ? " · efectivo de caja"
                   : ""}
               </p>
             </div>

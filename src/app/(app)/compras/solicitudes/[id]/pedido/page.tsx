@@ -42,8 +42,13 @@ export default async function PedidoPorProveedorPage({
     redirect(`/compras/solicitudes/${id}`);
   }
 
-  const [{ data: itemRows }, { data: productRows }, { data: categoryRows }, { data: supplierRows }] =
-    await Promise.all([
+  const [
+    { data: itemRows },
+    { data: productRows },
+    { data: categoryRows },
+    { data: supplierRows },
+    { data: orderRows },
+  ] = await Promise.all([
       supabase
         .from("purchase_request_items")
         .select(
@@ -66,7 +71,17 @@ export default async function PedidoPorProveedorPage({
         .select("id, name, contact_name, phone, email")
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null),
+      supabase
+        .from("purchase_supplier_orders")
+        .select("supplier_id, order_number")
+        .eq("purchase_request_id", id)
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null),
     ]);
+
+  const orderNumberBySupplier = Object.fromEntries(
+    (orderRows ?? []).map((r) => [r.supplier_id as string, r.order_number as string]),
+  );
 
   const productNames = new Map((productRows ?? []).map((p) => [p.id, p.name]));
   const categoryNames = new Map((categoryRows ?? []).map((c) => [c.id, c.name]));
@@ -113,6 +128,7 @@ export default async function PedidoPorProveedorPage({
           suppliers={suppliers}
           organization={organization}
           focusSupplierId={focusSupplierId || null}
+          orderNumberBySupplier={orderNumberBySupplier}
         />
       </main>
     </>

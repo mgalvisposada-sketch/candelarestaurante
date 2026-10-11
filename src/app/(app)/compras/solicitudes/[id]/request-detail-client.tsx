@@ -15,6 +15,7 @@ import {
   addPurchaseRequestItemsByCategoryAction,
   addSupplierPendingItemAction,
   approvePurchaseRequestAction,
+  deletePurchaseRequestAction,
   importSuggestedProductsAction,
   markPurchaseOrderedAction,
   receivePurchaseItemsAction,
@@ -26,9 +27,14 @@ import {
 } from "../../purchase-actions";
 import { purchaseRequestStatusLabel } from "@/lib/purchases/status-labels";
 import {
+  classifySuppliersByTerms,
+  formatSupplierSelectLabel,
   isPrepagoTerms,
-  PURCHASE_PAYMENT_TERMS_LABELS,
+  PURCHASE_PAYMENT_MODE_SHORT,
+  supplierPaymentTermsLabel,
+  supplierPaymentTermsShort,
   type PurchasePaymentTerms,
+  type SupplierTermsMix,
 } from "@/lib/purchases/payment-terms";
 import { createProductFromRequestAction } from "../../inventory-actions";
 import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
@@ -157,6 +163,7 @@ export function AddItemForm({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [rowSuppliers, setRowSuppliers] = useState<Record<string, string>>({});
+  const [rowNotes, setRowNotes] = useState<Record<string, string>>({});
   const [defaultSupplierId, setDefaultSupplierId] = useState("");
   const [localProducts, setLocalProducts] = useState<ProductOption[]>([]);
   const [creating, setCreating] = useState(false);
@@ -214,6 +221,10 @@ export function AddItemForm({
 
   function supplierFor(id: string) {
     return (rowSuppliers[id] ?? "").trim();
+  }
+
+  function noteFor(id: string) {
+    return rowNotes[id] ?? "";
   }
 
   function ensureRowDefaults(id: string) {
@@ -280,6 +291,8 @@ export function AddItemForm({
           payload.append("product_ids", id);
           payload.set(`qty_${id}`, qtyFor(id));
           payload.set(`supplier_${id}`, supplierFor(id));
+          const note = noteFor(id).trim();
+          if (note) payload.set(`notes_${id}`, note);
         }
 
         startTransition(async () => {
@@ -295,6 +308,7 @@ export function AddItemForm({
             setSelected(new Set());
             setQuantities({});
             setRowSuppliers({});
+            setRowNotes({});
             setFilter("");
           }
         });
@@ -303,9 +317,9 @@ export function AddItemForm({
       <div>
         <h3 className="font-medium">Agregar productos por categoría</h3>
         <p className="text-sm text-[var(--muted)]">
-          Elija la categoría, marque productos y en cada fila defina cantidad y
-          proveedor. El proveedor empieza en blanco y es obligatorio; puede
-          usar “Aplicar” solo si elige uno por defecto a propósito.
+          Elija la categoría, marque productos y en cada fila defina cantidad,
+          proveedor y, si hace falta, una observación para el proveedor (sale
+          en el PDF del pedido). El proveedor es obligatorio.
         </p>
       </div>
 
@@ -321,6 +335,7 @@ export function AddItemForm({
               setSelected(new Set());
               setQuantities({});
               setRowSuppliers({});
+              setRowNotes({});
               setFilter("");
               setSuccess(null);
               setError(null);
@@ -351,6 +366,9 @@ export function AddItemForm({
           <span className="mb-1 block text-[var(--muted)]">
             Proveedor por defecto
           </span>
+          <span className="mb-1 block text-xs text-[var(--muted)]">
+            En cada opción: Crédito o Prepago del proveedor.
+          </span>
           <div className="flex gap-2">
             <select
               value={categoryDefaultSupplier}
@@ -361,8 +379,10 @@ export function AddItemForm({
               <option value="">—</option>
               {options.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name}
-                  {s.lead_time_days != null ? ` (${s.lead_time_days}d)` : ""}
+                  {formatSupplierSelectLabel(s.name, {
+                    terms: s.purchase_payment_terms,
+                    leadTimeDays: s.lead_time_days,
+                  })}
                 </option>
               ))}
             </select>
@@ -431,72 +451,91 @@ export function AddItemForm({
                 return (
                   <div
                     key={p.id}
-                    className="grid gap-2 border-b border-[var(--line)] px-3 py-2 last:border-b-0 md:grid-cols-[auto_1fr_90px_minmax(140px,1fr)] md:items-center"
+                    className="space-y-2 border-b border-[var(--line)] px-3 py-2 last:border-b-0"
                   >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleProduct(p.id)}
-                      aria-label={`Seleccionar ${p.name}`}
-                    />
-                    <button
-                      type="button"
-                      className="text-left text-sm"
-                      onClick={() => toggleProduct(p.id)}
-                    >
-                      <span className="font-medium">{p.name}</span>
-                      <span className="block text-[var(--muted)]">
-                        stock {p.current_stock} / mín. {p.min_stock} {p.unit}
-                        {already ? " · ya en la solicitud (se actualizará)" : ""}
-                      </span>
-                    </button>
-                    <input
-                      value={qtyFor(p.id)}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setQuantities((q) => ({ ...q, [p.id]: value }));
-                        if (!selected.has(p.id)) {
-                          setSelected((prev) => new Set(prev).add(p.id));
-                          ensureRowDefaults(p.id);
+                    <div className="grid gap-2 md:grid-cols-[auto_1fr_90px_minmax(140px,1fr)] md:items-center">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleProduct(p.id)}
+                        aria-label={`Seleccionar ${p.name}`}
+                      />
+                      <button
+                        type="button"
+                        className="text-left text-sm"
+                        onClick={() => toggleProduct(p.id)}
+                      >
+                        <span className="font-medium">{p.name}</span>
+                        <span className="block text-[var(--muted)]">
+                          stock {p.current_stock} / mín. {p.min_stock} {p.unit}
+                          {already
+                            ? " · ya en la solicitud (se actualizará)"
+                            : ""}
+                        </span>
+                      </button>
+                      <input
+                        value={qtyFor(p.id)}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setQuantities((q) => ({ ...q, [p.id]: value }));
+                          if (!selected.has(p.id)) {
+                            setSelected((prev) => new Set(prev).add(p.id));
+                            ensureRowDefaults(p.id);
+                          }
+                        }}
+                        onFocus={() => {
+                          if (!selected.has(p.id)) {
+                            setSelected((prev) => new Set(prev).add(p.id));
+                            ensureRowDefaults(p.id);
+                          }
+                        }}
+                        className={inputClass}
+                        aria-label={`Cantidad ${p.name}`}
+                        inputMode="decimal"
+                        placeholder="Cant."
+                      />
+                      <select
+                        value={supplierFor(p.id)}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setRowSuppliers((s) => ({ ...s, [p.id]: value }));
+                          if (!selected.has(p.id)) {
+                            setSelected((prev) => new Set(prev).add(p.id));
+                            ensureRowDefaults(p.id);
+                          }
+                        }}
+                        onFocus={() => {
+                          if (!selected.has(p.id)) {
+                            setSelected((prev) => new Set(prev).add(p.id));
+                            ensureRowDefaults(p.id);
+                          }
+                        }}
+                        className={inputClass}
+                        aria-label={`Proveedor ${p.name}`}
+                      >
+                        <option value="">Proveedor…</option>
+                        {options.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {formatSupplierSelectLabel(s.name, {
+                              terms: s.purchase_payment_terms,
+                              leadTimeDays: s.lead_time_days,
+                            })}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {checked ? (
+                      <input
+                        value={noteFor(p.id)}
+                        onChange={(e) =>
+                          setRowNotes((n) => ({ ...n, [p.id]: e.target.value }))
                         }
-                      }}
-                      onFocus={() => {
-                        if (!selected.has(p.id)) {
-                          setSelected((prev) => new Set(prev).add(p.id));
-                          ensureRowDefaults(p.id);
-                        }
-                      }}
-                      className={inputClass}
-                      aria-label={`Cantidad ${p.name}`}
-                      inputMode="decimal"
-                      placeholder="Cant."
-                    />
-                    <select
-                      value={supplierFor(p.id)}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setRowSuppliers((s) => ({ ...s, [p.id]: value }));
-                        if (!selected.has(p.id)) {
-                          setSelected((prev) => new Set(prev).add(p.id));
-                          ensureRowDefaults(p.id);
-                        }
-                      }}
-                      onFocus={() => {
-                        if (!selected.has(p.id)) {
-                          setSelected((prev) => new Set(prev).add(p.id));
-                          ensureRowDefaults(p.id);
-                        }
-                      }}
-                      className={inputClass}
-                      aria-label={`Proveedor ${p.name}`}
-                    >
-                      <option value="">Proveedor…</option>
-                      {options.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
+                        className={inputClass}
+                        aria-label={`Observación ${p.name}`}
+                        placeholder='Observación al proveedor (ej. "ó 10 unidades")'
+                        maxLength={200}
+                      />
+                    ) : null}
                   </div>
                 );
               })
@@ -721,49 +760,27 @@ export function AddItemForm({
   );
 }
 
-function RequestProcessSteps({
-  status,
-  hasPrepago,
-}: {
-  status: string;
-  hasPrepago: boolean;
-}) {
-  // Prepago (mayoría): autorizar → facturar/pagar → recibir
-  // Crédito: autorizar → pedir → recibir → facturar → pagar
-  const steps = hasPrepago
-    ? ([
-        { key: "BORRADOR", label: "Solicitar" },
-        { key: "ENVIADA", label: "Autorizar" },
-        { key: "APROBADA", label: "Facturar" },
-        { key: "FACTURA_ACEPTADA", label: "Pagar" },
-        { key: "PEDIDA", label: "Recibir" },
-        { key: "CERRADO", label: "Cerrado" },
-      ] as const)
-    : ([
-        { key: "BORRADOR", label: "Solicitar" },
-        { key: "ENVIADA", label: "Autorizar" },
-        { key: "APROBADA", label: "Pedir" },
-        { key: "PEDIDA", label: "Recibir" },
-        { key: "RECIBIDA", label: "Facturar" },
-        { key: "FACTURA_ACEPTADA", label: "Cerrado" },
-      ] as const);
+function RequestProcessSteps({ status }: { status: string }) {
+  // Pasos comunes de la solicitud. Facturar/recibir van por proveedor abajo.
+  const steps = [
+    { key: "BORRADOR", label: "Solicitar" },
+    { key: "ENVIADA", label: "Autorizar" },
+    { key: "APROBADA", label: "Pedir" },
+    { key: "OPS", label: "Por proveedor" },
+  ] as const;
 
   const activeIndex = (() => {
     if (["RECHAZADA", "ANULADA"].includes(status)) return -1;
-    if (hasPrepago) {
-      if (status === "BORRADOR") return 0;
-      if (status === "ENVIADA") return 1;
-      if (status === "APROBADA" || status === "PEDIDA") return 2;
-      if (status === "FACTURA_ACEPTADA") return 3;
-      if (["RECIBIDA", "RECIBIDA_PARCIAL"].includes(status)) return 4;
-      return 2;
-    }
     if (status === "BORRADOR") return 0;
     if (status === "ENVIADA") return 1;
     if (status === "APROBADA") return 2;
-    if (status === "PEDIDA") return 3;
-    if (["RECIBIDA", "RECIBIDA_PARCIAL"].includes(status)) return 4;
-    if (status === "FACTURA_ACEPTADA") return 5;
+    if (
+      ["PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
+        status,
+      )
+    ) {
+      return 3;
+    }
     return 0;
   })();
 
@@ -799,15 +816,65 @@ function RequestProcessSteps({
   );
 }
 
+function SupplierMixGuide({
+  mix,
+  compact = false,
+}: {
+  mix: SupplierTermsMix;
+  compact?: boolean;
+}) {
+  if (!mix.hasPrepago && !mix.hasCredito) return null;
+
+  if (!mix.isMixed) {
+    const onlyPrepago = mix.hasPrepago;
+    return (
+      <p className={`text-sm text-[var(--muted)] ${compact ? "mt-2" : "mt-3"}`}>
+        {onlyPrepago
+          ? "Todos los proveedores son prepago: facturar y pagar → luego recibir."
+          : "Todos los proveedores son a crédito: pedir → recibir → luego facturar."}
+      </p>
+    );
+  }
+
+  return (
+    <div className={`grid gap-3 md:grid-cols-2 ${compact ? "mt-2" : "mt-3"}`}>
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+          Prepago · pagar primero
+        </p>
+        <p className="mt-1 text-sm font-medium text-amber-950">
+          {mix.prepago.map((s) => s.name).join(", ")}
+        </p>
+        <p className="mt-1 text-xs text-amber-900/80">
+          Facturar → Pagar → Recibir
+        </p>
+      </div>
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+          Crédito · recibir primero
+        </p>
+        <p className="mt-1 text-sm font-medium text-emerald-950">
+          {mix.credito.map((s) => s.name).join(", ")}
+        </p>
+        <p className="mt-1 text-xs text-emerald-900/80">
+          Pedir → Recibir → Facturar
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function SupplierOrdersPanel({
   requestId,
   items,
   supplierMap,
+  orderNumberBySupplier = {},
   compact = false,
 }: {
   requestId: string;
   items: ItemRow[];
   supplierMap: Map<string, string>;
+  orderNumberBySupplier?: Record<string, string>;
   /** En recepción/factura: solo acceso al PDF, sin tablas grandes. */
   compact?: boolean;
 }) {
@@ -858,14 +925,21 @@ function SupplierOrdersPanel({
         </p>
       ) : (
         <div className="space-y-4">
-          {groups.map((group) => (
+          {groups.map((group) => {
+            const orderNo = group.supplierId
+              ? orderNumberBySupplier[group.supplierId]
+              : undefined;
+            return (
             <article
               key={group.supplierId ?? "sin"}
               className="overflow-hidden rounded-xl border border-[var(--line)] bg-white"
             >
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] bg-neutral-50 px-4 py-3">
                 <div>
-                  <h4 className="font-medium">{group.supplierName}</h4>
+                  <h4 className="font-medium">
+                    {orderNo ? `${orderNo} · ` : ""}
+                    {group.supplierName}
+                  </h4>
                   <p className="text-sm text-[var(--muted)]">
                     {group.items.length} producto
                     {group.items.length === 1 ? "" : "s"}
@@ -903,6 +977,11 @@ function SupplierOrdersPanel({
                     >
                       <td className="px-4 py-2.5 font-medium">
                         {item.product_name}
+                        {item.notes ? (
+                          <span className="mt-0.5 block text-xs font-normal text-[var(--muted)]">
+                            Observación: {item.notes}
+                          </span>
+                        ) : null}
                       </td>
                       <td className="hidden px-4 py-2.5 text-[var(--muted)] sm:table-cell">
                         {item.category_name}
@@ -920,7 +999,8 @@ function SupplierOrdersPanel({
                 </tbody>
               </table>
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>
@@ -949,6 +1029,18 @@ function DraftItemsBySupplier({
   const groups = groupPurchaseItemsBySupplier(items, supplierMap, {
     includeCancelled: true,
   });
+  const mix = classifySuppliersByTerms(
+    groups
+      .filter((g) => g.supplierId)
+      .map((g) => {
+        const supplier = suppliers.find((s) => s.id === g.supplierId);
+        return {
+          id: g.supplierId as string,
+          name: g.supplierName,
+          terms: supplier?.purchase_payment_terms,
+        };
+      }),
+  );
 
   if (items.length === 0) {
     return (
@@ -964,10 +1056,32 @@ function DraftItemsBySupplier({
         <h3 className="font-medium">Pedido armado por proveedor</h3>
         <p className="mt-1 text-sm text-[var(--muted)]">
           {items.length} producto{items.length === 1 ? "" : "s"} · ajuste
-          cantidad o proveedor dentro de cada grupo.
+          cantidad o proveedor. En cada proveedor se indica si es crédito o
+          prepago.
         </p>
+        {mix.isMixed ? (
+          <div className="mt-3 rounded-lg border border-[var(--line)] bg-neutral-50 px-3 py-2.5">
+            <p className="text-sm font-medium">
+              Hay proveedores de los dos tipos
+            </p>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">
+              No pasa nada: la solicitud sigue siendo una sola. Después de
+              autorizar, cada proveedor se opera aparte (prepago o crédito).
+            </p>
+            <SupplierMixGuide mix={mix} compact />
+          </div>
+        ) : (
+          <SupplierMixGuide mix={mix} compact />
+        )}
       </div>
-      {groups.map((group) => (
+      {groups.map((group) => {
+        const groupSupplier = group.supplierId
+          ? suppliers.find((s) => s.id === group.supplierId)
+          : null;
+        const termsHint = group.supplierId
+          ? supplierPaymentTermsLabel(groupSupplier?.purchase_payment_terms)
+          : "Asigne proveedor para ver si es crédito o prepago";
+        return (
         <article
           key={group.supplierId ?? "sin"}
           className="overflow-hidden rounded-xl border border-[var(--line)] bg-white"
@@ -977,7 +1091,11 @@ function DraftItemsBySupplier({
             <p className="text-sm text-[var(--muted)]">
               {group.items.length} producto
               {group.items.length === 1 ? "" : "s"}
+              {group.supplierId
+                ? ` · ${supplierPaymentTermsShort(groupSupplier?.purchase_payment_terms)}`
+                : ""}
             </p>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">{termsHint}</p>
           </div>
           <div className="divide-y divide-[var(--line)]">
             {group.items.map((item) => {
@@ -1002,7 +1120,7 @@ function DraftItemsBySupplier({
                     });
                   }}
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 md:col-span-4">
                     <p className="truncate text-sm font-medium">
                       {item.product_name ?? item.product_id}
                     </p>
@@ -1031,12 +1149,27 @@ function DraftItemsBySupplier({
                       <option value="">—</option>
                       {options.map((s) => (
                         <option key={s.id} value={s.id}>
-                          {s.name}
+                          {formatSupplierSelectLabel(s.name, {
+                            terms: s.purchase_payment_terms,
+                            leadTimeDays: s.lead_time_days,
+                          })}
                         </option>
                       ))}
                     </select>
                   </label>
-                  <div className="flex gap-2">
+                  <label className="block text-sm md:col-span-2">
+                    <span className="mb-1 block text-[var(--muted)]">
+                      Observación al proveedor
+                    </span>
+                    <input
+                      name="notes"
+                      defaultValue={item.notes ?? ""}
+                      placeholder='Ej. "ó 10 unidades"'
+                      maxLength={200}
+                      className={inputClass}
+                    />
+                  </label>
+                  <div className="flex gap-2 md:col-span-4">
                     <button
                       type="submit"
                       disabled={pending}
@@ -1065,7 +1198,8 @@ function DraftItemsBySupplier({
             })}
           </div>
         </article>
-      ))}
+        );
+      })}
     </section>
   );
 }
@@ -2218,7 +2352,7 @@ function SupplierOperationsPanel({
     canShowInvoice: boolean;
     canShowExtra: boolean;
     isSettled: boolean;
-    statusLabel: string;
+    nextStep: string;
     prepago: boolean;
     billingMode: "ordered" | "received";
     payGateLabel: string | null;
@@ -2301,19 +2435,19 @@ function SupplierOperationsPanel({
         }
       }
 
-      const statusLabel = canShowInvoice
-        ? prepago
-          ? "Prepago · facturar ahora"
-          : "Listo para facturar"
+      const nextStep = canShowInvoice
+        ? "Siguiente: facturar"
         : awaitingPay
-          ? "Esperando pago"
+          ? "Siguiente: pagar"
           : canShowReceive
-            ? `${openItems.length} por recibir`
+            ? "Siguiente: recibir"
             : isSettled
-              ? "Cerrado"
+              ? "Listo"
               : invoiced.length > 0
-                ? "Factura enviada"
-                : "Sin acción";
+                ? "Factura en cola"
+                : payGateLabel
+                  ? "Siguiente: facturar"
+                  : "Sin acción aún";
 
       if (
         !canShowReceive &&
@@ -2336,7 +2470,7 @@ function SupplierOperationsPanel({
         canShowInvoice,
         canShowExtra,
         isSettled,
-        statusLabel,
+        nextStep,
         prepago,
         billingMode,
         payGateLabel,
@@ -2356,15 +2490,21 @@ function SupplierOperationsPanel({
       canShowReceive,
       canShowInvoice,
       canShowExtra,
-      statusLabel,
+      nextStep,
       prepago,
       billingMode,
       payGateLabel,
     } = view;
     const settled = Boolean(opts?.settled);
-    const termsLabel = prepago
-      ? PURCHASE_PAYMENT_TERMS_LABELS.PREPAGO
-      : PURCHASE_PAYMENT_TERMS_LABELS.CREDITO;
+    const termsLabel = supplierPaymentTermsLabel(
+      prepago ? "PREPAGO" : "CREDITO",
+    );
+    const nextTone =
+      nextStep.startsWith("Siguiente")
+        ? "bg-[var(--ink)] text-white"
+        : nextStep === "Listo"
+          ? "bg-emerald-100 text-emerald-900"
+          : "bg-neutral-200 text-neutral-800";
 
     return (
       <details
@@ -2384,11 +2524,16 @@ function SupplierOperationsPanel({
               <p className="font-medium">{group.supplierName}</p>
               <p className="text-sm text-[var(--muted)]">
                 {group.items.length} producto
-                {group.items.length === 1 ? "" : "s"} · {statusLabel}
+                {group.items.length === 1 ? "" : "s"} ·{" "}
+                {prepago ? "Prepago" : "Crédito"}
               </p>
               <p className="text-xs text-[var(--muted)]">{termsLabel}</p>
             </div>
-            <span className="text-sm text-[var(--muted)]">Ver / ocultar</span>
+            <span
+              className={`rounded-lg px-2.5 py-1 text-xs font-medium ${nextTone}`}
+            >
+              {nextStep}
+            </span>
           </div>
         </summary>
 
@@ -2498,37 +2643,55 @@ function SupplierOperationsPanel({
     );
   }
 
+  const prepagoActive = activeViews.filter((v) => v.prepago);
+  const creditoActive = activeViews.filter((v) => !v.prepago);
+  const opsMixed = prepagoActive.length > 0 && creditoActive.length > 0;
+
   return (
     <section className="space-y-4">
       <div className="rounded-xl border border-[var(--line)] bg-white p-4">
-        <h3 className="font-medium">Recepción y factura por proveedor</h3>
+        <h3 className="font-medium">Por proveedor: qué hacer ahora</h3>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Recibir = cantidades (local). Facturar = precios y cola de pago
-          (tesorería). Son pasos distintos.
+          Mire el cartel <strong>Siguiente</strong> de cada proveedor y haga
+          solo ese paso. Recibir = cantidades (local). Facturar = precios y
+          cola de pago (tesorería).
         </p>
-        <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-[var(--muted)]">
-          <li>Arriba: proveedores pendientes de recibir o facturar.</li>
-          <li>Abajo: los que ya enviaron factura a cola de pago.</li>
-        </ol>
+        {opsMixed ? (
+          <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+            Esta solicitud mezcla prepago y crédito. Trate cada bloque por
+            separado: no hay un solo orden para todos.
+          </p>
+        ) : null}
       </div>
 
-      {activeViews.length > 0 ? (
-        <div className="space-y-3">
-          <h4 className="text-sm font-medium text-[var(--muted)]">
-            Pendientes ({activeViews.length})
-          </h4>
-          {activeViews.map((view) => renderSupplierCard(view))}
-        </div>
-      ) : (
+      {activeViews.length === 0 ? (
         <p className="rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-3 text-sm text-[var(--muted)]">
           No hay proveedores pendientes de recepción o factura.
         </p>
-      )}
+      ) : null}
+
+      {prepagoActive.length > 0 ? (
+        <div className="space-y-3">
+          <h4 className="text-sm font-medium text-amber-900">
+            Prepago — pagar antes de recibir ({prepagoActive.length})
+          </h4>
+          {prepagoActive.map((view) => renderSupplierCard(view))}
+        </div>
+      ) : null}
+
+      {creditoActive.length > 0 ? (
+        <div className="space-y-3">
+          <h4 className="text-sm font-medium text-emerald-900">
+            Crédito — recibir y luego facturar ({creditoActive.length})
+          </h4>
+          {creditoActive.map((view) => renderSupplierCard(view))}
+        </div>
+      ) : null}
 
       {settledViews.length > 0 ? (
         <div className="space-y-3">
           <h4 className="text-sm font-medium text-[var(--muted)]">
-            Ya en cola de pago ({settledViews.length})
+            Ya gestionados ({settledViews.length})
           </h4>
           {settledViews.map((view) =>
             renderSupplierCard(view, { settled: true }),
@@ -2651,6 +2814,7 @@ export function RequestDetailClient({
   units,
   suppliers,
   links,
+  orderNumberBySupplier = {},
   paymentStatusById = {},
   canCreate,
   canCreateProduct,
@@ -2667,6 +2831,7 @@ export function RequestDetailClient({
   units: UnitOption[];
   suppliers: SupplierOption[];
   links: CategorySupplierLink[];
+  orderNumberBySupplier?: Record<string, string>;
   paymentStatusById?: Record<string, string>;
   canCreate: boolean;
   canCreateProduct: boolean;
@@ -2692,19 +2857,22 @@ export function RequestDetailClient({
       ),
     [suppliers],
   );
-  const hasPrepago = useMemo(() => {
-    const ids = new Set(
-      items
-        .map((i) => i.approved_supplier_id ?? i.suggested_supplier_id)
-        .filter(Boolean) as string[],
-    );
-    if (ids.size === 0) {
-      return suppliers.some((s) => isPrepagoTerms(s.purchase_payment_terms));
-    }
-    return [...ids].some((id) =>
-      isPrepagoTerms(supplierTerms.get(id) ?? "PREPAGO"),
-    );
-  }, [items, suppliers, supplierTerms]);
+  const supplierMix = useMemo(() => {
+    const entries = items
+      .map((i) => {
+        const id = i.approved_supplier_id ?? i.suggested_supplier_id;
+        if (!id) return null;
+        return {
+          id,
+          name: supplierMap.get(id) ?? "Proveedor",
+          terms: supplierTerms.get(id),
+        };
+      })
+      .filter((e): e is { id: string; name: string; terms: string | undefined } =>
+        Boolean(e),
+      );
+    return classifySuppliersByTerms(entries);
+  }, [items, supplierMap, supplierTerms]);
   const existingProductIds = new Set(items.map((i) => i.product_id));
   // PDF compact en recepción/factura (APROBADA ya muestra el panel completo arriba).
   const showSupplierOrders = [
@@ -2744,9 +2912,13 @@ export function RequestDetailClient({
                 <Badge tone="danger">Urgente</Badge>
               ) : null}
               {request.payment_mode === "EFECTIVO_INMEDIATO" ? (
-                <Badge tone="warn">Efectivo inmediato</Badge>
+                <Badge tone="warn">
+                  {PURCHASE_PAYMENT_MODE_SHORT.EFECTIVO_INMEDIATO}
+                </Badge>
               ) : request.payment_mode === "CREDITO" ? (
-                <Badge tone="ok">A crédito</Badge>
+                <Badge tone="ok">
+                  {PURCHASE_PAYMENT_MODE_SHORT.CREDITO}
+                </Badge>
               ) : null}
             </div>
             {request.notes ? (
@@ -2778,12 +2950,17 @@ export function RequestDetailClient({
             {purchaseRequestStatusLabel(request.status)}
           </Badge>
         </div>
-        <RequestProcessSteps status={request.status} hasPrepago={hasPrepago} />
-        {hasPrepago ? (
-          <p className="mt-3 text-xs text-[var(--muted)]">
-            Hay proveedores prepago: tras autorizar, tesorería factura y paga;
-            Chase recibe cuando el pago está listo (comprobante al proveedor).
-          </p>
+        <RequestProcessSteps status={request.status} />
+        {supplierMix.hasPrepago || supplierMix.hasCredito ? (
+          <>
+            {supplierMix.isMixed ? (
+              <p className="mt-3 text-sm font-medium">
+                Esta solicitud mezcla prepago y crédito: cada proveedor se
+                opera aparte.
+              </p>
+            ) : null}
+            <SupplierMixGuide mix={supplierMix} />
+          </>
         ) : null}
       </div>
 
@@ -2825,26 +3002,51 @@ export function RequestDetailClient({
             requestId={request.id}
             items={items}
             supplierMap={supplierMap}
+            orderNumberBySupplier={orderNumberBySupplier}
           />
         )
       ) : null}
 
       {request.status === "BORRADOR" && canCreate ? (
-        <button
-          type="button"
-          disabled={pending || items.length === 0}
-          className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
-          onClick={() =>
-            startTransition(async () => {
-              setError(null);
-              const r = await submitPurchaseRequestAction(request.id);
-              if (!r.ok) setError(r.error ?? "Error");
-              else notifyPendingActionsChanged();
-            })
-          }
-        >
-          Enviar a autorización
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={pending || items.length === 0}
+            className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
+            onClick={() =>
+              startTransition(async () => {
+                setError(null);
+                const r = await submitPurchaseRequestAction(request.id);
+                if (!r.ok) setError(r.error ?? "Error");
+                else notifyPendingActionsChanged();
+              })
+            }
+          >
+            Enviar a autorización
+          </button>
+          <button
+            type="button"
+            disabled={pending}
+            className="rounded-lg px-4 py-2.5 text-sm text-red-700 disabled:opacity-60"
+            onClick={() => {
+              if (
+                !window.confirm(
+                  "¿Eliminar este borrador? Esta acción no se puede deshacer.",
+                )
+              ) {
+                return;
+              }
+              startTransition(async () => {
+                setError(null);
+                const r = await deletePurchaseRequestAction(request.id);
+                if (!r.ok) setError(r.error ?? "Error");
+                else window.location.href = "/compras/solicitudes";
+              });
+            }}
+          >
+            Eliminar borrador
+          </button>
+        </div>
       ) : null}
 
       {request.status === "ENVIADA" && canApprove ? (
@@ -2862,15 +3064,26 @@ export function RequestDetailClient({
           <div className="rounded-xl border border-[var(--line)] bg-white p-5">
             <h3 className="font-medium">Autorizar compra por proveedor</h3>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Confirme proveedor, cantidad y entrega. Al autorizar, el local (o
-              tesorería) podrá pedir/comprar. Sin autorización no deben comprar.
+              Confirme proveedor, cantidad y entrega. Sin autorización no deben
+              comprar.
               {request.payment_mode === "EFECTIVO_INMEDIATO"
-                ? " Esta solicitud pide efectivo inmediato."
-                : ""}
-              {request.is_urgent ? " Marcada como urgente." : ""}
+                ? " El local indica efectivo de caja."
+                : " El local indica factura (sin efectivo de caja)."}
+              {request.is_urgent ? " Urgente." : ""}
             </p>
+            {supplierMix.isMixed ? (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                Hay prepago y crédito juntos. Al autorizar, cada proveedor se
+                seguirá por su propio camino.
+              </p>
+            ) : null}
+            <SupplierMixGuide mix={supplierMix} compact />
           </div>
-          {approveGroups.map((group) => (
+          {approveGroups.map((group) => {
+            const groupSupplier = group.supplierId
+              ? suppliers.find((s) => s.id === group.supplierId)
+              : null;
+            return (
             <div
               key={group.supplierId ?? "sin"}
               className="overflow-hidden rounded-xl border border-[var(--line)] bg-white"
@@ -2880,7 +3093,17 @@ export function RequestDetailClient({
                 <p className="text-sm text-[var(--muted)]">
                   {group.items.length} producto
                   {group.items.length === 1 ? "" : "s"}
+                  {group.supplierId
+                    ? ` · ${supplierPaymentTermsShort(groupSupplier?.purchase_payment_terms)}`
+                    : ""}
                 </p>
+                {group.supplierId ? (
+                  <p className="mt-0.5 text-xs text-[var(--muted)]">
+                    {supplierPaymentTermsLabel(
+                      groupSupplier?.purchase_payment_terms,
+                    )}
+                  </p>
+                ) : null}
               </div>
               <div className="divide-y divide-[var(--line)]">
                 {group.items.map((item) => {
@@ -2914,7 +3137,10 @@ export function RequestDetailClient({
                         >
                           {options.map((s) => (
                             <option key={s.id} value={s.id}>
-                              {s.name}
+                              {formatSupplierSelectLabel(s.name, {
+                                terms: s.purchase_payment_terms,
+                                leadTimeDays: s.lead_time_days,
+                              })}
                             </option>
                           ))}
                         </select>
@@ -2944,7 +3170,8 @@ export function RequestDetailClient({
                 })}
               </div>
             </div>
-          ))}
+            );
+          })}
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
@@ -2966,6 +3193,7 @@ export function RequestDetailClient({
               requestId={request.id}
               items={items}
               supplierMap={supplierMap}
+              orderNumberBySupplier={orderNumberBySupplier}
               compact
             />
           </div>
@@ -2974,17 +3202,17 @@ export function RequestDetailClient({
 
       {request.status === "APROBADA" ? (
         <div className="space-y-3 rounded-xl border border-[var(--line)] bg-white p-5">
-            <h3 className="font-medium">Compra autorizada</h3>
+          <h3 className="font-medium">Compra autorizada</h3>
           <p className="text-sm text-[var(--muted)]">
-            Use el PDF por proveedor. Si el proveedor es <strong>prepago</strong>,
-            tesorería factura y paga abajo (antes de recibir). Si es{" "}
-            <strong>crédito</strong>, marque «Ya pedí / compré» y Chase recibe;
-            la factura va después.
+            1) Genere el PDF por proveedor. 2) Marque «Ya pedí / compré». 3)
+            Abajo, siga el cartel <strong>Siguiente</strong> de cada proveedor.
           </p>
+          <SupplierMixGuide mix={supplierMix} compact />
           <SupplierOrdersPanel
             requestId={request.id}
             items={items}
             supplierMap={supplierMap}
+            orderNumberBySupplier={orderNumberBySupplier}
           />
           {canMarkOrdered ? (
             <button
@@ -3062,6 +3290,7 @@ export function RequestDetailClient({
           requestId={request.id}
           items={items}
           supplierMap={supplierMap}
+          orderNumberBySupplier={orderNumberBySupplier}
           compact={["RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
             request.status,
           )}

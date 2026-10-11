@@ -198,7 +198,7 @@ export const APP_MODULES: AppModuleDef[] = [
         key: "compras.solicitudes.crear",
         label: "1 · Solicitar reposición",
         description:
-          "Admin del local: arma borrador, indica urgencia/efectivo y envía a autorización.",
+          "Admin del local: arma borrador, marca urgencia y si sale efectivo de caja; al elegir proveedor ve crédito/prepago.",
       },
       {
         key: "compras.solicitudes.aprobar",

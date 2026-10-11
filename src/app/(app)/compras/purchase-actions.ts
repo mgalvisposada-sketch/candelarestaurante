@@ -95,6 +95,68 @@ function addDays(isoDate: string, days: number) {
   return d.toISOString().slice(0, 10);
 }
 
+/** Asigna OC-NNNN por proveedor al autorizar (idempotente por request+supplier). */
+async function assignPurchaseSupplierOrderNumbers({
+  supabase,
+  organizationId,
+  requestId,
+  supplierIds,
+  userId,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  organizationId: string;
+  requestId: string;
+  supplierIds: string[];
+  userId: string;
+}): Promise<string | null> {
+  if (supplierIds.length === 0) return null;
+
+  const { data: existing } = await supabase
+    .from("purchase_supplier_orders")
+    .select("supplier_id")
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", organizationId)
+    .is("deleted_at", null)
+    .in("supplier_id", supplierIds);
+
+  const already = new Set((existing ?? []).map((r) => r.supplier_id as string));
+  const pending = supplierIds.filter((id) => !already.has(id)).sort();
+
+  for (const supplierId of pending) {
+    const { data: allocated, error: allocError } = await supabase.rpc(
+      "allocate_purchase_order_number",
+      { p_org_id: organizationId },
+    );
+    if (allocError) return allocError.message;
+
+    const row = Array.isArray(allocated) ? allocated[0] : allocated;
+    const orderSeq = Number(row?.order_seq);
+    const orderNumber = String(row?.order_number ?? "");
+    if (!Number.isFinite(orderSeq) || !orderNumber) {
+      return "No se pudo asignar el consecutivo de orden";
+    }
+
+    const { error: insertError } = await supabase
+      .from("purchase_supplier_orders")
+      .insert({
+        organization_id: organizationId,
+        purchase_request_id: requestId,
+        supplier_id: supplierId,
+        order_seq: orderSeq,
+        order_number: orderNumber,
+        created_by: userId,
+      });
+
+    if (insertError) {
+      // Carrera rara: otro proceso ya creó la fila.
+      if (insertError.code === "23505") continue;
+      return insertError.message;
+    }
+  }
+
+  return null;
+}
+
 async function ensureAccountsPayable(
   supabase: Awaited<ReturnType<typeof createClient>>,
   orgId: string,
@@ -379,6 +441,8 @@ export async function addPurchaseRequestItemsByCategoryAction(
       };
     }
 
+    const note = emptyToNull(String(formData.get(`notes_${product.id}`) ?? ""));
+
     const existing = existingByProduct.get(product.id);
     if (existing) {
       const { error } = await supabase
@@ -387,6 +451,7 @@ export async function addPurchaseRequestItemsByCategoryAction(
           quantity_requested: qty,
           suggested_supplier_id: suggested,
           unit_cost_estimate: Number(product.unit_cost || 0),
+          notes: note,
           updated_by: ctx.userId,
         })
         .eq("id", existing.id)
@@ -405,6 +470,7 @@ export async function addPurchaseRequestItemsByCategoryAction(
       unit: product.unit,
       suggested_supplier_id: suggested,
       unit_cost_estimate: Number(product.unit_cost || 0),
+      notes: note,
       sort_order: sortOrder,
       created_by: ctx.userId,
       updated_by: ctx.userId,
@@ -647,6 +713,62 @@ export async function removePurchaseRequestItemAction(
   return { ok: true, id: itemId };
 }
 
+export async function deletePurchaseRequestAction(
+  requestId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.crear")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (request.status !== "BORRADOR") {
+    return {
+      ok: false,
+      error: "Solo se pueden eliminar solicitudes en borrador",
+    };
+  }
+
+  const now = new Date().toISOString();
+  const { error: itemsError } = await supabase
+    .from("purchase_request_items")
+    .update({
+      deleted_at: now,
+      status: "CANCELADO",
+      updated_by: ctx.userId,
+    })
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  if (itemsError) return { ok: false, error: itemsError.message };
+
+  const { error } = await supabase
+    .from("purchase_requests")
+    .update({
+      deleted_at: now,
+      updated_by: ctx.userId,
+    })
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .eq("status", "BORRADOR")
+    .is("deleted_at", null);
+
+  if (error) return { ok: false, error: error.message };
+  revalidateCompras(requestId);
+  return { ok: true, id: requestId };
+}
+
 export async function submitPurchaseRequestAction(
   requestId: string,
 ): Promise<ActionResult> {
@@ -743,6 +865,7 @@ export async function approvePurchaseRequestAction(
     (suppliers ?? []).map((s) => [s.id, s.lead_time_days]),
   );
   const today = todayInBogota();
+  const suppliersWithOrders = new Set<string>();
 
   for (const item of items) {
     const prefix = `item_${item.id}_`;
@@ -793,6 +916,31 @@ export async function approvePurchaseRequestAction(
       .eq("organization_id", ctx.organization.id);
 
     if (error) return { ok: false, error: error.message };
+
+    if (qty > 0 && parsed.data.approved_supplier_id) {
+      suppliersWithOrders.add(parsed.data.approved_supplier_id);
+    }
+  }
+
+  // Consecutivo antes de pasar a APROBADA: si falla, la solicitud sigue ENVIADA
+  // y se puede reintentar la autorización.
+  const orderAssignError = await assignPurchaseSupplierOrderNumbers({
+    supabase,
+    organizationId: ctx.organization.id,
+    requestId,
+    supplierIds: [...suppliersWithOrders],
+    userId: ctx.userId,
+  });
+  if (orderAssignError) {
+    return {
+      ok: false,
+      error:
+        orderAssignError.includes("purchase_supplier_orders") ||
+        orderAssignError.includes("allocate_purchase_order_number") ||
+        orderAssignError.includes("schema cache")
+          ? "Falta aplicar la migración de consecutivos de orden (OC). Ejecute npm run db:migrate."
+          : orderAssignError,
+    };
   }
 
   const { error } = await supabase
@@ -804,7 +952,8 @@ export async function approvePurchaseRequestAction(
       updated_by: ctx.userId,
     })
     .eq("id", requestId)
-    .eq("organization_id", ctx.organization.id);
+    .eq("organization_id", ctx.organization.id)
+    .eq("status", "ENVIADA");
 
   if (error) return { ok: false, error: error.message };
 

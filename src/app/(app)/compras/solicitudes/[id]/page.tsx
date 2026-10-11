@@ -49,6 +49,7 @@ export default async function CompraSolicitudDetailPage({
     { data: linkRows },
     { data: categoryRows },
     { data: unitRows },
+    { data: orderRows },
   ] = await Promise.all([
       supabase
         .from("purchase_request_items")
@@ -92,7 +93,17 @@ export default async function CompraSolicitudDetailPage({
         .is("deleted_at", null)
         .eq("is_active", true)
         .order("code"),
+      supabase
+        .from("purchase_supplier_orders")
+        .select("supplier_id, order_number")
+        .eq("purchase_request_id", id)
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null),
     ]);
+
+  const orderNumberBySupplier = Object.fromEntries(
+    (orderRows ?? []).map((r) => [r.supplier_id as string, r.order_number as string]),
+  );
 
   const categories = new Map((categoryRows ?? []).map((c) => [c.id, c.name]));
   const productNameMap = new Map((productRows ?? []).map((p) => [p.id, p.name]));
@@ -173,6 +184,7 @@ export default async function CompraSolicitudDetailPage({
           units={(unitRows ?? []) as UnitOption[]}
           suppliers={purchaseSuppliers}
           links={(linkRows ?? []) as CategorySupplierLink[]}
+          orderNumberBySupplier={orderNumberBySupplier}
           canCreate={ctxCanAccess(ctx, "compras.solicitudes.crear")}
           canCreateProduct={
             ctxCanAccess(ctx, "inventario.maestro") ||

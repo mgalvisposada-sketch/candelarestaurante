@@ -82,12 +82,14 @@ export function PedidoPorProveedorClient({
   suppliers,
   organization,
   focusSupplierId,
+  orderNumberBySupplier = {},
 }: {
   request: PedidoRequest;
   items: PedidoItem[];
   suppliers: PedidoSupplier[];
   organization: PedidoOrganization;
   focusSupplierId?: string | null;
+  orderNumberBySupplier?: Record<string, string>;
 }) {
   const supplierMap = useMemo(
     () => new Map(suppliers.map((s) => [s.id, s])),
@@ -202,15 +204,21 @@ export function PedidoPorProveedorClient({
         </div>
         {groups.length > 1 ? (
           <nav className="flex flex-wrap gap-2 text-sm">
-            {groups.map((g) => (
+            {groups.map((g) => {
+              const orderNo = g.supplierId
+                ? orderNumberBySupplier[g.supplierId]
+                : undefined;
+              return (
               <a
                 key={g.supplierId ?? "none"}
                 href={`#proveedor-${g.supplierId ?? "sin"}`}
                 className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5"
               >
+                {orderNo ? `${orderNo} · ` : ""}
                 {g.supplierName} ({g.items.length})
               </a>
-            ))}
+              );
+            })}
           </nav>
         ) : null}
       </div>
@@ -232,6 +240,11 @@ export function PedidoPorProveedorClient({
               organization={organization}
               sheetIndex={index + 1}
               sheetTotal={groups.length}
+              orderNumber={
+                group.supplierId
+                  ? orderNumberBySupplier[group.supplierId] ?? null
+                  : null
+              }
             />
           ))
         )}
@@ -247,6 +260,7 @@ function SupplierOrderSheet({
   organization,
   sheetIndex,
   sheetTotal,
+  orderNumber,
 }: {
   group: SupplierOrderGroup;
   supplier?: PedidoSupplier;
@@ -254,6 +268,7 @@ function SupplierOrderSheet({
   organization: PedidoOrganization;
   sheetIndex: number;
   sheetTotal: number;
+  orderNumber?: string | null;
 }) {
   const blocks = sortAndGroupByCategory(group.items);
   const orderDate = formatDateCO(
@@ -291,6 +306,9 @@ function SupplierOrderSheet({
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
               Orden de pedido
             </p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums tracking-tight text-[var(--ink)]">
+              {orderNumber || "—"}
+            </p>
             <p className="mt-1 text-sm tabular-nums text-[var(--muted)]">
               {sheetTotal > 1 ? `${sheetIndex}/${sheetTotal}` : null}
             </p>
@@ -324,8 +342,9 @@ function SupplierOrderSheet({
           )}
         </div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm md:justify-items-end md:text-right">
-          <Meta label="Solicitud" value={request.title} />
+          <Meta label="Nº orden" value={orderNumber || "—"} />
           <Meta label="Fecha pedido" value={orderDate} />
+          <Meta label="Solicitud" value={request.title} />
           <Meta
             label="Punto / ubicación"
             value={request.location_label || "—"}
@@ -376,7 +395,7 @@ function SupplierOrderSheet({
                         <span className="font-medium">{item.product_name}</span>
                         {item.notes ? (
                           <span className="mt-0.5 block text-xs text-[var(--muted)]">
-                            Nota: {item.notes}
+                            Observación: {item.notes}
                           </span>
                         ) : null}
                       </td>
@@ -436,7 +455,9 @@ function SupplierOrderSheet({
       </div>
 
       <p className="mt-6 text-[10px] text-[var(--muted)]">
-        Documento generado en Candela · Ref. {request.id.slice(0, 8)}
+        Documento generado en Candela
+        {orderNumber ? ` · ${orderNumber}` : ""} · Ref.{" "}
+        {request.id.slice(0, 8)}
       </p>
     </section>
   );
