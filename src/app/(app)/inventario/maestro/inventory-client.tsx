@@ -673,11 +673,13 @@ function ProductCard({
   categories,
   units,
   canEditMinStock,
+  focused = false,
 }: {
   product: ProductRow;
   categories: CategoryRow[];
   units: UnitRow[];
   canEditMinStock: boolean;
+  focused?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [editingMin, setEditingMin] = useState(false);
@@ -695,7 +697,14 @@ function ProductCard({
   }
 
   return (
-    <article className="border-t border-[var(--line)] bg-white px-4 py-3 first:border-t-0">
+    <article
+      id={`producto-${product.id}`}
+      className={
+        focused
+          ? "scroll-mt-24 border-t border-[var(--line)] bg-amber-50 px-4 py-3 ring-2 ring-inset ring-amber-400 first:border-t-0"
+          : "scroll-mt-24 border-t border-[var(--line)] bg-white px-4 py-3 first:border-t-0"
+      }
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-medium">{product.name}</p>
@@ -877,6 +886,7 @@ function CategoryGroup({
   units,
   canEditMinStock,
   defaultOpen,
+  focusProductId,
 }: {
   category: CategoryRow | null;
   products: ProductRow[];
@@ -884,6 +894,7 @@ function CategoryGroup({
   units: UnitRow[];
   canEditMinStock: boolean;
   defaultOpen: boolean;
+  focusProductId?: string | null;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [error, setError] = useState<string | null>(null);
@@ -891,6 +902,14 @@ function CategoryGroup({
   useEffect(() => {
     if (defaultOpen) setOpen(true);
   }, [defaultOpen]);
+  useEffect(() => {
+    if (
+      focusProductId &&
+      products.some((p) => p.id === focusProductId)
+    ) {
+      setOpen(true);
+    }
+  }, [focusProductId, products]);
   const underMinCount = products.filter(
     (p) =>
       suggestedPurchaseQty(Number(p.current_stock), Number(p.min_stock)) > 0,
@@ -972,6 +991,7 @@ function CategoryGroup({
                 categories={categories}
                 units={units}
                 canEditMinStock={canEditMinStock}
+                focused={focusProductId === p.id}
               />
             ))
           )}
@@ -1174,15 +1194,27 @@ export function InventoryLists({
   units,
   products,
   canEditMinStock,
+  focusProductId,
 }: {
   categories: CategoryRow[];
   units: UnitRow[];
   products: ProductRow[];
   canEditMinStock: boolean;
+  focusProductId?: string | null;
 }) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
   const searching = q.length > 0;
+
+  useEffect(() => {
+    if (!focusProductId) return;
+    const timer = window.setTimeout(() => {
+      const el = document.getElementById(`producto-${focusProductId}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [focusProductId]);
 
   const categoryById = useMemo(
     () => new Map(categories.map((c) => [c.id, c])),
@@ -1308,7 +1340,14 @@ export function InventoryLists({
               categories={categories}
               units={units}
               canEditMinStock={canEditMinStock}
-              defaultOpen={searching && g.products.length > 0}
+              defaultOpen={
+                (searching && g.products.length > 0) ||
+                Boolean(
+                  focusProductId &&
+                    g.products.some((p) => p.id === focusProductId),
+                )
+              }
+              focusProductId={focusProductId}
             />
           ))
         )}

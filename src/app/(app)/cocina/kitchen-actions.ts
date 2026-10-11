@@ -9,6 +9,7 @@ import {
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
+import { parseBulkProductPaste } from "@/lib/inventory/bulk-paste";
 import {
   completeInsumoProductionSchema,
   completePreparacionProductionSchema,
@@ -20,6 +21,19 @@ import {
 import { revalidatePath } from "next/cache";
 
 type ActionResult = { ok: boolean; error?: string; id?: string };
+
+export type BulkImportKitchenProductsResult = {
+  ok: boolean;
+  error?: string;
+  created?: number;
+  errors?: { line: number; message: string }[];
+};
+
+const KITCHEN_BULK_ITEM_KINDS = [
+  "INSUMO_PREPARACION",
+  "PREPARACION",
+  "PRODUCTO_CARTA",
+] as const;
 
 function emptyToNull(v: string | null | undefined) {
   if (v == null) return null;
@@ -67,6 +81,8 @@ export async function createKitchenProductAction(
     sku: formData.get("sku"),
     name: formData.get("name"),
     min_stock: formData.get("min_stock"),
+    current_stock: formData.get("current_stock"),
+    unit_cost: formData.get("unit_cost"),
     notes: formData.get("notes"),
   });
   if (!parsed.success) {
@@ -76,6 +92,14 @@ export async function createKitchenProductAction(
   const minStock = parseNumber(parsed.data.min_stock, 0);
   if (minStock === null || minStock < 0) {
     return { ok: false, error: "Stock mínimo inválido" };
+  }
+  const currentStock = parseNumber(parsed.data.current_stock, 0);
+  if (currentStock === null || currentStock < 0) {
+    return { ok: false, error: "Stock actual inválido" };
+  }
+  const unitCost = parseNumber(parsed.data.unit_cost, 0);
+  if (unitCost === null || unitCost < 0) {
+    return { ok: false, error: "Costo unitario inválido" };
   }
 
   const supabase = await createClient();
@@ -99,8 +123,8 @@ export async function createKitchenProductAction(
       name: parsed.data.name.trim(),
       unit: unitRow.code,
       min_stock: minStock,
-      current_stock: 0,
-      unit_cost: 0,
+      current_stock: currentStock,
+      unit_cost: unitCost,
       notes: emptyToNull(parsed.data.notes),
       created_by: ctx.userId,
       updated_by: ctx.userId,
@@ -110,8 +134,169 @@ export async function createKitchenProductAction(
 
   if (error) return { ok: false, error: error.message };
 
+  if (currentStock > 0) {
+    await supabase.from("inventory_movements").insert({
+      organization_id: ctx.organization.id,
+      product_id: data.id,
+      movement_type: "APERTURA",
+      quantity: currentStock,
+      unit_cost: unitCost,
+      stock_before: 0,
+      stock_after: currentStock,
+      unit_cost_before: 0,
+      unit_cost_after: unitCost,
+      reference_type: "products",
+      reference_id: data.id,
+      notes: "Stock inicial cocina al crear ítem",
+      created_by: ctx.userId,
+    });
+  }
+
   revalidateKitchen();
   return { ok: true, id: data.id };
+}
+
+/**
+ * Carga inicial masiva de ítems de cocina (mismo formato pegable que inventario).
+ * Crea productos con item_kind de cocina y registra APERTURA si hay stock.
+ */
+export async function bulkImportKitchenProductsAction(
+  formData: FormData,
+): Promise<BulkImportKitchenProductsResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "cocina.maestro")) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const itemKind = String(formData.get("item_kind") ?? "").trim();
+  if (
+    !KITCHEN_BULK_ITEM_KINDS.includes(
+      itemKind as (typeof KITCHEN_BULK_ITEM_KINDS)[number],
+    )
+  ) {
+    return { ok: false, error: "Tipo de ítem de cocina inválido" };
+  }
+
+  const categoryId = String(formData.get("category_id") ?? "").trim();
+  const paste = String(formData.get("paste") ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(categoryId)) {
+    return { ok: false, error: "Seleccione una categoría" };
+  }
+
+  const { rows, issues } = parseBulkProductPaste(paste);
+  if (rows.length === 0 && issues.length > 0) {
+    return {
+      ok: false,
+      error: issues[0]?.message ?? "Datos inválidos",
+      errors: issues,
+    };
+  }
+  if (rows.length === 0) {
+    return { ok: false, error: "No hay filas válidas para importar" };
+  }
+
+  const supabase = await createClient();
+  const { data: category } = await supabase
+    .from("product_categories")
+    .select("id")
+    .eq("id", categoryId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!category) return { ok: false, error: "Categoría no encontrada" };
+
+  const { data: unitRows } = await supabase
+    .from("product_units")
+    .select("id, code")
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .eq("is_active", true);
+
+  const unitsByCode = new Map(
+    (unitRows ?? []).map((u) => [u.code.toUpperCase(), u]),
+  );
+
+  const errors: { line: number; message: string }[] = [...issues];
+  let created = 0;
+
+  for (const row of rows) {
+    const unit = unitsByCode.get(row.unitCode);
+    if (!unit) {
+      errors.push({
+        line: row.line,
+        message: `«${row.name}»: unidad «${row.unitCode}» no existe en el maestro`,
+      });
+      continue;
+    }
+
+    const { data, error } = await supabase
+      .from("products")
+      .insert({
+        organization_id: ctx.organization.id,
+        category_id: categoryId,
+        unit_id: unit.id,
+        item_kind: itemKind,
+        sku: row.sku,
+        name: row.name,
+        unit: unit.code,
+        min_stock: row.minStock,
+        current_stock: row.currentStock,
+        unit_cost: row.unitCost,
+        notes: row.notes,
+        created_by: ctx.userId,
+        updated_by: ctx.userId,
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      errors.push({
+        line: row.line,
+        message: `«${row.name}»: ${error.message}`,
+      });
+      continue;
+    }
+
+    created += 1;
+
+    if (row.currentStock > 0) {
+      await supabase.from("inventory_movements").insert({
+        organization_id: ctx.organization.id,
+        product_id: data.id,
+        movement_type: "APERTURA",
+        quantity: row.currentStock,
+        unit_cost: row.unitCost,
+        stock_before: 0,
+        stock_after: row.currentStock,
+        unit_cost_before: 0,
+        unit_cost_after: row.unitCost,
+        reference_type: "products",
+        reference_id: data.id,
+        notes: "Stock inicial cocina (carga masiva)",
+        created_by: ctx.userId,
+      });
+    }
+  }
+
+  if (created > 0) {
+    revalidateKitchen();
+  }
+
+  if (created === 0) {
+    return {
+      ok: false,
+      error: "No se creó ningún producto. Revise los errores por fila.",
+      created: 0,
+      errors,
+    };
+  }
+
+  return {
+    ok: true,
+    created,
+    errors: errors.length > 0 ? errors : undefined,
+  };
 }
 
 type ProductionInputPayload = {
@@ -498,7 +683,10 @@ export async function upsertKitchenRecipeAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "cocina.recetas")) {
+  if (
+    !ctxCanAccess(ctx, "cocina.recetas") &&
+    !ctxCanAccess(ctx, "cocina.maestro")
+  ) {
     return { ok: false, error: "Sin permiso" };
   }
 
@@ -565,12 +753,14 @@ export async function upsertKitchenRecipeAction(
     .maybeSingle();
   if (!product) return { ok: false, error: "Producto no encontrado" };
   if (
+    product.item_kind !== "INSUMO_PREPARACION" &&
     product.item_kind !== "PREPARACION" &&
     product.item_kind !== "PRODUCTO_CARTA"
   ) {
     return {
       ok: false,
-      error: "La receta solo aplica a Preparaciones o Productos de carta",
+      error:
+        "La receta aplica a Insumos preparación, Preparaciones o Productos de carta",
     };
   }
 
@@ -589,15 +779,23 @@ export async function upsertKitchenRecipeAction(
     if (c.id === product.id) {
       return { ok: false, error: "Una receta no puede incluirse a sí misma" };
     }
+    // Insumo: solo materia prima. Preparación: MP + insumos (+ otras prep).
+    // Carta: MP + insumos + preparaciones.
     const allowed =
-      c.item_kind === "MATERIA_PRIMA" ||
-      c.item_kind === "INSUMO_PREPARACION" ||
-      (product.item_kind === "PRODUCTO_CARTA" && c.item_kind === "PREPARACION") ||
-      (product.item_kind === "PREPARACION" && c.item_kind === "PREPARACION");
+      product.item_kind === "INSUMO_PREPARACION"
+        ? c.item_kind === "MATERIA_PRIMA"
+        : c.item_kind === "MATERIA_PRIMA" ||
+          c.item_kind === "INSUMO_PREPARACION" ||
+          (product.item_kind === "PRODUCTO_CARTA" &&
+            c.item_kind === "PREPARACION") ||
+          (product.item_kind === "PREPARACION" && c.item_kind === "PREPARACION");
     if (!allowed) {
       return {
         ok: false,
-        error: `"${c.name}" no es un componente válido para esta receta`,
+        error:
+          product.item_kind === "INSUMO_PREPARACION"
+            ? `"${c.name}" no es válido: el insumo solo consume materia prima`
+            : `"${c.name}" no es un componente válido para esta receta`,
       };
     }
   }

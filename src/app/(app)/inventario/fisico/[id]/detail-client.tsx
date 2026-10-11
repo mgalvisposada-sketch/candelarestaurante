@@ -32,6 +32,8 @@ export type CountItem = {
   status?: string;
   rejection_reason?: string | null;
   category_id?: string | null;
+  item_kind?: string;
+  item_kind_label?: string;
 };
 export type CategoryOption = {
   id: string;
@@ -43,6 +45,8 @@ export type ProductOption = {
   name: string;
   unit: string;
   category_id: string;
+  item_kind?: string;
+  item_kind_label?: string;
 };
 
 const NONE_CATEGORY = "__none__";
@@ -452,8 +456,9 @@ export function PhysicalCountDetailClient({
               <p className="max-w-2xl text-sm text-[var(--muted)]">{count.notes}</p>
             ) : null}
             <p className="text-sm text-[var(--muted)]">
-              Una categoría a la vez: cuente, envíe a revisión y recién ahí
-              pase a la siguiente. Gestión puede revisar mientras usted sigue.
+              Incluye materia prima, insumos y preparaciones. Al aplicar el
+              ajuste, el físico manda: el stock del sistema queda en lo contado.
+              Una categoría a la vez; Gestión puede revisar mientras sigue.
             </p>
           </div>
           <div className="w-full rounded-xl bg-white/80 px-4 py-3 shadow-[0_1px_0_rgba(18,18,18,0.04)] md:min-w-[180px] md:w-auto">
@@ -700,6 +705,11 @@ export function PhysicalCountDetailClient({
                                         {product.name}
                                       </p>
                                       <p className="mt-0.5 text-xs text-[var(--muted)]">
+                                        {product.item_kind_label ? (
+                                          <span className="mr-2 font-medium text-[var(--ink)]">
+                                            {product.item_kind_label}
+                                          </span>
+                                        ) : null}
                                         {product.unit}
                                         {item?.status === "ENVIADO" ? (
                                           <span className="ml-2 font-medium text-amber-800">

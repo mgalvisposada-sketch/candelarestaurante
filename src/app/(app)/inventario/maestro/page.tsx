@@ -18,10 +18,15 @@ import {
   type UnitRow,
 } from "./inventory-client";
 
-export default async function InventarioMaestroPage() {
+export default async function InventarioMaestroPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ producto?: string }>;
+}) {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
   requireModuleAccess(ctx, "inventario.maestro");
+  const { producto: focusProductId } = await searchParams;
   if (!ctx.organization) {
     return (
       <>
@@ -120,6 +125,7 @@ export default async function InventarioMaestroPage() {
             units={units}
             products={products}
             canEditMinStock={ctxCanAccess(ctx, "inventario.minimo")}
+            focusProductId={focusProductId}
           />
         )}
       </main>

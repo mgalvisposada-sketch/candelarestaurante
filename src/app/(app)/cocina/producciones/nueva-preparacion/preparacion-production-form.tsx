@@ -41,8 +41,11 @@ function formatUnitCost(value: number) {
 
 export function PreparacionProductionForm({
   preparaciones,
+  initialProductId,
 }: {
   preparaciones: PrepOption[];
+  /** Prefill desde “Crear más” en el catálogo. */
+  initialProductId?: string;
 }) {
   const router = useRouter();
   const withRecipe = preparaciones.filter((p) => p.recipe);
@@ -50,8 +53,16 @@ export function PreparacionProductionForm({
   const [pending, startTransition] = useTransition();
   const today = new Date().toISOString().slice(0, 10);
 
-  const [productId, setProductId] = useState(withRecipe[0]?.id ?? "");
-  const [title, setTitle] = useState("");
+  const preselected =
+    initialProductId && withRecipe.some((p) => p.id === initialProductId)
+      ? initialProductId
+      : (withRecipe[0]?.id ?? "");
+  const preselectedName = withRecipe.find((p) => p.id === preselected)?.name;
+
+  const [productId, setProductId] = useState(preselected);
+  const [title, setTitle] = useState(
+    preselectedName ? `Crear más · ${preselectedName}` : "",
+  );
   const [producedAt, setProducedAt] = useState(today);
   const [batches, setBatches] = useState("1");
   const [outputQtyOverride, setOutputQtyOverride] = useState("");
@@ -101,7 +112,9 @@ export function PreparacionProductionForm({
     >
       <section className="grid gap-4 rounded-xl border border-[var(--line)] bg-white p-4 md:grid-cols-2">
         <label className="space-y-1 text-sm md:col-span-2">
-          <span className="text-[var(--muted)]">Preparación</span>
+          <span className="text-[var(--muted)]">
+            Crear más de (preparación del catálogo)
+          </span>
           <select
             required
             value={productId}
@@ -121,6 +134,9 @@ export function PreparacionProductionForm({
               </option>
             ))}
           </select>
+          <span className="mt-1 block text-xs text-[var(--muted)]">
+            Consume la receta: materias primas e insumos preparación.
+          </span>
         </label>
         <label className="space-y-1 text-sm md:col-span-2">
           <span className="text-[var(--muted)]">Título</span>

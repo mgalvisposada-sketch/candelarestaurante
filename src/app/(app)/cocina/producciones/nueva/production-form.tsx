@@ -42,29 +42,60 @@ function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+export type InsumoRecipeSeed = {
+  name: string;
+  yieldQty: number;
+  lines: Array<{ product_id: string; quantity: number }>;
+};
+
 export function InsumoProductionForm({
   materiasPrimas,
   insumos,
   aprovechamientos: aprovechamientoOptions,
+  initialOutputProductId,
+  initialRecipe,
 }: {
   materiasPrimas: StockProduct[];
   insumos: StockProduct[];
   aprovechamientos: StockProduct[];
+  /** Prefill desde “Crear más” en el catálogo. */
+  initialOutputProductId?: string;
+  /** Si el insumo tiene receta, precarga consumos escalables. */
+  initialRecipe?: InsumoRecipeSeed | null;
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const today = new Date().toISOString().slice(0, 10);
-  const [title, setTitle] = useState("");
+  const preselected =
+    initialOutputProductId &&
+    insumos.some((p) => p.id === initialOutputProductId)
+      ? initialOutputProductId
+      : (insumos[0]?.id ?? "");
+  const selectedInsumo = insumos.find((p) => p.id === preselected);
+  const [title, setTitle] = useState(
+    selectedInsumo ? `Crear más · ${selectedInsumo.name}` : "",
+  );
   const [producedAt, setProducedAt] = useState(today);
-  const [outputProductId, setOutputProductId] = useState(insumos[0]?.id ?? "");
-  const [outputQty, setOutputQty] = useState("");
+  const [outputProductId, setOutputProductId] = useState(preselected);
+  const [outputQty, setOutputQty] = useState(
+    initialRecipe?.yieldQty && initialRecipe.yieldQty > 0
+      ? String(initialRecipe.yieldQty)
+      : "",
+  );
   const [mermaQty, setMermaQty] = useState("");
   const [notes, setNotes] = useState("");
-  const [inputs, setInputs] = useState<InputRow[]>([
-    { key: uid(), product_id: "", quantity: "" },
-  ]);
+  const [inputs, setInputs] = useState<InputRow[]>(() => {
+    if (initialRecipe?.lines?.length) {
+      return initialRecipe.lines.map((l) => ({
+        key: uid(),
+        product_id: l.product_id,
+        quantity: String(l.quantity),
+      }));
+    }
+    return [{ key: uid(), product_id: "", quantity: "" }];
+  });
   const [aprov, setAprov] = useState<AprovRow[]>([]);
 
   const mpMap = useMemo(
@@ -151,13 +182,20 @@ export function InsumoProductionForm({
       }}
     >
       <section className="grid gap-4 rounded-xl border border-[var(--line)] bg-white p-4 md:grid-cols-2">
+        {initialRecipe ? (
+          <p className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--muted)] md:col-span-2">
+            Receta <strong className="text-[var(--ink)]">{initialRecipe.name}</strong>{" "}
+            precargada (rinde {initialRecipe.yieldQty}). Ajuste cantidades y
+            declare merma si aplica.
+          </p>
+        ) : null}
         <label className="space-y-1 text-sm md:col-span-2">
           <span className="text-[var(--muted)]">Título</span>
           <input
             required
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Ej. Limpieza cebolla — lote mañana"
+            placeholder="Ej. Crear más cebolla limpia — lote mañana"
             className={inputClass}
           />
         </label>
@@ -172,7 +210,9 @@ export function InsumoProductionForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-[var(--muted)]">Insumo destino (principal)</span>
+          <span className="text-[var(--muted)]">
+            Crear más de (insumo del catálogo)
+          </span>
           <select
             required
             value={outputProductId}
@@ -193,7 +233,7 @@ export function InsumoProductionForm({
 
       <section className="space-y-3 rounded-xl border border-[var(--line)] bg-white p-4">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-medium">Materias primas a consumir</h2>
+          <h2 className="font-medium">Materias primas a consumir (receta)</h2>
           <button
             type="button"
             className="text-sm text-[var(--accent)]"

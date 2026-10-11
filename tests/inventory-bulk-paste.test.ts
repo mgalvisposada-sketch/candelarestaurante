@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildBulkKitchenProductExample,
   buildBulkProductExample,
   parseBulkNumber,
   parseBulkProductPaste,
@@ -18,6 +19,21 @@ describe("buildBulkProductExample", () => {
     expect(pasteText).not.toContain(";Mililitro;");
     expect(pasteText).not.toContain("sku");
     expect(pasteText).not.toContain("notas");
+  });
+});
+
+describe("buildBulkKitchenProductExample", () => {
+  it("incluye stock actual para apertura del restaurante", () => {
+    const { rows, pasteText } = buildBulkKitchenProductExample([
+      { code: "G", name: "Gramo" },
+      { code: "KG", name: "Kilogramo" },
+    ]);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0]?.[4]).toBeTruthy();
+    expect(pasteText).toContain(";G;");
+    const parsed = parseBulkProductPaste(pasteText);
+    expect(parsed.issues).toHaveLength(0);
+    expect(parsed.rows[0]?.currentStock).toBeGreaterThan(0);
   });
 });
 

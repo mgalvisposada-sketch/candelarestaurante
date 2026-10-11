@@ -122,7 +122,7 @@ export default async function InventarioFisicoPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Conteo físico"
-            description="Auditoría a ciegas por categoría: cuente, envíe cada categoría a revisión y siga con la siguiente. Gestión aplica o rechaza por categoría."
+            description="El físico manda: al aplicar el ajuste, el stock queda en lo contado — materia prima, insumos preparación y preparaciones. Conteo a ciegas por categoría; Gestión aplica o rechaza."
           />
           {canCreate ? <CreatePhysicalCountForm /> : null}
         </div>

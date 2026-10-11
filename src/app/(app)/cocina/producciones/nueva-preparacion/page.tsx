@@ -12,12 +12,17 @@ import {
   type PrepOption,
 } from "./preparacion-production-form";
 
-export default async function NuevaProduccionPreparacionPage() {
+export default async function NuevaProduccionPreparacionPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ producto?: string }>;
+}) {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
   requireModuleAccess(ctx, "cocina.produccion");
   if (!ctx.organization) redirect("/empresa");
 
+  const { producto: productoParam } = await searchParams;
   const supabase = await createClient();
   const orgId = ctx.organization.id;
 
@@ -78,35 +83,36 @@ export default async function NuevaProduccionPreparacionPage() {
   });
 
   const withRecipe = options.filter((o) => o.recipe);
+  const requested = options.find((o) => o.id === productoParam) ?? null;
 
   return (
     <>
-      <AppHeader title="Cocina" subtitle="Producir preparación" />
+      <AppHeader title="Cocina" subtitle="Crear más · Preparación" />
       <main className="space-y-6 p-8">
         <CocinaNav
           permissions={ctx.permissions}
           isSuperAdmin={isSuperAdmin(ctx.role)}
         />
         <PageIntro
-          title="Producción de preparación"
-          description="Escala la receta (ej. Birria), consume insumos/materias primas y entra el batch con costo unitario recalculado."
+          title="Crear más de una preparación"
+          description="No crea un producto nuevo: escala la receta del catálogo, consume materias primas e insumos preparación, y entra stock con costo recalculado."
         />
 
         {!options.length ? (
           <Card>
-            <p className="font-medium">No hay preparaciones</p>
+            <p className="font-medium">No hay preparaciones en el catálogo</p>
             <Link
               href="/cocina/preparaciones"
               className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
             >
-              Crear preparación
+              Ir a preparaciones
             </Link>
           </Card>
         ) : !withRecipe.length ? (
           <Card>
-            <p className="font-medium">Ninguna preparación tiene receta activa</p>
+            <p className="font-medium">Ninguna preparación tiene receta</p>
             <p className="mt-2 text-sm text-[var(--muted)]">
-              Defina la receta (componentes y rendimiento) y vuelva a producir.
+              Defina la receta (qué consume) en el catálogo y luego use Crear más.
             </p>
             <Link
               href="/cocina/preparaciones"
@@ -115,8 +121,26 @@ export default async function NuevaProduccionPreparacionPage() {
               Ir a preparaciones
             </Link>
           </Card>
+        ) : requested && !requested.recipe ? (
+          <Card>
+            <p className="font-medium">
+              “{requested.name}” aún no tiene receta
+            </p>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Defina qué materias primas e insumos consume y luego cree más.
+            </p>
+            <Link
+              href="/cocina/preparaciones"
+              className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+            >
+              Definir receta
+            </Link>
+          </Card>
         ) : (
-          <PreparacionProductionForm preparaciones={options} />
+          <PreparacionProductionForm
+            preparaciones={options}
+            initialProductId={productoParam}
+          />
         )}
       </main>
     </>

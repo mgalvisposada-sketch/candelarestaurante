@@ -1,61 +1,111 @@
-import Link from "next/link";
 import { AppHeader } from "@/components/layout/app-header";
-import { Card, EmptyState, PageIntro } from "@/components/ui/primitives";
-import { formatCOP, money } from "@/lib/money";
+import { EmptyState, PageIntro } from "@/components/ui/primitives";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { isSuperAdmin } from "@/types/domain";
 import { redirect } from "next/navigation";
 import { CocinaNav } from "../cocina-nav";
-import { CreateKitchenProductForm } from "../kitchen-product-forms";
+import {
+  BulkImportKitchenProductsForm,
+  CreateKitchenProductForm,
+} from "../kitchen-product-forms";
+import { InsumosCatalogList, type InsumoListItem } from "./insumos-list";
 
-function formatUnitCost(value: number | string) {
-  const n = money(value).toDecimalPlaces(4).toNumber();
-  return new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 4,
-  }).format(n);
-}
-
-export default async function CocinaInsumosPage() {
+export default async function CocinaInsumosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ producto?: string }>;
+}) {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
   requireModuleAccess(ctx, "cocina.maestro");
   if (!ctx.organization) redirect("/empresa");
 
+  const { producto: focusProductId } = await searchParams;
   const supabase = await createClient();
   const orgId = ctx.organization.id;
 
-  const [{ data: insumos }, { data: categories }, { data: units }] =
-    await Promise.all([
-      supabase
-        .from("products")
-        .select(
-          "id, name, sku, unit, category_id, current_stock, min_stock, unit_cost, notes, product_categories(name)",
-        )
-        .eq("organization_id", orgId)
-        .eq("item_kind", "INSUMO_PREPARACION")
-        .is("deleted_at", null)
-        .order("name"),
-      supabase
-        .from("product_categories")
-        .select("id, code, name")
-        .eq("organization_id", orgId)
-        .is("deleted_at", null)
-        .order("code"),
-      supabase
-        .from("product_units")
-        .select("id, code, name")
-        .eq("organization_id", orgId)
-        .is("deleted_at", null)
-        .eq("is_active", true)
-        .order("code"),
-    ]);
+  const [
+    { data: insumos },
+    { data: categories },
+    { data: units },
+    { data: materiasPrimas },
+    { data: recipes },
+  ] = await Promise.all([
+    supabase
+      .from("products")
+      .select(
+        "id, name, sku, unit, category_id, current_stock, min_stock, unit_cost, notes, product_categories(name)",
+      )
+      .eq("organization_id", orgId)
+      .eq("item_kind", "INSUMO_PREPARACION")
+      .is("deleted_at", null)
+      .order("name"),
+    supabase
+      .from("product_categories")
+      .select("id, code, name")
+      .eq("organization_id", orgId)
+      .is("deleted_at", null)
+      .order("code"),
+    supabase
+      .from("product_units")
+      .select("id, code, name")
+      .eq("organization_id", orgId)
+      .is("deleted_at", null)
+      .eq("is_active", true)
+      .order("code"),
+    supabase
+      .from("products")
+      .select("id, name, unit, item_kind, unit_cost")
+      .eq("organization_id", orgId)
+      .eq("item_kind", "MATERIA_PRIMA")
+      .is("deleted_at", null)
+      .eq("is_active", true)
+      .order("name"),
+    supabase
+      .from("kitchen_recipes")
+      .select(
+        "id, product_id, name, yield_qty, kitchen_recipe_lines(quantity, products:component_product_id(name, unit))",
+      )
+      .eq("organization_id", orgId)
+      .eq("is_active", true)
+      .is("deleted_at", null),
+  ]);
 
   const canProduce = ctxCanAccess(ctx, "cocina.produccion");
+  const canRecipe =
+    ctxCanAccess(ctx, "cocina.recetas") || ctxCanAccess(ctx, "cocina.maestro");
+  const recipeByProduct = new Map(
+    (recipes ?? []).map((r) => [r.product_id, r]),
+  );
+
+  const items: InsumoListItem[] = (insumos ?? []).map((p) => {
+    const cat = Array.isArray(p.product_categories)
+      ? p.product_categories[0]
+      : p.product_categories;
+    const recipe = recipeByProduct.get(p.id);
+    return {
+      id: p.id,
+      name: p.name,
+      sku: p.sku,
+      unit: p.unit,
+      categoryName: (cat as { name?: string } | null)?.name ?? "—",
+      currentStock: Number(p.current_stock || 0),
+      unitCost: Number(p.unit_cost || 0),
+      hasRecipe: Boolean(recipe),
+      recipeName: recipe?.name ?? null,
+      yieldQty: recipe ? Number(recipe.yield_qty || 1) : null,
+      recipeLines: (recipe?.kitchen_recipe_lines ?? []).map((l) => {
+        const comp = Array.isArray(l.products) ? l.products[0] : l.products;
+        return {
+          quantity: Number(l.quantity),
+          unit: (comp as { unit?: string } | null)?.unit ?? "",
+          name: (comp as { name?: string } | null)?.name ?? "—",
+        };
+      }),
+    };
+  });
 
   return (
     <>
@@ -68,74 +118,48 @@ export default async function CocinaInsumosPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Insumos preparación"
-            description="Resultado limpio y usable de una materia prima tras cortes, porcionado y merma. El costo unitario se recalcula en cada producción."
+            description="Catálogo + stock. Dos caminos: (1) dar de alta un producto nuevo que no existe, (2) Crear más de uno ya existente — con receta que consume materia prima."
           />
           <div className="flex flex-wrap gap-2">
-            {canProduce ? (
-              <Link
-                href="/cocina/producciones/nueva"
-                className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm"
-              >
-                Nueva producción
-              </Link>
-            ) : null}
+            <BulkImportKitchenProductsForm
+              itemKind="INSUMO_PREPARACION"
+              categories={categories ?? []}
+              units={units ?? []}
+            />
             <CreateKitchenProductForm
               itemKind="INSUMO_PREPARACION"
-              label="Nuevo insumo"
+              label="Nuevo en catálogo"
               categories={categories ?? []}
               units={units ?? []}
             />
           </div>
         </div>
 
-        {!insumos?.length ? (
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--muted)]">
+          <p>
+            <strong className="text-[var(--ink)]">Nuevo en catálogo / carga masiva</strong>
+            {" — "}producto que aún no existe (apertura).
+          </p>
+          <p className="mt-1">
+            <strong className="text-[var(--ink)]">Crear más</strong>
+            {" — "}fabrica más cantidad: define/usa la receta y descuenta materias
+            primas del inventario.
+          </p>
+        </div>
+
+        {!items.length ? (
           <EmptyState
-            title="Sin insumos preparación"
-            description="Cree el maestro (ej. Cebolla insumo, Solomito porcionado) y luego registre una producción desde materia prima."
+            title="Sin insumos en el catálogo"
+            description="Cargue masivamente o cree uno nuevo. Luego defina la receta y use Crear más para fabricar."
           />
         ) : (
-          <Card className="overflow-x-auto p-0">
-            <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-[var(--line)] bg-[var(--surface)] text-xs uppercase tracking-wide text-[var(--muted)]">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Nombre</th>
-                  <th className="px-4 py-3 font-medium">Categoría</th>
-                  <th className="px-4 py-3 font-medium">Stock</th>
-                  <th className="px-4 py-3 font-medium">Costo / u</th>
-                  <th className="px-4 py-3 font-medium">Valor</th>
-                </tr>
-              </thead>
-              <tbody>
-                {insumos.map((p) => {
-                  const cat = Array.isArray(p.product_categories)
-                    ? p.product_categories[0]
-                    : p.product_categories;
-                  const stock = Number(p.current_stock || 0);
-                  const unitCost = Number(p.unit_cost || 0);
-                  return (
-                    <tr key={p.id} className="border-b border-[var(--line)] last:border-0">
-                      <td className="px-4 py-3">
-                        <p className="font-medium">{p.name}</p>
-                        {p.sku ? (
-                          <p className="text-xs text-[var(--muted)]">{p.sku}</p>
-                        ) : null}
-                      </td>
-                      <td className="px-4 py-3 text-[var(--muted)]">
-                        {(cat as { name?: string } | null)?.name ?? "—"}
-                      </td>
-                      <td className="px-4 py-3">
-                        {stock} {p.unit}
-                      </td>
-                      <td className="px-4 py-3">{formatUnitCost(unitCost)}</td>
-                      <td className="px-4 py-3">
-                        {formatCOP(money(stock).times(unitCost))}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </Card>
+          <InsumosCatalogList
+            items={items}
+            canProduce={canProduce}
+            canRecipe={canRecipe}
+            components={materiasPrimas ?? []}
+            focusProductId={focusProductId}
+          />
         )}
       </main>
     </>

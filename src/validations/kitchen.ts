@@ -14,6 +14,10 @@ export const createKitchenProductSchema = z.object({
   sku: z.string().optional().nullable(),
   name: z.string().min(1, "Nombre obligatorio"),
   min_stock: z.string().optional().nullable(),
+  /** Stock de apertura (restaurante ya operando). */
+  current_stock: z.string().optional().nullable(),
+  /** Costo unitario de apertura / inventario. */
+  unit_cost: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
 });
 

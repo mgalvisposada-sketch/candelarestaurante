@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { InventarioNav } from "../../inventario-nav";
+import { PHYSICAL_COUNT_ITEM_KINDS } from "@/lib/inventory/physical-count";
 import {
   PhysicalCountDetailClient,
   type CountDetail,
@@ -13,6 +14,12 @@ import {
   type ProductOption,
   type CategoryOption,
 } from "./detail-client";
+
+const ITEM_KIND_LABEL: Record<string, string> = {
+  MATERIA_PRIMA: "Materia prima",
+  INSUMO_PREPARACION: "Insumo",
+  PREPARACION: "Preparación",
+};
 
 export default async function InventarioFisicoDetailPage({
   params,
@@ -53,10 +60,11 @@ export default async function InventarioFisicoDetailPage({
         .order("created_at", { ascending: true }),
       supabase
         .from("products")
-        .select("id, name, unit, category_id")
+        .select("id, name, unit, category_id, item_kind")
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
         .eq("is_active", true)
+        .in("item_kind", [...PHYSICAL_COUNT_ITEM_KINDS])
         .order("name"),
       supabase
         .from("product_categories")
@@ -67,11 +75,20 @@ export default async function InventarioFisicoDetailPage({
     ]);
 
   const productMap = new Map((productRows ?? []).map((p) => [p.id, p]));
+  const products: ProductOption[] = (productRows ?? []).map((p) => ({
+    id: p.id,
+    name: p.name,
+    unit: p.unit,
+    category_id: p.category_id,
+    item_kind: p.item_kind,
+    item_kind_label: ITEM_KIND_LABEL[p.item_kind] ?? p.item_kind,
+  }));
   const items: CountItem[] = (itemRows ?? []).map((item) => {
     const p = productMap.get(item.product_id);
     const status = (item.status as string | undefined) ?? "BORRADOR";
     const revealSystem =
       canAdjust && (status === "ENVIADO" || status === "AJUSTADO");
+    const kind = p?.item_kind ?? "";
     return {
       id: item.id,
       product_id: item.product_id,
@@ -82,6 +99,8 @@ export default async function InventarioFisicoDetailPage({
       status,
       rejection_reason: item.rejection_reason,
       category_id: p?.category_id ?? null,
+      item_kind: kind,
+      item_kind_label: ITEM_KIND_LABEL[kind] ?? kind,
       system_qty: revealSystem ? item.system_qty : null,
       difference_qty: revealSystem ? item.difference_qty : null,
     };
@@ -106,7 +125,7 @@ export default async function InventarioFisicoDetailPage({
         <PhysicalCountDetailClient
           count={count as CountDetail}
           items={items}
-          products={(productRows ?? []) as ProductOption[]}
+          products={products}
           categories={(categoryRows ?? []) as CategoryOption[]}
           canEdit={ctxCanAccess(ctx, "inventario.fisico")}
           canAdjust={canAdjust}

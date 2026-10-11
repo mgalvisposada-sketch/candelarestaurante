@@ -125,6 +125,64 @@ export function buildBulkProductExample(units: ExampleUnit[]): {
   };
 }
 
+const EXAMPLE_KITCHEN_TEMPLATES: {
+  name: string;
+  minStock: string;
+  unitCost: string;
+  currentStock: string;
+}[] = [
+  {
+    name: "Cebolla blanca limpia",
+    minStock: "500",
+    unitCost: "3.5",
+    currentStock: "1200",
+  },
+  {
+    name: "Solomito porcionado",
+    minStock: "2",
+    unitCost: "28500",
+    currentStock: "8",
+  },
+  {
+    name: "Birria",
+    minStock: "1",
+    unitCost: "18500",
+    currentStock: "4.5",
+  },
+];
+
+/**
+ * Ejemplo de carga inicial de cocina (mismo formato que inventario).
+ * Incluye stock_actual porque el restaurante ya trae existencias.
+ */
+export function buildBulkKitchenProductExample(units: ExampleUnit[]): {
+  rows: string[][];
+  pasteText: string;
+} {
+  const available = units.filter((u) => u.code?.trim());
+  if (available.length === 0) {
+    return { rows: [], pasteText: BULK_PRODUCT_HEADER };
+  }
+
+  const rows = EXAMPLE_KITCHEN_TEMPLATES.map((tpl, idx) => {
+    const unit = available[idx % available.length]!;
+    return [
+      tpl.name,
+      unit.code,
+      tpl.minStock,
+      tpl.unitCost,
+      tpl.currentStock,
+    ];
+  });
+
+  return {
+    rows,
+    pasteText: [BULK_PRODUCT_HEADER_REQUIRED, ...rows.map((r) => r.join(";"))].join(
+      "\n",
+    ),
+  };
+}
+
 export type BulkProductRow = {
   line: number;
   name: string;

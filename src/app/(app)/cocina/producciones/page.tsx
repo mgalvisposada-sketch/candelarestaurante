@@ -46,7 +46,7 @@ export default async function CocinaProduccionesPage() {
 
   return (
     <>
-      <AppHeader title="Cocina" subtitle="Producciones" />
+      <AppHeader title="Cocina" subtitle="Producir (batches)" />
       <main className="space-y-6 p-8">
         <CocinaNav
           permissions={ctx.permissions}
@@ -54,8 +54,8 @@ export default async function CocinaProduccionesPage() {
         />
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
-            title="Historial de producciones"
-            description="Insumos (con merma) y preparaciones (desde receta). Abra el detalle para ver consumos o anular."
+            title="Historial · Crear más"
+            description="Registro de batches. Lo habitual es entrar desde Insumos o Preparaciones con Crear más (producto ya en catálogo + receta). Aquí también puede iniciar un batch genérico."
           />
           {canCreate ? (
             <div className="flex flex-wrap gap-2">
@@ -63,13 +63,13 @@ export default async function CocinaProduccionesPage() {
                 href="/cocina/producciones/nueva"
                 className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm"
               >
-                Producir insumo
+                Crear más · Insumo
               </Link>
               <Link
                 href="/cocina/producciones/nueva-preparacion"
                 className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm text-white"
               >
-                Producir preparación
+                Crear más · Preparación
               </Link>
             </div>
           ) : null}

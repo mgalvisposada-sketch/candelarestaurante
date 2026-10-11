@@ -3,12 +3,16 @@ import { Card, EmptyState, PageIntro } from "@/components/ui/primitives";
 import { estimateRecipeCost } from "@/lib/kitchen/cost";
 import { formatCOP, money } from "@/lib/money";
 import { getOrgContext } from "@/lib/org-context";
-import { requireModuleAccess } from "@/lib/permissions";
+import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { isSuperAdmin } from "@/types/domain";
 import { redirect } from "next/navigation";
 import { CocinaNav } from "../cocina-nav";
-import { CreateKitchenProductForm } from "../kitchen-product-forms";
+import { FocusProductEffect, productAnchorId } from "../focus-product";
+import {
+  BulkImportKitchenProductsForm,
+  CreateKitchenProductForm,
+} from "../kitchen-product-forms";
 import { KitchenRecipeForm } from "../recipe-form";
 
 function formatUnitCost(value: number | string) {
@@ -21,14 +25,20 @@ function formatUnitCost(value: number | string) {
   }).format(n);
 }
 
-export default async function CocinaCartaPage() {
+export default async function CocinaCartaPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ producto?: string }>;
+}) {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
   requireModuleAccess(ctx, "cocina.recetas");
   if (!ctx.organization) redirect("/empresa");
 
+  const { producto: focusProductId } = await searchParams;
   const supabase = await createClient();
   const orgId = ctx.organization.id;
+  const canMaestro = ctxCanAccess(ctx, "cocina.maestro");
 
   const [
     { data: carta },
@@ -117,14 +127,23 @@ export default async function CocinaCartaPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Productos de carta"
-            description="Food cost teórico por porción según receta y costos actuales de componentes (insumos/preparaciones/materias primas)."
+            description="Nivel 3: el menú. Se arma con inventario, insumos y/o preparaciones. El food cost teórico sale de la receta y los costos actuales de cada componente."
           />
-          <CreateKitchenProductForm
-            itemKind="PRODUCTO_CARTA"
-            label="Nuevo producto carta"
-            categories={categories ?? []}
-            units={units ?? []}
-          />
+          {canMaestro ? (
+            <div className="flex flex-wrap gap-2">
+              <BulkImportKitchenProductsForm
+                itemKind="PRODUCTO_CARTA"
+                categories={categories ?? []}
+                units={units ?? []}
+              />
+              <CreateKitchenProductForm
+                itemKind="PRODUCTO_CARTA"
+                label="Nuevo en catálogo"
+                categories={categories ?? []}
+                units={units ?? []}
+              />
+            </div>
+          ) : null}
         </div>
 
         {withCost.length > 0 ? (
@@ -148,6 +167,7 @@ export default async function CocinaCartaPage() {
           />
         ) : (
           <div className="space-y-3">
+            <FocusProductEffect productId={focusProductId} />
             {carta.map((p) => {
               const recipe = recipeByProduct.get(p.id);
               const lines = (recipe?.kitchen_recipe_lines ?? []).map((l) => {
@@ -169,9 +189,18 @@ export default async function CocinaCartaPage() {
               const est = recipe
                 ? estimateRecipeCost(lines, Number(recipe.yield_qty || 1))
                 : null;
+              const focused = focusProductId === p.id;
 
               return (
-                <Card key={p.id}>
+                <Card
+                  key={p.id}
+                  id={productAnchorId(p.id)}
+                  className={
+                    focused
+                      ? "scroll-mt-24 ring-2 ring-amber-400 bg-amber-50"
+                      : "scroll-mt-24"
+                  }
+                >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <h2 className="font-medium">{p.name}</h2>

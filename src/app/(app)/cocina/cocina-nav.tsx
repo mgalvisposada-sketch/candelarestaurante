@@ -5,36 +5,40 @@ import { usePathname } from "next/navigation";
 import { hasPermission } from "@/lib/permissions-catalog";
 import { cn } from "@/lib/utils";
 
+/**
+ * Orden = cascada de productos (inventario), y al final la acción de fabricar.
+ * “Producir” no es un tipo de producto: es el batch que mueve stock entre niveles.
+ */
 const LINKS = [
   {
     href: "/cocina",
-    label: "Resumen",
+    label: "Cascada",
     permission: "cocina",
     active: (pathname: string) => pathname === "/cocina",
   },
   {
     href: "/cocina/insumos",
-    label: "Insumos preparación",
+    label: "1 · Insumos",
     permission: "cocina.maestro",
     active: (pathname: string) => pathname.startsWith("/cocina/insumos"),
   },
   {
-    href: "/cocina/producciones",
-    label: "Producciones",
-    permission: "cocina.produccion",
-    active: (pathname: string) => pathname.startsWith("/cocina/producciones"),
-  },
-  {
     href: "/cocina/preparaciones",
-    label: "Preparaciones",
+    label: "2 · Preparaciones",
     permission: "cocina.recetas",
     active: (pathname: string) => pathname.startsWith("/cocina/preparaciones"),
   },
   {
     href: "/cocina/carta",
-    label: "Carta",
+    label: "3 · Carta",
     permission: "cocina.recetas",
     active: (pathname: string) => pathname.startsWith("/cocina/carta"),
+  },
+  {
+    href: "/cocina/producciones",
+    label: "Producir",
+    permission: "cocina.produccion",
+    active: (pathname: string) => pathname.startsWith("/cocina/producciones"),
   },
 ] as const;
 

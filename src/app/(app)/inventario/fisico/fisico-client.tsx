@@ -76,8 +76,9 @@ export function CreatePhysicalCountForm() {
         </button>
       </div>
       <p className="text-sm text-[var(--muted)]">
-        Conteo a ciegas por categoría: quien cuenta no ve el stock del sistema.
-        Puede enviar cada categoría a revisión y seguir con la siguiente.
+        Incluye materia prima, insumos y preparaciones. Quien cuenta no ve el
+        stock del sistema; al autorizar, el físico reemplaza el stock del
+        sistema.
       </p>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="block text-sm md:col-span-2">

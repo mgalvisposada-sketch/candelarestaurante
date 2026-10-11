@@ -1,36 +1,51 @@
-import Link from "next/link";
 import { AppHeader } from "@/components/layout/app-header";
-import { Card, EmptyState, PageIntro } from "@/components/ui/primitives";
+import { EmptyState, PageIntro } from "@/components/ui/primitives";
 import { estimateRecipeCost } from "@/lib/kitchen/cost";
-import { formatCOP, money } from "@/lib/money";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { isSuperAdmin } from "@/types/domain";
 import { redirect } from "next/navigation";
 import { CocinaNav } from "../cocina-nav";
-import { CreateKitchenProductForm } from "../kitchen-product-forms";
-import { KitchenRecipeForm } from "../recipe-form";
+import {
+  BulkImportKitchenProductsForm,
+  CreateKitchenProductForm,
+} from "../kitchen-product-forms";
+import {
+  PreparacionesByCategoryList,
+  type PreparacionCategoryGroup,
+} from "./preparaciones-list";
 
-function formatUnitCost(value: number | string) {
-  const n = money(value).toDecimalPlaces(4).toNumber();
-  return new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 4,
-  }).format(n);
-}
+type CategoryRow = { id: string; code: string; name: string };
 
-export default async function CocinaPreparacionesPage() {
+type PreparacionRow = {
+  id: string;
+  name: string;
+  unit: string;
+  category_id: string;
+  current_stock: number | string;
+  unit_cost: number | string;
+  product_categories:
+    | { name?: string; code?: string }
+    | { name?: string; code?: string }[]
+    | null;
+};
+
+export default async function CocinaPreparacionesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ producto?: string }>;
+}) {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
   requireModuleAccess(ctx, "cocina.recetas");
   if (!ctx.organization) redirect("/empresa");
 
+  const { producto: focusProductId } = await searchParams;
   const supabase = await createClient();
   const orgId = ctx.organization.id;
   const canProduce = ctxCanAccess(ctx, "cocina.produccion");
+  const canMaestro = ctxCanAccess(ctx, "cocina.maestro");
 
   const [
     { data: preparaciones },
@@ -41,7 +56,9 @@ export default async function CocinaPreparacionesPage() {
   ] = await Promise.all([
     supabase
       .from("products")
-      .select("id, name, unit, current_stock, unit_cost")
+      .select(
+        "id, name, unit, category_id, current_stock, unit_cost, product_categories(code, name)",
+      )
       .eq("organization_id", orgId)
       .eq("item_kind", "PREPARACION")
       .is("deleted_at", null)
@@ -81,6 +98,91 @@ export default async function CocinaPreparacionesPage() {
     (recipes ?? []).map((r) => [r.product_id, r]),
   );
 
+  const categoryOrder = new Map(
+    (categories ?? []).map((c, idx) => [c.id, idx]),
+  );
+
+  const byCategory = new Map<
+    string,
+    {
+      categoryId: string;
+      categoryCode: string;
+      categoryName: string;
+      items: PreparacionRow[];
+    }
+  >();
+
+  for (const p of (preparaciones ?? []) as PreparacionRow[]) {
+    const catRel = Array.isArray(p.product_categories)
+      ? p.product_categories[0]
+      : p.product_categories;
+    const categoryId = p.category_id || "__sin__";
+    const existing = byCategory.get(categoryId);
+    if (existing) {
+      existing.items.push(p);
+      continue;
+    }
+    const fromMaster = (categories as CategoryRow[] | null)?.find(
+      (c) => c.id === p.category_id,
+    );
+    byCategory.set(categoryId, {
+      categoryId,
+      categoryCode: fromMaster?.code ?? catRel?.code ?? "—",
+      categoryName: fromMaster?.name ?? catRel?.name ?? "Sin categoría",
+      items: [p],
+    });
+  }
+
+  const groups: PreparacionCategoryGroup[] = [...byCategory.values()]
+    .sort((a, b) => {
+      if (a.categoryId === "__sin__") return 1;
+      if (b.categoryId === "__sin__") return -1;
+      const ai = categoryOrder.get(a.categoryId) ?? 9999;
+      const bi = categoryOrder.get(b.categoryId) ?? 9999;
+      if (ai !== bi) return ai - bi;
+      return a.categoryName.localeCompare(b.categoryName, "es");
+    })
+    .map((group) => ({
+      categoryId: group.categoryId,
+      categoryCode: group.categoryCode,
+      categoryName: group.categoryName,
+      items: group.items.map((p) => {
+        const recipe = recipeByProduct.get(p.id);
+        const recipeLines = (recipe?.kitchen_recipe_lines ?? []).map((l) => {
+          const comp = Array.isArray(l.products) ? l.products[0] : l.products;
+          return {
+            quantity: Number(l.quantity),
+            unitCost: Number(
+              (comp as { unit_cost?: number | string } | null)?.unit_cost ?? 0,
+            ),
+            name: (comp as { name?: string } | null)?.name ?? "—",
+            unit: (comp as { unit?: string } | null)?.unit ?? "",
+          };
+        });
+        const est = recipe
+          ? estimateRecipeCost(recipeLines, Number(recipe.yield_qty || 1))
+          : null;
+
+        return {
+          id: p.id,
+          name: p.name,
+          unit: p.unit,
+          currentStock: p.current_stock,
+          inventoryUnitCost: Number(p.unit_cost || 0),
+          theoreticalUnitCost: est ? est.unitCost : null,
+          theoreticalBatchCost: est ? est.totalCost : null,
+          yieldQty: recipe ? Number(recipe.yield_qty || 1) : null,
+          recipeName: recipe?.name ?? null,
+          recipeLines: recipeLines.map(({ quantity, unit, name }) => ({
+            quantity,
+            unit,
+            name,
+          })),
+          hasRecipe: Boolean(recipe),
+        };
+      }),
+    }));
+
   return (
     <>
       <AppHeader title="Cocina" subtitle="Preparaciones" />
@@ -92,116 +194,51 @@ export default async function CocinaPreparacionesPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Preparaciones"
-            description="Ej. Birria: consume insumos y materias primas. Teórico = ficha; inventario = promedio de producciones reales."
+            description="Catálogo + stock. (1) Nuevo en catálogo si no existe. (2) Definir receta (MP e insumos). (3) Crear más para fabricar y consumir esa receta."
           />
           <div className="flex flex-wrap gap-2">
-            {canProduce ? (
-              <Link
-                href="/cocina/producciones/nueva-preparacion"
-                className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm"
-              >
-                Producir batch
-              </Link>
+            {canMaestro ? (
+              <>
+                <BulkImportKitchenProductsForm
+                  itemKind="PREPARACION"
+                  categories={categories ?? []}
+                  units={units ?? []}
+                />
+                <CreateKitchenProductForm
+                  itemKind="PREPARACION"
+                  label="Nuevo en catálogo"
+                  categories={categories ?? []}
+                  units={units ?? []}
+                />
+              </>
             ) : null}
-            <CreateKitchenProductForm
-              itemKind="PREPARACION"
-              label="Nueva preparación"
-              categories={categories ?? []}
-              units={units ?? []}
-            />
           </div>
+        </div>
+
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--muted)]">
+          <p>
+            <strong className="text-[var(--ink)]">Nuevo en catálogo / carga masiva</strong>
+            {" — "}producto que aún no existe (apertura).
+          </p>
+          <p className="mt-1">
+            <strong className="text-[var(--ink)]">Crear más</strong>
+            {" — "}en cada fila, con receta: consume materias primas e insumos
+            preparación del inventario.
+          </p>
         </div>
 
         {!preparaciones?.length ? (
           <EmptyState
-            title="Sin preparaciones"
-            description="Cree la preparación y defina su receta con insumos y/o materias primas."
+            title="Sin preparaciones en el catálogo"
+            description="Cargue masivamente o cree una nueva. Luego defina la receta y use Crear más para fabricar."
           />
         ) : (
-          <div className="space-y-3">
-            {preparaciones.map((p) => {
-              const recipe = recipeByProduct.get(p.id);
-              const lines = (recipe?.kitchen_recipe_lines ?? []).map((l) => {
-                const comp = Array.isArray(l.products)
-                  ? l.products[0]
-                  : l.products;
-                return {
-                  quantity: Number(l.quantity),
-                  unitCost: Number(
-                    (comp as { unit_cost?: number | string } | null)
-                      ?.unit_cost ?? 0,
-                  ),
-                  name: (comp as { name?: string } | null)?.name ?? "—",
-                  unit: (comp as { unit?: string } | null)?.unit ?? "",
-                };
-              });
-              const est = recipe
-                ? estimateRecipeCost(lines, Number(recipe.yield_qty || 1))
-                : null;
-              const inventoryCost = Number(p.unit_cost || 0);
-
-              return (
-                <Card key={p.id}>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <h2 className="font-medium">{p.name}</h2>
-                      <p className="text-sm text-[var(--muted)]">
-                        Stock {p.current_stock} {p.unit}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                        {est ? (
-                          <span>
-                            Teórico{" "}
-                            <strong>{formatUnitCost(est.unitCost)}</strong> /{" "}
-                            {p.unit}
-                          </span>
-                        ) : (
-                          <span className="text-[var(--muted)]">Sin receta</span>
-                        )}
-                        <span>
-                          Inventario{" "}
-                          <strong>{formatUnitCost(inventoryCost)}</strong> /{" "}
-                          {p.unit}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {canProduce && recipe ? (
-                        <Link
-                          href="/cocina/producciones/nueva-preparacion"
-                          className="rounded-md border border-[var(--line)] px-2.5 py-1 text-xs"
-                        >
-                          Producir
-                        </Link>
-                      ) : null}
-                      <KitchenRecipeForm
-                        productId={p.id}
-                        productName={p.name}
-                        defaultYield={String(recipe?.yield_qty ?? 1)}
-                        existingName={recipe?.name}
-                        components={(components ?? []).filter(
-                          (c) => c.id !== p.id,
-                        )}
-                      />
-                    </div>
-                  </div>
-                  {recipe ? (
-                    <ul className="mt-3 space-y-1 text-sm text-[var(--muted)]">
-                      {lines.map((l, i) => (
-                        <li key={`${p.id}-${i}`}>
-                          {l.quantity} {l.unit} · {l.name}
-                        </li>
-                      ))}
-                      <li className="pt-1 text-[var(--ink)]">
-                        Costo batch teórico ≈ {formatCOP(est?.totalCost ?? 0)}{" "}
-                        para {Number(recipe.yield_qty)} {p.unit}
-                      </li>
-                    </ul>
-                  ) : null}
-                </Card>
-              );
-            })}
-          </div>
+          <PreparacionesByCategoryList
+            groups={groups}
+            canProduce={canProduce}
+            components={components ?? []}
+            focusProductId={focusProductId}
+          />
         )}
       </main>
     </>

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess } from "@/lib/permissions";
 import { todayInBogota } from "@/lib/dates";
+import { PHYSICAL_COUNT_ITEM_KINDS } from "@/lib/inventory/physical-count";
 import {
   createPhysicalCountSchema,
   physicalCountItemSchema,
@@ -35,7 +36,13 @@ function revalidatePhysical(countId?: string) {
   revalidatePath("/inventario/fisico");
   if (countId) revalidatePath(`/inventario/fisico/${countId}`);
   revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
   revalidatePath("/compras/sugeridos");
+  // El físico también ajusta stock de cocina
+  revalidatePath("/cocina");
+  revalidatePath("/cocina/insumos");
+  revalidatePath("/cocina/preparaciones");
+  revalidatePath("/cocina/producciones");
 }
 
 function normalizeCategoryId(categoryId: string | null | undefined) {
@@ -100,7 +107,8 @@ async function productIdsInCategory(
     .select("id")
     .eq("organization_id", organizationId)
     .is("deleted_at", null)
-    .eq("is_active", true);
+    .eq("is_active", true)
+    .in("item_kind", [...PHYSICAL_COUNT_ITEM_KINDS]);
 
   if (normalized === NONE_CATEGORY) {
     query = query.is("category_id", null);
@@ -193,12 +201,23 @@ export async function upsertPhysicalCountItemAction(
 
   const { data: product } = await supabase
     .from("products")
-    .select("id, category_id")
+    .select("id, category_id, item_kind")
     .eq("id", parsed.data.product_id)
     .eq("organization_id", ctx.organization.id)
     .is("deleted_at", null)
     .maybeSingle();
   if (!product) return { ok: false, error: "Producto no encontrado" };
+  if (
+    !PHYSICAL_COUNT_ITEM_KINDS.includes(
+      product.item_kind as (typeof PHYSICAL_COUNT_ITEM_KINDS)[number],
+    )
+  ) {
+    return {
+      ok: false,
+      error:
+        "Este producto no entra en inventario físico (solo materia prima, insumos y preparaciones)",
+    };
+  }
 
   const { data: existing } = await supabase
     .from("physical_inventory_count_items")
@@ -740,14 +759,28 @@ async function applyItemsToStock(
   for (const item of items) {
     const { data: product } = await supabase
       .from("products")
-      .select("id, current_stock, unit_cost")
+      .select("id, current_stock, unit_cost, item_kind, name")
       .eq("id", item.product_id)
       .eq("organization_id", organizationId)
       .maybeSingle();
     if (!product) continue;
 
+    // Solo stock contable; el físico es la fuente de verdad.
+    if (
+      !PHYSICAL_COUNT_ITEM_KINDS.includes(
+        product.item_kind as (typeof PHYSICAL_COUNT_ITEM_KINDS)[number],
+      )
+    ) {
+      return `"${product.name}" no es ajustable por inventario físico`;
+    }
+
     const stockBefore = Number(product.current_stock || 0);
     const counted = Number(item.counted_qty);
+    if (!Number.isFinite(counted) || counted < 0) {
+      return `Cantidad contada inválida en «${product.name}»`;
+    }
+
+    // El físico manda: stock queda = contado (no el teórico del sistema).
     const diff = counted - stockBefore;
 
     if (diff !== 0) {
@@ -773,7 +806,7 @@ async function applyItemsToStock(
         unit_cost_after: Number(product.unit_cost || 0),
         reference_type: "physical_inventory_counts",
         reference_id: countId,
-        notes: `Ajuste por inventario físico (sistema ${item.system_qty} → contado ${counted})`,
+        notes: `Inventario físico manda (${product.item_kind}): sistema ${item.system_qty} → contado ${counted}`,
         created_by: userId,
       });
       if (movError) return movError.message;
