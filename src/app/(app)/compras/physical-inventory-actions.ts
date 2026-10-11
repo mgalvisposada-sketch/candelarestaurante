@@ -5,7 +5,11 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess } from "@/lib/permissions";
 import { todayInBogota } from "@/lib/dates";
-import { PHYSICAL_COUNT_ITEM_KINDS } from "@/lib/inventory/physical-count";
+import {
+  PHYSICAL_COUNT_ITEM_KINDS,
+  draftCategoryOccupants,
+  normalizePhysicalCategoryId,
+} from "@/lib/inventory/physical-count";
 import {
   createPhysicalCountSchema,
   physicalCountItemSchema,
@@ -46,8 +50,105 @@ function revalidatePhysical(countId?: string) {
 }
 
 function normalizeCategoryId(categoryId: string | null | undefined) {
-  if (!categoryId || categoryId === NONE_CATEGORY) return NONE_CATEGORY;
-  return categoryId;
+  return normalizePhysicalCategoryId(categoryId);
+}
+
+async function profileDisplayName(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<string> {
+  const { data } = await supabase
+    .from("profiles")
+    .select("full_name")
+    .eq("id", userId)
+    .maybeSingle();
+  const name = data?.full_name?.trim();
+  return name || "otro usuario";
+}
+
+async function loadDraftCategoryOccupants(
+  supabase: SupabaseClient,
+  organizationId: string,
+  countId: string,
+) {
+  const { data: draftRows } = await supabase
+    .from("physical_inventory_count_items")
+    .select("product_id, created_by, created_at")
+    .eq("count_id", countId)
+    .eq("organization_id", organizationId)
+    .eq("status", "BORRADOR")
+    .is("deleted_at", null);
+
+  if (!draftRows?.length) {
+    return new Map<string, { userId: string }>();
+  }
+
+  const draftProductIds = [...new Set(draftRows.map((r) => r.product_id))];
+  const { data: draftProducts } = await supabase
+    .from("products")
+    .select("id, category_id")
+    .eq("organization_id", organizationId)
+    .in("id", draftProductIds);
+
+  const productCategoryById = new Map(
+    (draftProducts ?? []).map((p) => [p.id, p.category_id]),
+  );
+  return draftCategoryOccupants(draftRows, productCategoryById);
+}
+
+/**
+ * Varios usuarios pueden contar el mismo inventario en paralelo.
+ * Reglas: una categoría en borrador por usuario; categoría con borradores
+ * de otro queda ocupada hasta que la envíe o la deje vacía.
+ */
+async function assertCanDraftInCategory(
+  supabase: SupabaseClient,
+  organizationId: string,
+  countId: string,
+  userId: string,
+  productCategoryId: string | null | undefined,
+  canOverride: boolean,
+): Promise<ActionResult | null> {
+  if (canOverride) return null;
+
+  const occupants = await loadDraftCategoryOccupants(
+    supabase,
+    organizationId,
+    countId,
+  );
+  if (occupants.size === 0) return null;
+
+  const targetCat = normalizeCategoryId(productCategoryId);
+  const targetOwner = occupants.get(targetCat);
+  if (targetOwner && targetOwner.userId !== userId) {
+    const who = await profileDisplayName(supabase, targetOwner.userId);
+    return {
+      ok: false,
+      error: `“${who}” está contando esta categoría. Elija otra desocupada.`,
+    };
+  }
+
+  for (const [categoryId, occupant] of occupants) {
+    if (occupant.userId !== userId) continue;
+    if (categoryId === targetCat) return null;
+    return {
+      ok: false,
+      error:
+        "Termine y envíe su categoría en curso a revisión antes de contar otra",
+    };
+  }
+
+  return null;
+}
+
+function canEditDraftItem(
+  itemCreatedBy: string | null | undefined,
+  userId: string,
+  canOverride: boolean,
+) {
+  if (canOverride) return true;
+  if (!itemCreatedBy) return true;
+  return itemCreatedBy === userId;
 }
 
 async function syncCountHeaderStatus(
@@ -219,64 +320,87 @@ export async function upsertPhysicalCountItemAction(
     };
   }
 
+  const canOverride = ctxCanAccess(ctx, "inventario.fisico.ajustar");
+
+  // Incluye soft-deleted: UNIQUE(count_id, product_id) exige reutilizar la fila.
   const { data: existing } = await supabase
     .from("physical_inventory_count_items")
-    .select("id, status")
+    .select("id, status, deleted_at, created_by")
     .eq("count_id", countId)
     .eq("product_id", product.id)
-    .is("deleted_at", null)
     .maybeSingle();
 
   // Conteo a ciegas: system_qty se congela al enviar la categoría, no al registrar.
   if (existing) {
-    if (existing.status !== "BORRADOR") {
+    if (!existing.deleted_at && existing.status !== "BORRADOR") {
       return {
         ok: false,
         error: "Este producto ya fue enviado; no se puede editar",
       };
     }
+
+    if (
+      !existing.deleted_at &&
+      !canEditDraftItem(existing.created_by, ctx.userId, canOverride)
+    ) {
+      return {
+        ok: false,
+        error: "Este producto lo está contando otro usuario",
+      };
+    }
+
+    // Restaurar uno quitado o primer conteo en categoría = validar ocupación.
+    if (existing.deleted_at) {
+      const blocked = await assertCanDraftInCategory(
+        supabase,
+        ctx.organization.id,
+        countId,
+        ctx.userId,
+        product.category_id,
+        canOverride,
+      );
+      if (blocked) return blocked;
+    }
+
+    const patch: {
+      counted_qty: number;
+      notes: string | null;
+      rejection_reason: null;
+      status: string;
+      deleted_at: null;
+      updated_by: string;
+      system_qty?: number;
+      created_by?: string;
+    } = {
+      counted_qty: countedQty,
+      notes: emptyToNull(parsed.data.notes),
+      rejection_reason: null,
+      status: "BORRADOR",
+      deleted_at: null,
+      updated_by: ctx.userId,
+    };
+    if (existing.deleted_at) {
+      patch.system_qty = 0;
+      patch.created_by = ctx.userId;
+    }
+
     const { error } = await supabase
       .from("physical_inventory_count_items")
-      .update({
-        counted_qty: countedQty,
-        notes: emptyToNull(parsed.data.notes),
-        rejection_reason: null,
-        updated_by: ctx.userId,
-      })
+      .update(patch)
       .eq("id", existing.id);
     if (error) return { ok: false, error: error.message };
     return { ok: true, id: existing.id };
   }
 
-  // Una sola categoría en borrador a la vez: no iniciar otra hasta enviar.
-  const { data: draftRows } = await supabase
-    .from("physical_inventory_count_items")
-    .select("product_id")
-    .eq("count_id", countId)
-    .eq("organization_id", ctx.organization.id)
-    .eq("status", "BORRADOR")
-    .is("deleted_at", null);
-
-  if (draftRows?.length) {
-    const draftProductIds = [...new Set(draftRows.map((r) => r.product_id))];
-    const { data: draftProducts } = await supabase
-      .from("products")
-      .select("id, category_id")
-      .eq("organization_id", ctx.organization.id)
-      .in("id", draftProductIds);
-
-    const activeCats = new Set(
-      (draftProducts ?? []).map((p) => normalizeCategoryId(p.category_id)),
-    );
-    const targetCat = normalizeCategoryId(product.category_id);
-    if (activeCats.size > 0 && !activeCats.has(targetCat)) {
-      return {
-        ok: false,
-        error:
-          "Termine y envíe la categoría en curso a revisión antes de contar otra",
-      };
-    }
-  }
+  const blocked = await assertCanDraftInCategory(
+    supabase,
+    ctx.organization.id,
+    countId,
+    ctx.userId,
+    product.category_id,
+    canOverride,
+  );
+  if (blocked) return blocked;
 
   const { data, error } = await supabase
     .from("physical_inventory_count_items")
@@ -321,9 +445,10 @@ export async function removePhysicalCountItemAction(
     return { ok: false, error: "Este conteo ya está cerrado" };
   }
 
+  const canOverride = ctxCanAccess(ctx, "inventario.fisico.ajustar");
   const { data: item } = await supabase
     .from("physical_inventory_count_items")
-    .select("id, status")
+    .select("id, status, created_by")
     .eq("id", itemId)
     .eq("count_id", countId)
     .eq("organization_id", ctx.organization.id)
@@ -333,15 +458,32 @@ export async function removePhysicalCountItemAction(
   if (item.status !== "BORRADOR") {
     return { ok: false, error: "Solo se quitan productos en borrador" };
   }
+  if (!canEditDraftItem(item.created_by, ctx.userId, canOverride)) {
+    return {
+      ok: false,
+      error: "Solo quien está contando esta categoría puede quitar el producto",
+    };
+  }
 
-  const { error } = await supabase
+  // Soft-delete: la tabla no tiene política RLS DELETE (solo UPDATE).
+  const { data: removed, error } = await supabase
     .from("physical_inventory_count_items")
-    .delete()
+    .update({
+      deleted_at: new Date().toISOString(),
+      updated_by: ctx.userId,
+    })
     .eq("id", itemId)
     .eq("count_id", countId)
-    .eq("organization_id", ctx.organization.id);
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .select("id")
+    .maybeSingle();
 
   if (error) return { ok: false, error: error.message };
+  if (!removed) {
+    return { ok: false, error: "No se pudo quitar el producto del conteo" };
+  }
+  revalidatePhysical(countId);
   return { ok: true, id: itemId };
 }
 
@@ -379,9 +521,10 @@ export async function submitPhysicalCountCategoryAction(
     return { ok: false, error: "No hay productos en esta categoría" };
   }
 
+  const canOverride = ctxCanAccess(ctx, "inventario.fisico.ajustar");
   const { data: items } = await supabase
     .from("physical_inventory_count_items")
-    .select("id, product_id, status")
+    .select("id, product_id, status, created_by")
     .eq("count_id", countId)
     .eq("organization_id", ctx.organization.id)
     .in("product_id", productIds)
@@ -392,6 +535,19 @@ export async function submitPhysicalCountCategoryAction(
     return {
       ok: false,
       error: "Cuente al menos un producto de la categoría antes de enviar",
+    };
+  }
+
+  const foreignDraft = items.find(
+    (item) => !canEditDraftItem(item.created_by, ctx.userId, canOverride),
+  );
+  if (foreignDraft) {
+    const who = foreignDraft.created_by
+      ? await profileDisplayName(supabase, foreignDraft.created_by)
+      : "otro usuario";
+    return {
+      ok: false,
+      error: `Esta categoría la está contando ${who}; solo esa persona puede enviarla`,
     };
   }
 
@@ -446,16 +602,24 @@ export async function submitPhysicalCountAction(
   }
 
   const supabase = await createClient();
-  const { data: items } = await supabase
+  const canOverride = ctxCanAccess(ctx, "inventario.fisico.ajustar");
+  const { data: allDrafts } = await supabase
     .from("physical_inventory_count_items")
-    .select("id, product_id")
+    .select("id, product_id, created_by")
     .eq("count_id", countId)
     .eq("organization_id", ctx.organization.id)
     .eq("status", "BORRADOR")
     .is("deleted_at", null);
 
-  if (!items?.length) {
-    return { ok: false, error: "Agregue al menos un producto contado en borrador" };
+  const items = (allDrafts ?? []).filter((item) =>
+    canEditDraftItem(item.created_by, ctx.userId, canOverride),
+  );
+
+  if (!items.length) {
+    return {
+      ok: false,
+      error: "No tiene productos en borrador para enviar",
+    };
   }
 
   const productIds = [...new Set(items.map((i) => i.product_id))];

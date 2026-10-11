@@ -25,6 +25,20 @@ export const noveltySchema = z.object({
   support_note: z.string().optional().nullable(),
 });
 
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida");
+
+export const syncShiftDaysSchema = z.object({
+  employee_id: z.string().uuid(),
+  period_year: z.coerce.number().int().min(2020).max(2100),
+  period_month: z.coerce.number().int().min(1).max(12),
+  period_half: z.coerce.number().int().refine((n) => n === 1 || n === 2, {
+    message: "Quincena inválida",
+  }),
+  dates: z.array(isoDate),
+});
+
 export const jobPositionSchema = z.object({
   name: z.string().min(2, "Nombre obligatorio"),
   code: z.string().optional().nullable(),

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   applyPhysicalCountCategoryAction,
   rejectPhysicalCountCategoryAction,
@@ -8,6 +9,10 @@ import {
   submitPhysicalCountCategoryAction,
   upsertPhysicalCountItemAction,
 } from "../../../compras/physical-inventory-actions";
+import {
+  draftCategoryOccupants,
+  normalizePhysicalCategoryId,
+} from "@/lib/inventory/physical-count";
 import { Badge } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +39,9 @@ export type CountItem = {
   category_id?: string | null;
   item_kind?: string;
   item_kind_label?: string;
+  created_by?: string | null;
+  created_by_name?: string | null;
+  created_at?: string | null;
 };
 export type CategoryOption = {
   id: string;
@@ -50,6 +58,7 @@ export type ProductOption = {
 };
 
 const NONE_CATEGORY = "__none__";
+const OCCUPANCY_REFRESH_MS = 20_000;
 
 const inputClass =
   "w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2.5 text-base outline-none ring-[var(--accent)] focus:ring-2 sm:text-sm";
@@ -83,11 +92,22 @@ function normalize(value: string) {
 }
 
 function catKey(categoryId: string | null | undefined) {
-  return categoryId && categoryId.trim() !== "" ? categoryId : NONE_CATEGORY;
+  return normalizePhysicalCategoryId(categoryId);
 }
 
 function itemEditable(status: string | undefined) {
   return !status || status === "BORRADOR";
+}
+
+function canEditItemDraft(
+  item: CountItem | null | undefined,
+  currentUserId: string,
+  canAdjust: boolean,
+) {
+  if (!item || !itemEditable(item.status)) return false;
+  if (canAdjust) return true;
+  if (!item.created_by) return true;
+  return item.created_by === currentUserId;
 }
 
 export function PhysicalCountDetailClient({
@@ -95,6 +115,7 @@ export function PhysicalCountDetailClient({
   items,
   products,
   categories,
+  currentUserId,
   canEdit,
   canAdjust,
 }: {
@@ -102,9 +123,11 @@ export function PhysicalCountDetailClient({
   items: CountItem[];
   products: ProductOption[];
   categories: CategoryOption[];
+  currentUserId: string;
   canEdit: boolean;
   canAdjust: boolean;
 }) {
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [query, setQuery] = useState("");
@@ -119,6 +142,15 @@ export function PhysicalCountDetailClient({
     setLocalItems(items);
   }, [items]);
 
+  // Otros usuarios liberan/ocupan categorías; refrescar sin recargar a mano.
+  useEffect(() => {
+    if (count.status === "AJUSTADO") return;
+    const id = window.setInterval(() => {
+      router.refresh();
+    }, OCCUPANCY_REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, [count.status, router]);
+
   const isClosed = count.status === "AJUSTADO";
   const statusMeta = STATUS_META[count.status] ?? {
     label: count.status,
@@ -132,6 +164,11 @@ export function PhysicalCountDetailClient({
   }, [localItems]);
 
   const countedCount = localItems.length;
+  const myDraftCount = localItems.filter(
+    (i) =>
+      itemEditable(i.status) &&
+      canEditItemDraft(i, currentUserId, canAdjust),
+  ).length;
   const draftCount = localItems.filter((i) => itemEditable(i.status)).length;
   const reviewCount = localItems.filter((i) => i.status === "ENVIADO").length;
   const adjustedCount = localItems.filter((i) => i.status === "AJUSTADO").length;
@@ -149,25 +186,55 @@ export function PhysicalCountDetailClient({
     return map;
   }, [products]);
 
-  /** Categoría con ítems en borrador: solo esa se puede contar hasta enviarla. */
-  const focusCategoryId = useMemo(() => {
+  const nameByUserId = useMemo(() => {
+    const map = new Map<string, string>();
     for (const item of localItems) {
-      if (!itemEditable(item.status)) continue;
-      const product = productById.get(item.product_id);
-      if (!product) {
-        if (item.category_id != null) return catKey(item.category_id);
-        continue;
+      if (item.created_by && item.created_by_name) {
+        map.set(item.created_by, item.created_by_name);
       }
-      return catKey(product.category_id);
+    }
+    return map;
+  }, [localItems]);
+
+  const categoryOccupants = useMemo(() => {
+    const drafts = localItems.filter((item) => itemEditable(item.status));
+    const productCategoryById = new Map<string, string | null | undefined>();
+    for (const product of products) {
+      productCategoryById.set(product.id, product.category_id);
+    }
+    for (const item of drafts) {
+      if (!productCategoryById.has(item.product_id)) {
+        productCategoryById.set(item.product_id, item.category_id);
+      }
+    }
+    return draftCategoryOccupants(drafts, productCategoryById);
+  }, [localItems, products]);
+
+  /** Mi categoría en borrador: solo esa puedo contar hasta enviarla. */
+  const focusCategoryId = useMemo(() => {
+    for (const [categoryId, occupant] of categoryOccupants) {
+      if (occupant.userId === currentUserId) return categoryId;
     }
     return null;
-  }, [localItems, productById]);
+  }, [categoryOccupants, currentUserId]);
 
   const focusCategoryLabel = useMemo(() => {
     if (!focusCategoryId) return null;
     if (focusCategoryId === NONE_CATEGORY) return "Sin categoría";
     return categoryById.get(focusCategoryId)?.name ?? "categoría en curso";
   }, [focusCategoryId, categoryById]);
+
+  const occupiedByOthers = useMemo(() => {
+    const map = new Map<string, { userId: string; name: string }>();
+    for (const [categoryId, occupant] of categoryOccupants) {
+      if (occupant.userId === currentUserId) continue;
+      map.set(categoryId, {
+        userId: occupant.userId,
+        name: nameByUserId.get(occupant.userId) ?? "Otro usuario",
+      });
+    }
+    return map;
+  }, [categoryOccupants, currentUserId, nameByUserId]);
 
   const groups = useMemo(() => {
     const q = normalize(query);
@@ -178,6 +245,7 @@ export function PhysicalCountDetailClient({
         total: number;
         counted: number;
         draft: number;
+        myDraft: number;
         review: number;
         adjusted: number;
         label: string;
@@ -191,6 +259,7 @@ export function PhysicalCountDetailClient({
         total: 0,
         counted: 0,
         draft: 0,
+        myDraft: 0,
         review: 0,
         adjusted: 0,
         label: cat?.name ?? "Sin categoría",
@@ -199,8 +268,12 @@ export function PhysicalCountDetailClient({
       const item = itemByProduct.get(product.id);
       if (item) {
         stats.counted += 1;
-        if (itemEditable(item.status)) stats.draft += 1;
-        else if (item.status === "ENVIADO") stats.review += 1;
+        if (itemEditable(item.status)) {
+          stats.draft += 1;
+          if (canEditItemDraft(item, currentUserId, canAdjust)) {
+            stats.myDraft += 1;
+          }
+        } else if (item.status === "ENVIADO") stats.review += 1;
         else if (item.status === "AJUSTADO") stats.adjusted += 1;
       }
       statsPerCat.set(categoryId, stats);
@@ -258,6 +331,7 @@ export function PhysicalCountDetailClient({
           total: g.products.length,
           counted: 0,
           draft: 0,
+          myDraft: 0,
           review: 0,
           adjusted: 0,
           label: g.label,
@@ -267,12 +341,21 @@ export function PhysicalCountDetailClient({
           totalInCategory: stats.total,
           countedInCategory: stats.counted,
           draftInCategory: stats.draft,
+          myDraftInCategory: stats.myDraft,
           reviewInCategory: stats.review,
           adjustedInCategory: stats.adjusted,
         };
       })
       .sort((a, b) => a.label.localeCompare(b.label, "es"));
-  }, [products, itemByProduct, categoryById, filter, query]);
+  }, [
+    products,
+    itemByProduct,
+    categoryById,
+    filter,
+    query,
+    currentUserId,
+    canAdjust,
+  ]);
 
   const categoryInit = useRef(false);
   useEffect(() => {
@@ -329,10 +412,21 @@ export function PhysicalCountDetailClient({
     }
 
     const productCat = catKey(product.category_id);
+    const otherOccupant = occupiedByOthers.get(productCat);
+    if (otherOccupant && !previous && !canAdjust) {
+      setError(
+        `“${otherOccupant.name}” está contando esta categoría. Elija otra desocupada.`,
+      );
+      return;
+    }
     if (focusCategoryId && productCat !== focusCategoryId && !previous) {
       setError(
         `Termine y envíe “${focusCategoryLabel}” a revisión antes de contar otra categoría`,
       );
+      return;
+    }
+    if (previous && !canEditItemDraft(previous, currentUserId, canAdjust)) {
+      setError("Este producto lo está contando otro usuario");
       return;
     }
 
@@ -347,6 +441,7 @@ export function PhysicalCountDetailClient({
                 counted_qty: countedQty,
                 status: "BORRADOR",
                 rejection_reason: null,
+                created_by: item.created_by ?? currentUserId,
               }
             : item,
         );
@@ -362,6 +457,8 @@ export function PhysicalCountDetailClient({
           unit: product.unit,
           status: "BORRADOR",
           category_id: product.category_id,
+          created_by: currentUserId,
+          created_at: new Date().toISOString(),
         },
       ];
     });
@@ -409,18 +506,19 @@ export function PhysicalCountDetailClient({
     categoryId: string;
     label: string;
     draftInCategory: number;
+    myDraftInCategory: number;
     totalInCategory: number;
     countedInCategory: number;
   }) {
-    if (group.draftInCategory === 0) {
+    if (group.myDraftInCategory === 0) {
       setError("Cuente al menos un producto de la categoría antes de enviar");
       return;
     }
     const missing = group.totalInCategory - group.countedInCategory;
     const msg =
       missing > 0
-        ? `Categoría “${group.label}”: faltan ${missing} productos. ¿Enviar los ${group.draftInCategory} contados a revisión? Después no podrá editarlos.`
-        : `¿Enviar “${group.label}” (${group.draftInCategory} productos) a revisión? Después no podrá editar las cantidades.`;
+        ? `Categoría “${group.label}”: faltan ${missing} productos. ¿Enviar los ${group.myDraftInCategory} contados a revisión? Después no podrá editarlos.`
+        : `¿Enviar “${group.label}” (${group.myDraftInCategory} productos) a revisión? Después no podrá editar las cantidades.`;
     if (!confirm(msg)) return;
 
     startTransition(async () => {
@@ -497,10 +595,18 @@ export function PhysicalCountDetailClient({
           {focusCategoryId && focusCategoryLabel ? (
             <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
               <p className="font-medium">
-                Concentrado en “{focusCategoryLabel}”
+                Usted cuenta “{focusCategoryLabel}”
               </p>
               <p className="mt-0.5 text-sky-900/80">
-                Envíe esta categoría a revisión para poder abrir otra.
+                Envíela a revisión para tomar otra. Los demás pueden contar
+                categorías desocupadas en paralelo.
+              </p>
+            </div>
+          ) : occupiedByOthers.size > 0 ? (
+            <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm">
+              <p className="font-medium">Inventario en equipo</p>
+              <p className="mt-0.5 text-[var(--muted)]">
+                Hay categorías ocupadas por otros. Elija una libre para empezar.
               </p>
             </div>
           ) : null}
@@ -569,25 +675,30 @@ export function PhysicalCountDetailClient({
                   group.countedInCategory ===
                     group.reviewInCategory + group.adjustedInCategory;
                 const isFocus = focusCategoryId === group.categoryId;
-                const lockedByFocus = Boolean(
-                  focusCategoryId && !isFocus,
+                const otherOccupant = occupiedByOthers.get(group.categoryId);
+                const lockedByOther = Boolean(otherOccupant) && !canAdjust;
+                const lockedByMyFocus = Boolean(
+                  focusCategoryId && !isFocus && !otherOccupant,
                 );
-                // Gestión puede abrir categorías en revisión aunque haya otra en foco.
+                // Se puede mirar una ocupada; no se puede digitar ahí.
+                // Con mi categoría en curso, las libres quedan a la espera del envío.
                 const canOpenWhileLocked =
-                  canAdjust && group.reviewInCategory > 0;
+                  Boolean(otherOccupant) ||
+                  (canAdjust && group.reviewInCategory > 0);
 
                 return (
                   <div
                     key={group.categoryId}
                     className={cn(
                       "overflow-hidden rounded-2xl border border-[var(--line)] bg-white",
-                      lockedByFocus && !canOpenWhileLocked && "opacity-60",
+                      lockedByMyFocus && !canOpenWhileLocked && "opacity-60",
+                      lockedByOther && "border-amber-200",
                     )}
                   >
                     <button
                       type="button"
                       onClick={() => {
-                        if (lockedByFocus && !canOpenWhileLocked) {
+                        if (lockedByMyFocus && !canOpenWhileLocked) {
                           setError(
                             `Envíe “${focusCategoryLabel}” a revisión para pasar a otra categoría`,
                           );
@@ -602,10 +713,15 @@ export function PhysicalCountDetailClient({
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="font-medium">{group.label}</p>
                           {isFocus ? (
-                            <Badge tone="info">En curso</Badge>
+                            <Badge tone="info">Su turno</Badge>
                           ) : null}
-                          {lockedByFocus && !canOpenWhileLocked ? (
-                            <Badge tone="neutral">Bloqueada</Badge>
+                          {otherOccupant ? (
+                            <Badge tone="warn">
+                              Ocupada · {otherOccupant.name}
+                            </Badge>
+                          ) : null}
+                          {lockedByMyFocus && !canOpenWhileLocked ? (
+                            <Badge tone="neutral">Espere su envío</Badge>
                           ) : null}
                           {group.reviewInCategory > 0 ? (
                             <Badge tone="warn">
@@ -660,7 +776,15 @@ export function PhysicalCountDetailClient({
                           {group.products.map((product) => {
                             const item = itemByProduct.get(product.id);
                             const counted = Boolean(item);
-                            const editable = !item || itemEditable(item.status);
+                            const statusEditable =
+                              !item || itemEditable(item.status);
+                            const ownsDraft =
+                              !item ||
+                              canEditItemDraft(item, currentUserId, canAdjust);
+                            const editable =
+                              statusEditable &&
+                              ownsDraft &&
+                              (!lockedByOther || Boolean(item));
                             const dirty =
                               draftQty[product.id] !== undefined &&
                               draftQty[product.id] !==
@@ -722,6 +846,15 @@ export function PhysicalCountDetailClient({
                                         ) : counted ? (
                                           <span className="ml-2 font-medium text-emerald-800">
                                             Contado
+                                            {item?.created_by &&
+                                            item.created_by !== currentUserId &&
+                                            item.created_by_name
+                                              ? ` · ${item.created_by_name}`
+                                              : ""}
+                                          </span>
+                                        ) : lockedByOther ? (
+                                          <span className="ml-2 text-[var(--muted)]">
+                                            Ocupada por {otherOccupant?.name}
                                           </span>
                                         ) : (
                                           <span className="ml-2 text-amber-800">
@@ -817,9 +950,17 @@ export function PhysicalCountDetailClient({
                                           const removed = item;
                                           setLocalItems((prev) =>
                                             prev.filter(
-                                              (row) => row.id !== item.id,
+                                              (row) =>
+                                                row.id !== item.id &&
+                                                row.product_id !==
+                                                  item.product_id,
                                             ),
                                           );
+                                          setDraftQty((prev) => {
+                                            const next = { ...prev };
+                                            delete next[item.product_id];
+                                            return next;
+                                          });
                                           void (async () => {
                                             const r =
                                               await removePhysicalCountItemAction(
@@ -843,8 +984,17 @@ export function PhysicalCountDetailClient({
                                 ) : (
                                   <div className="text-right tabular-nums">
                                     <p className="font-display text-xl font-semibold">
-                                      {formatQty(item?.counted_qty)}
+                                      {item
+                                        ? formatQty(item.counted_qty)
+                                        : "—"}
                                     </p>
+                                    {statusEditable &&
+                                    !ownsDraft &&
+                                    item?.created_by_name ? (
+                                      <p className="text-xs text-[var(--muted)]">
+                                        {item.created_by_name}
+                                      </p>
+                                    ) : null}
                                   </div>
                                 )}
                               </li>
@@ -852,7 +1002,7 @@ export function PhysicalCountDetailClient({
                           })}
                         </ul>
 
-                        {group.draftInCategory > 0 && canEdit ? (
+                        {group.myDraftInCategory > 0 && canEdit ? (
                           <div className="border-t border-[var(--line)] bg-[var(--surface)]/80 p-3 sm:p-4">
                             <button
                               type="button"
@@ -861,14 +1011,19 @@ export function PhysicalCountDetailClient({
                               onClick={() => submitCategory(group)}
                             >
                               Enviar “{group.label}” a revisión
-                              {group.draftInCategory > 0
-                                ? ` (${group.draftInCategory})`
+                              {group.myDraftInCategory > 0
+                                ? ` (${group.myDraftInCategory})`
                                 : ""}
                             </button>
                             <p className="mt-2 text-center text-xs text-[var(--muted)]">
                               Congela el stock del sistema solo para esta
-                              categoría. Siga contando las demás.
+                              categoría. Otros pueden seguir en las suyas.
                             </p>
+                          </div>
+                        ) : otherOccupant && group.draftInCategory > 0 ? (
+                          <div className="border-t border-[var(--line)] bg-amber-50/60 px-3 py-3 text-center text-xs text-amber-950 sm:px-4">
+                            {otherOccupant.name} debe enviar esta categoría a
+                            revisión.
                           </div>
                         ) : null}
 
@@ -1025,18 +1180,20 @@ export function PhysicalCountDetailClient({
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--line)] bg-white/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(18,18,18,0.08)] backdrop-blur md:sticky md:bottom-4 md:inset-x-auto md:rounded-2xl md:border md:p-4 md:shadow-lg">
           <div className="mx-auto max-w-3xl">
             <p className="text-sm font-medium md:text-base">
-              {focusCategoryLabel && draftCount > 0
-                ? `“${focusCategoryLabel}”: ${draftCount} por enviar`
+              {focusCategoryLabel && myDraftCount > 0
+                ? `“${focusCategoryLabel}”: ${myDraftCount} por enviar`
                 : countedCount === 0
-                  ? "Abra una categoría y empiece a contar"
-                  : reviewCount > 0
-                    ? `${reviewCount} en revisión · elija la siguiente categoría`
-                    : "Sin borradores por enviar"}
+                  ? "Abra una categoría libre y empiece a contar"
+                  : occupiedByOthers.size > 0
+                    ? `${occupiedByOthers.size} categoría${occupiedByOthers.size === 1 ? "" : "s"} ocupada${occupiedByOthers.size === 1 ? "" : "s"} · elija una libre`
+                    : reviewCount > 0
+                      ? `${reviewCount} en revisión · elija la siguiente categoría`
+                      : "Sin borradores por enviar"}
             </p>
             <p className="mt-0.5 text-xs text-[var(--muted)] md:text-sm">
               {focusCategoryLabel
-                ? `Envíe “${focusCategoryLabel}” para desbloquear las demás.`
-                : "Una categoría a la vez hasta enviarla a revisión."}
+                ? `Envíe “${focusCategoryLabel}” para poder tomar otra.`
+                : "Varios pueden contar a la vez: una categoría por persona."}
             </p>
           </div>
         </div>

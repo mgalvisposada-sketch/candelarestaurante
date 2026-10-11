@@ -8,6 +8,7 @@ import {
   jobPositionSchema,
   noveltySchema,
   payrollPeriodSchema,
+  syncShiftDaysSchema,
 } from "@/validations/novelties";
 import {
   biweeklyRange,
@@ -18,7 +19,14 @@ import {
   type EmploymentContractType,
   type ArlRiskLevel,
 } from "@/lib/payroll";
+import { isShiftDayContractor } from "@/lib/payroll/rates";
 import type { ActionResult } from "../empresa/actions";
+
+export type SyncShiftDaysResult = ActionResult & {
+  created?: number;
+  annulled?: number;
+  message?: string;
+};
 
 function emptyToNull(value: string | null | undefined) {
   if (value === undefined || value === null || String(value).trim() === "")
@@ -202,6 +210,154 @@ export async function createNoveltyAction(
   if (error) return { ok: false, error: error.message };
   revalidateAll();
   return { ok: true, id: data.id };
+}
+
+export async function syncShiftDaysAction(input: {
+  employee_id: string;
+  period_year: number;
+  period_month: number;
+  period_half: 1 | 2;
+  dates: string[];
+}): Promise<SyncShiftDaysResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "personal.novedades")) {
+    return { ok: false, error: "Sin permiso para reportar novedades" };
+  }
+
+  const parsed = syncShiftDaysSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+    };
+  }
+
+  const half = parsed.data.period_half as 1 | 2;
+  const range = biweeklyRange(
+    parsed.data.period_year,
+    parsed.data.period_month,
+    half,
+  );
+  const selectedDates = [...new Set(parsed.data.dates)].filter(
+    (d) => d >= range.startIso && d <= range.endIso,
+  );
+
+  const supabase = await createClient();
+  const { data: emp, error: empError } = await supabase
+    .from("employees")
+    .select("id, basic_salary, salary_or_fee, employment_type")
+    .eq("id", parsed.data.employee_id)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (empError) return { ok: false, error: empError.message };
+  if (!emp) return { ok: false, error: "Empleado no encontrado" };
+  if (!isShiftDayContractor(String(emp.employment_type ?? ""))) {
+    return {
+      ok: false,
+      error: "Solo aplica a prestadores por turno / día",
+    };
+  }
+
+  const rate = Number(emp.basic_salary ?? emp.salary_or_fee ?? 0);
+  if (!rate || Number.isNaN(rate)) {
+    return {
+      ok: false,
+      error: "Configure la tarifa día/turno en el empleado",
+    };
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("shift_novelties")
+    .select("id, novelty_date, status")
+    .eq("organization_id", ctx.organization.id)
+    .eq("employee_id", parsed.data.employee_id)
+    .eq("novelty_type", "TURNO_LABORADO")
+    .gte("novelty_date", range.startIso)
+    .lte("novelty_date", range.endIso)
+    .is("deleted_at", null)
+    .in("status", ["PENDIENTE", "APROBADA"]);
+
+  if (existingError) return { ok: false, error: existingError.message };
+
+  const activeByDate = new Map<string, { id: string; status: string }>();
+  for (const row of existing ?? []) {
+    const date = String(row.novelty_date);
+    if (!activeByDate.has(date)) {
+      activeByDate.set(date, { id: row.id as string, status: String(row.status) });
+    }
+  }
+
+  const selectedSet = new Set(selectedDates);
+  const toCreate = selectedDates.filter((d) => !activeByDate.has(d));
+  const toAnnul = [...activeByDate.entries()]
+    .filter(([date]) => !selectedSet.has(date))
+    .map(([, row]) => row.id);
+
+  if (toCreate.length === 0 && toAnnul.length === 0) {
+    return {
+      ok: true,
+      created: 0,
+      annulled: 0,
+      message: "Sin cambios en los turnos de la quincena",
+    };
+  }
+
+  const now = new Date().toISOString();
+
+  if (toCreate.length > 0) {
+    const { error: insertError } = await supabase.from("shift_novelties").insert(
+      toCreate.map((novelty_date) => ({
+        organization_id: ctx.organization!.id,
+        employee_id: parsed.data.employee_id,
+        novelty_date,
+        novelty_type: "TURNO_LABORADO" as const,
+        status: "APROBADA" as const,
+        amount: rate,
+        is_paid: true,
+        notes: "Turno registrado por calendario quincenal",
+        reported_by: ctx.userId,
+        reviewed_by: ctx.userId,
+        reviewed_at: now,
+        created_by: ctx.userId,
+        updated_by: ctx.userId,
+      })),
+    );
+    if (insertError) return { ok: false, error: insertError.message };
+  }
+
+  if (toAnnul.length > 0) {
+    const { error: annulError } = await supabase
+      .from("shift_novelties")
+      .update({
+        status: "ANULADA",
+        updated_by: ctx.userId,
+      })
+      .eq("organization_id", ctx.organization.id)
+      .in("id", toAnnul);
+    if (annulError) return { ok: false, error: annulError.message };
+  }
+
+  revalidateAll();
+  const parts: string[] = [];
+  if (toCreate.length > 0) {
+    parts.push(
+      `${toCreate.length} turno${toCreate.length === 1 ? "" : "s"} registrado${toCreate.length === 1 ? "" : "s"}`,
+    );
+  }
+  if (toAnnul.length > 0) {
+    parts.push(
+      `${toAnnul.length} anulado${toAnnul.length === 1 ? "" : "s"}`,
+    );
+  }
+  return {
+    ok: true,
+    created: toCreate.length,
+    annulled: toAnnul.length,
+    message: parts.join(" · "),
+  };
 }
 
 export async function reviewNoveltyAction(

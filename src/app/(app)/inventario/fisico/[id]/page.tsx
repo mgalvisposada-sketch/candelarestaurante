@@ -15,6 +15,8 @@ import {
   type CategoryOption,
 } from "./detail-client";
 
+export const dynamic = "force-dynamic";
+
 const ITEM_KIND_LABEL: Record<string, string> = {
   MATERIA_PRIMA: "Materia prima",
   INSUMO_PREPARACION: "Insumo",
@@ -52,7 +54,7 @@ export default async function InventarioFisicoDetailPage({
       supabase
         .from("physical_inventory_count_items")
         .select(
-          "id, product_id, system_qty, counted_qty, difference_qty, notes, status, rejection_reason",
+          "id, product_id, system_qty, counted_qty, difference_qty, notes, status, rejection_reason, created_by, created_at",
         )
         .eq("count_id", id)
         .eq("organization_id", ctx.organization.id)
@@ -74,6 +76,21 @@ export default async function InventarioFisicoDetailPage({
         .order("name"),
     ]);
 
+  const counterIds = [
+    ...new Set(
+      (itemRows ?? [])
+        .map((item) => item.created_by as string | null)
+        .filter((uid): uid is string => Boolean(uid)),
+    ),
+  ];
+  const { data: profileRows } = counterIds.length
+    ? await supabase.from("profiles").select("id, full_name").in("id", counterIds)
+    : { data: [] as { id: string; full_name: string | null }[] };
+
+  const nameById = new Map(
+    (profileRows ?? []).map((p) => [p.id, p.full_name?.trim() || "Usuario"]),
+  );
+
   const productMap = new Map((productRows ?? []).map((p) => [p.id, p]));
   const products: ProductOption[] = (productRows ?? []).map((p) => ({
     id: p.id,
@@ -89,6 +106,7 @@ export default async function InventarioFisicoDetailPage({
     const revealSystem =
       canAdjust && (status === "ENVIADO" || status === "AJUSTADO");
     const kind = p?.item_kind ?? "";
+    const createdBy = (item.created_by as string | null) ?? null;
     return {
       id: item.id,
       product_id: item.product_id,
@@ -103,6 +121,9 @@ export default async function InventarioFisicoDetailPage({
       item_kind_label: ITEM_KIND_LABEL[kind] ?? kind,
       system_qty: revealSystem ? item.system_qty : null,
       difference_qty: revealSystem ? item.difference_qty : null,
+      created_by: createdBy,
+      created_by_name: createdBy ? (nameById.get(createdBy) ?? null) : null,
+      created_at: (item.created_at as string | null) ?? null,
     };
   });
 
@@ -127,6 +148,7 @@ export default async function InventarioFisicoDetailPage({
           items={items}
           products={products}
           categories={(categoryRows ?? []) as CategoryOption[]}
+          currentUserId={ctx.userId}
           canEdit={ctxCanAccess(ctx, "inventario.fisico")}
           canAdjust={canAdjust}
         />
