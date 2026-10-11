@@ -515,11 +515,19 @@ export function PhysicalCountDetailClient({
       return;
     }
     const missing = group.totalInCategory - group.countedInCategory;
-    const msg =
-      missing > 0
-        ? `Categoría “${group.label}”: faltan ${missing} productos. ¿Enviar los ${group.myDraftInCategory} contados a revisión? Después no podrá editarlos.`
-        : `¿Enviar “${group.label}” (${group.myDraftInCategory} productos) a revisión? Después no podrá editar las cantidades.`;
-    if (!confirm(msg)) return;
+    if (missing > 0) {
+      setError(
+        `Faltan ${missing} producto${missing === 1 ? "" : "s"} por contar en “${group.label}”. Debe registrar todos (0 vale) antes de enviar a revisión.`,
+      );
+      return;
+    }
+    if (
+      !confirm(
+        `¿Enviar “${group.label}” (${group.myDraftInCategory} productos) a revisión? Después no podrá editar las cantidades.`,
+      )
+    ) {
+      return;
+    }
 
     startTransition(async () => {
       setError(null);
@@ -1004,21 +1012,45 @@ export function PhysicalCountDetailClient({
 
                         {group.myDraftInCategory > 0 && canEdit ? (
                           <div className="border-t border-[var(--line)] bg-[var(--surface)]/80 p-3 sm:p-4">
-                            <button
-                              type="button"
-                              disabled={pending}
-                              className="min-h-12 w-full rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-50"
-                              onClick={() => submitCategory(group)}
-                            >
-                              Enviar “{group.label}” a revisión
-                              {group.myDraftInCategory > 0
-                                ? ` (${group.myDraftInCategory})`
-                                : ""}
-                            </button>
-                            <p className="mt-2 text-center text-xs text-[var(--muted)]">
-                              Congela el stock del sistema solo para esta
-                              categoría. Otros pueden seguir en las suyas.
-                            </p>
+                            {group.countedInCategory < group.totalInCategory ? (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled
+                                  className="min-h-12 w-full rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-40"
+                                >
+                                  Enviar “{group.label}” a revisión
+                                </button>
+                                <p className="mt-2 text-center text-xs text-amber-800">
+                                  Faltan{" "}
+                                  {group.totalInCategory -
+                                    group.countedInCategory}{" "}
+                                  producto
+                                  {group.totalInCategory -
+                                    group.countedInCategory ===
+                                  1
+                                    ? ""
+                                    : "s"}
+                                  . Cuente todos (0 vale) para poder enviar.
+                                </p>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={pending}
+                                  className="min-h-12 w-full rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-50"
+                                  onClick={() => submitCategory(group)}
+                                >
+                                  Enviar “{group.label}” a revisión (
+                                  {group.myDraftInCategory})
+                                </button>
+                                <p className="mt-2 text-center text-xs text-[var(--muted)]">
+                                  Congela el stock del sistema solo para esta
+                                  categoría. Otros pueden seguir en las suyas.
+                                </p>
+                              </>
+                            )}
                           </div>
                         ) : otherOccupant && group.draftInCategory > 0 ? (
                           <div className="border-t border-[var(--line)] bg-amber-50/60 px-3 py-3 text-center text-xs text-amber-950 sm:px-4">

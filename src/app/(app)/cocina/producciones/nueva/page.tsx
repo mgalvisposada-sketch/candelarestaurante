@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { isSuperAdmin } from "@/types/domain";
 import { redirect } from "next/navigation";
 import { CocinaNav } from "../../cocina-nav";
-import { InsumoProductionForm, type InsumoRecipeSeed } from "./production-form";
+import { InsumoProductionForm } from "./production-form";
 
 export default async function NuevaProduccionPage({
   searchParams,
@@ -27,7 +27,6 @@ export default async function NuevaProduccionPage({
     { data: mpRows },
     { data: insumoRows },
     { data: aprovechamientos },
-    { data: recipeRow },
   ] = await Promise.all([
     supabase
       .from("products")
@@ -55,18 +54,6 @@ export default async function NuevaProduccionPage({
       .is("deleted_at", null)
       .eq("is_active", true)
       .order("name"),
-    productoParam && /^[0-9a-f-]{36}$/i.test(productoParam)
-      ? supabase
-          .from("kitchen_recipes")
-          .select(
-            "name, yield_qty, kitchen_recipe_lines(component_product_id, quantity)",
-          )
-          .eq("organization_id", orgId)
-          .eq("product_id", productoParam)
-          .eq("is_active", true)
-          .is("deleted_at", null)
-          .maybeSingle()
-      : Promise.resolve({ data: null }),
   ]);
 
   const materiasPrimas = (mpRows ?? []).map((p) => {
@@ -83,17 +70,6 @@ export default async function NuevaProduccionPage({
     };
   });
 
-  const initialRecipe: InsumoRecipeSeed | null = recipeRow
-    ? {
-        name: recipeRow.name,
-        yieldQty: Number(recipeRow.yield_qty || 0),
-        lines: (recipeRow.kitchen_recipe_lines ?? []).map((l) => ({
-          product_id: l.component_product_id,
-          quantity: Number(l.quantity),
-        })),
-      }
-    : null;
-
   return (
     <>
       <AppHeader title="Cocina" subtitle="Crear más · Insumo" />
@@ -103,8 +79,8 @@ export default async function NuevaProduccionPage({
           isSuperAdmin={isSuperAdmin(ctx.role)}
         />
         <PageIntro
-          title="Crear más de un insumo preparación"
-          description="No da de alta un producto nuevo: fabrica más cantidad de uno que ya está en el catálogo. Consume materia prima según la receta (o la define aquí) y concentra el costo en el rendimiento útil."
+          title="Crear más"
+          description="Indique qué materia prima usó y cuánto quedó usable. La merma se calcula sola; el aprovechamiento es opcional."
         />
 
         {!materiasPrimas.length ? (
@@ -140,7 +116,6 @@ export default async function NuevaProduccionPage({
             insumos={insumoRows ?? []}
             aprovechamientos={aprovechamientos ?? []}
             initialOutputProductId={productoParam}
-            initialRecipe={initialRecipe}
           />
         )}
       </main>

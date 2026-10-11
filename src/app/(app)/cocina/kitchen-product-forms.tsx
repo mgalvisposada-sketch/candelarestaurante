@@ -128,7 +128,10 @@ export function CreateKitchenProductForm({
       />
       <p className="text-xs text-[var(--muted)]">
         Stock/costo aquí = apertura (día uno). El día a día se hace con{" "}
-        <strong>Crear más</strong> (consume receta).
+        <strong>Crear más</strong>
+        {itemKind === "INSUMO_PREPARACION"
+          ? " (materia prima → merma / aprovechamiento)."
+          : " (consume la receta)."}
       </p>
       <input name="notes" placeholder="Notas" className={inputClass} />
       {error ? <p className="text-sm text-red-700">{error}</p> : null}

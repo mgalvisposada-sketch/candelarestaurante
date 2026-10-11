@@ -102,6 +102,77 @@ export async function createProductCategoryAction(
   return { ok: true, id: data.id };
 }
 
+export async function updateProductCategoryAction(
+  categoryId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  const canManageCategories =
+    ctxCanAccess(ctx, "proveedores.categorias") ||
+    ctxCanAccess(ctx, "inventario.maestro") ||
+    ctxCanAccess(ctx, "compras.proveedores") ||
+    ctxCanAccess(ctx, "proveedores") ||
+    ctxCanAccess(ctx, "proveedores.maestro");
+  if (!canManageCategories) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const parsed = productCategorySchema.safeParse({
+    code: formData.get("code"),
+    name: formData.get("name"),
+    description: formData.get("description"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const supabase = await createClient();
+  const { data: existing } = await supabase
+    .from("product_categories")
+    .select("id")
+    .eq("id", categoryId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!existing) return { ok: false, error: "Categoría no encontrada" };
+
+  const { error } = await supabase
+    .from("product_categories")
+    .update({
+      code: parsed.data.code.trim().toUpperCase(),
+      name: parsed.data.name.trim(),
+      description: emptyToNull(parsed.data.description),
+      updated_by: ctx.userId,
+    })
+    .eq("id", categoryId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  if (error) {
+    if (error.message.toLowerCase().includes("duplicate")) {
+      return { ok: false, error: "Ya existe una categoría con ese código" };
+    }
+    if (error.message.toLowerCase().includes("row-level security")) {
+      return {
+        ok: false,
+        error:
+          "No tiene permiso de base de datos para editar categorías. Use un usuario Gestión o actualice las políticas RLS.",
+      };
+    }
+    return { ok: false, error: error.message };
+  }
+
+  revalidatePath("/inventario/maestro");
+  revalidatePath("/inventario/lista");
+  revalidatePath("/compras/proveedores");
+  revalidatePath("/compras/solicitudes");
+  revalidatePath("/compras/sugeridos");
+  revalidatePath("/proveedores");
+  revalidatePath("/proveedores/maestro");
+  return { ok: true, id: categoryId };
+}
+
 export async function softDeleteProductCategoryAction(
   categoryId: string,
 ): Promise<ActionResult> {

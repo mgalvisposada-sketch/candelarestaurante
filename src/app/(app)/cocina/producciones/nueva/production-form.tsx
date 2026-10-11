@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { Search, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   computeKitchenProductionCost,
   aprovechamientoUnitCost,
 } from "@/lib/kitchen/cost";
-import { formatCOP, money } from "@/lib/money";
+import { formatCOP } from "@/lib/money";
+import { cn } from "@/lib/utils";
 import { completeInsumoProductionAction } from "../../kitchen-actions";
 
 const inputClass =
@@ -42,64 +44,256 @@ function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-export type InsumoRecipeSeed = {
-  name: string;
-  yieldQty: number;
-  lines: Array<{ product_id: string; quantity: number }>;
-};
+function normalizeSearch(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+/** Selector de materia prima con buscador + lista filtrada. */
+function InventoryProductPicker({
+  products,
+  value,
+  onChange,
+  required,
+  excludeIds = [],
+}: {
+  products: StockProduct[];
+  value: string;
+  onChange: (productId: string) => void;
+  required?: boolean;
+  excludeIds?: string[];
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selected = products.find((p) => p.id === value) ?? null;
+
+  const filtered = useMemo(() => {
+    const q = normalizeSearch(query);
+    const excluded = new Set(excludeIds.filter((id) => id && id !== value));
+    return products
+      .filter((p) => !excluded.has(p.id))
+      .filter((p) => {
+        if (!q) return true;
+        const hay = normalizeSearch(
+          `${p.name} ${p.category_name ?? ""} ${p.unit}`,
+        );
+        return hay.includes(q);
+      })
+      .slice()
+      .sort((a, b) => {
+        const sa = Number(a.current_stock || 0) > 0 ? 0 : 1;
+        const sb = Number(b.current_stock || 0) > 0 ? 0 : 1;
+        if (sa !== sb) return sa - sb;
+        return a.name.localeCompare(b.name, "es");
+      })
+      .slice(0, 40);
+  }, [products, query, excludeIds, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  if (selected && !open) {
+    const stock = Number(selected.current_stock || 0);
+    return (
+      <div
+        className={cn(
+          "flex min-w-[12rem] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-sm",
+          stock > 0
+            ? "border-[var(--line)] bg-white"
+            : "border-red-200 bg-red-50/50",
+        )}
+      >
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium">{selected.name}</p>
+          <p
+            className={cn(
+              "truncate text-xs",
+              stock > 0 ? "text-[var(--muted)]" : "text-red-700",
+            )}
+          >
+            {selected.category_name ? `${selected.category_name} · ` : ""}
+            {stock > 0
+              ? `${stock} ${selected.unit}`
+              : `Sin existencia (${selected.unit})`}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="shrink-0 text-xs text-[var(--accent)]"
+          onClick={() => {
+            setQuery("");
+            setOpen(true);
+          }}
+        >
+          Cambiar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={rootRef} className="relative min-w-[12rem] flex-1">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" />
+        <input
+          type="search"
+          value={query}
+          autoFocus={open || !selected}
+          onFocus={() => setOpen(true)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          placeholder="Buscar materia prima…"
+          className={cn(inputClass, "pl-8 pr-8")}
+          aria-label="Buscar materia prima"
+          autoComplete="off"
+        />
+        {query ? (
+          <button
+            type="button"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted)]"
+            onClick={() => setQuery("")}
+            aria-label="Limpiar búsqueda"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+      </div>
+      {required && !value ? (
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          Elija un producto de la lista
+        </p>
+      ) : null}
+      {open ? (
+        <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-[var(--line)] bg-white py-1 shadow-md">
+          {filtered.length === 0 ? (
+            <li className="px-3 py-2 text-sm text-[var(--muted)]">
+              Sin coincidencias
+            </li>
+          ) : (
+            filtered.map((mp) => {
+              const stock = Number(mp.current_stock || 0);
+              const unavailable = !(stock > 0);
+              return (
+                <li key={mp.id}>
+                  <button
+                    type="button"
+                    disabled={unavailable}
+                    className={cn(
+                      "flex w-full flex-col items-start px-3 py-2 text-left text-sm",
+                      unavailable
+                        ? "cursor-not-allowed opacity-45"
+                        : "hover:bg-[var(--surface)]",
+                      mp.id === value && "bg-[var(--surface)]",
+                    )}
+                    onClick={() => {
+                      if (unavailable) return;
+                      onChange(mp.id);
+                      setQuery("");
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="font-medium">{mp.name}</span>
+                    <span
+                      className={cn(
+                        "text-xs",
+                        unavailable ? "text-red-700" : "text-[var(--muted)]",
+                      )}
+                    >
+                      {mp.category_name ? `${mp.category_name} · ` : ""}
+                      {unavailable
+                        ? "Sin existencia"
+                        : `stock ${stock} ${mp.unit}`}
+                    </span>
+                  </button>
+                </li>
+              );
+            })
+          )}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
 
 export function InsumoProductionForm({
   materiasPrimas,
   insumos,
   aprovechamientos: aprovechamientoOptions,
   initialOutputProductId,
-  initialRecipe,
 }: {
   materiasPrimas: StockProduct[];
   insumos: StockProduct[];
   aprovechamientos: StockProduct[];
-  /** Prefill desde “Crear más” en el catálogo. */
   initialOutputProductId?: string;
-  /** Si el insumo tiene receta, precarga consumos escalables. */
-  initialRecipe?: InsumoRecipeSeed | null;
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [showAprov, setShowAprov] = useState(false);
 
   const today = new Date().toISOString().slice(0, 10);
+  const lockedProduct =
+    Boolean(initialOutputProductId) &&
+    insumos.some((p) => p.id === initialOutputProductId);
+
   const preselected =
-    initialOutputProductId &&
-    insumos.some((p) => p.id === initialOutputProductId)
+    lockedProduct && initialOutputProductId
       ? initialOutputProductId
       : (insumos[0]?.id ?? "");
-  const selectedInsumo = insumos.find((p) => p.id === preselected);
-  const [title, setTitle] = useState(
-    selectedInsumo ? `Crear más · ${selectedInsumo.name}` : "",
-  );
+
   const [producedAt, setProducedAt] = useState(today);
   const [outputProductId, setOutputProductId] = useState(preselected);
-  const [outputQty, setOutputQty] = useState(
-    initialRecipe?.yieldQty && initialRecipe.yieldQty > 0
-      ? String(initialRecipe.yieldQty)
-      : "",
-  );
-  const [mermaQty, setMermaQty] = useState("");
-  const [notes, setNotes] = useState("");
-  const [inputs, setInputs] = useState<InputRow[]>(() => {
-    if (initialRecipe?.lines?.length) {
-      return initialRecipe.lines.map((l) => ({
-        key: uid(),
-        product_id: l.product_id,
-        quantity: String(l.quantity),
-      }));
-    }
-    return [{ key: uid(), product_id: "", quantity: "" }];
-  });
+  const [outputQty, setOutputQty] = useState("");
+  const [inputs, setInputs] = useState<InputRow[]>([
+    { key: uid(), product_id: "", quantity: "" },
+  ]);
   const [aprov, setAprov] = useState<AprovRow[]>([]);
+
+  const outputProduct = insumos.find((p) => p.id === outputProductId);
+  const title = outputProduct
+    ? `Crear más · ${outputProduct.name}`
+    : "Crear más";
 
   const mpMap = useMemo(
     () => new Map(materiasPrimas.map((p) => [p.id, p])),
+    [materiasPrimas],
+  );
+
+  const stockIssues = useMemo(() => {
+    const issues: string[] = [];
+    for (const row of inputs) {
+      if (!row.product_id) continue;
+      const p = mpMap.get(row.product_id);
+      if (!p) continue;
+      const stock = Number(p.current_stock || 0);
+      const qty = Number(row.quantity);
+      if (!(stock > 0)) {
+        issues.push(`Sin existencia de ${p.name}`);
+        continue;
+      }
+      if (Number.isFinite(qty) && qty > 0 && qty > stock) {
+        issues.push(
+          `${p.name}: pide ${qty} ${p.unit}, solo hay ${stock} ${p.unit}`,
+        );
+      }
+    }
+    return issues;
+  }, [inputs, mpMap]);
+
+  const hasStockAvailable = useMemo(
+    () => materiasPrimas.some((p) => Number(p.current_stock || 0) > 0),
     [materiasPrimas],
   );
 
@@ -121,41 +315,54 @@ export function InsumoProductionForm({
       }));
     const out = Number(outputQty);
     if (!parsedInputs.length || !(out > 0)) return null;
-    const mermaManual =
-      mermaQty.trim() === "" ? undefined : Number(mermaQty);
     return computeKitchenProductionCost({
       inputs: parsedInputs,
       outputQty: out,
       aprovechamientos: parsedAprov,
-      mermaQty:
-        mermaManual !== undefined && Number.isFinite(mermaManual)
-          ? mermaManual
-          : undefined,
     });
-  }, [inputs, aprov, outputQty, mermaQty, mpMap]);
+  }, [inputs, aprov, outputQty, mpMap]);
 
-  const outputProduct = insumos.find((p) => p.id === outputProductId);
+  const canSubmit =
+    hasStockAvailable &&
+    stockIssues.length === 0 &&
+    inputs.some((r) => r.product_id && Number(r.quantity) > 0) &&
+    Number(outputQty) > 0;
 
   return (
     <form
-      className="space-y-6"
+      className="mx-auto max-w-xl space-y-5"
       action={(fd) => {
         setError(null);
+        if (!hasStockAvailable) {
+          setError(
+            "No hay materias primas con existencia. Reciba o ajuste inventario primero.",
+          );
+          return;
+        }
+        if (stockIssues.length > 0) {
+          setError(stockIssues[0]);
+          return;
+        }
+        const validInputs = inputs.filter(
+          (r) => r.product_id && Number(r.quantity) > 0,
+        );
+        if (validInputs.length === 0) {
+          setError("Seleccione al menos una materia prima y su cantidad");
+          return;
+        }
         fd.set("title", title);
         fd.set("produced_at", producedAt);
         fd.set("output_product_id", outputProductId);
         fd.set("output_qty", outputQty);
-        fd.set("merma_qty", mermaQty);
-        fd.set("notes", notes);
+        fd.set("merma_qty", "");
+        fd.set("notes", "");
         fd.set(
           "inputs_json",
           JSON.stringify(
-            inputs
-              .filter((r) => r.product_id && Number(r.quantity) > 0)
-              .map((r) => ({
-                product_id: r.product_id,
-                quantity: Number(r.quantity),
-              })),
+            validInputs.map((r) => ({
+              product_id: r.product_id,
+              quantity: Number(r.quantity),
+            })),
           ),
         );
         fd.set(
@@ -176,143 +383,157 @@ export function InsumoProductionForm({
             setError(r.error ?? "Error");
             return;
           }
-          router.push("/cocina/producciones");
+          router.push("/cocina/insumos");
           router.refresh();
         });
       }}
     >
-      <section className="grid gap-4 rounded-xl border border-[var(--line)] bg-white p-4 md:grid-cols-2">
-        {initialRecipe ? (
-          <p className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--muted)] md:col-span-2">
-            Receta <strong className="text-[var(--ink)]">{initialRecipe.name}</strong>{" "}
-            precargada (rinde {initialRecipe.yieldQty}). Ajuste cantidades y
-            declare merma si aplica.
-          </p>
-        ) : null}
-        <label className="space-y-1 text-sm md:col-span-2">
-          <span className="text-[var(--muted)]">Título</span>
-          <input
-            required
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Ej. Crear más cebolla limpia — lote mañana"
-            className={inputClass}
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-[var(--muted)]">Fecha</span>
-          <input
-            type="date"
-            required
-            value={producedAt}
-            onChange={(e) => setProducedAt(e.target.value)}
-            className={inputClass}
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-[var(--muted)]">
-            Crear más de (insumo del catálogo)
-          </span>
-          <select
-            required
-            value={outputProductId}
-            onChange={(e) => setOutputProductId(e.target.value)}
-            className={inputClass}
-          >
-            <option value="" disabled>
-              Seleccione insumo
-            </option>
-            {insumos.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} · stock {p.current_stock} {p.unit}
-              </option>
-            ))}
-          </select>
-        </label>
+      {/* Cabecera mínima */}
+      <section className="rounded-xl border border-[var(--line)] bg-white p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
+              Crear más
+            </p>
+            {lockedProduct && outputProduct ? (
+              <h2 className="mt-1 font-display text-xl font-semibold">
+                {outputProduct.name}
+              </h2>
+            ) : (
+              <select
+                required
+                value={outputProductId}
+                onChange={(e) => setOutputProductId(e.target.value)}
+                className={`${inputClass} mt-2`}
+                aria-label="Insumo"
+              >
+                {insumos.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {outputProduct ? (
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                Stock actual {outputProduct.current_stock} {outputProduct.unit}
+              </p>
+            ) : null}
+          </div>
+          <label className="space-y-1 text-sm">
+            <span className="text-[var(--muted)]">Fecha</span>
+            <input
+              type="date"
+              required
+              value={producedAt}
+              onChange={(e) => setProducedAt(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+        </div>
       </section>
 
+      {/* Consumo */}
       <section className="space-y-3 rounded-xl border border-[var(--line)] bg-white p-4">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-medium">Materias primas a consumir (receta)</h2>
-          <button
-            type="button"
-            className="text-sm text-[var(--accent)]"
-            onClick={() =>
-              setInputs((prev) => [
-                ...prev,
-                { key: uid(), product_id: "", quantity: "" },
-              ])
-            }
-          >
-            + Agregar
-          </button>
+          <h3 className="text-sm font-medium">Usé de inventario</h3>
+          {inputs.length < 3 ? (
+            <button
+              type="button"
+              className="text-sm text-[var(--accent)]"
+              onClick={() =>
+                setInputs((prev) => [
+                  ...prev,
+                  { key: uid(), product_id: "", quantity: "" },
+                ])
+              }
+            >
+              + Materia prima
+            </button>
+          ) : null}
         </div>
-        <div className="space-y-3">
+        {!hasStockAvailable ? (
+          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            No hay materias primas con existencia. No se puede crear más hasta
+            tener stock en inventario.
+          </p>
+        ) : null}
+        <div className="space-y-2">
           {inputs.map((row, idx) => {
             const p = row.product_id ? mpMap.get(row.product_id) : null;
+            const stock = p ? Number(p.current_stock || 0) : 0;
+            const qty = Number(row.quantity);
+            const overStock =
+              p != null &&
+              Number.isFinite(qty) &&
+              qty > 0 &&
+              (stock <= 0 || qty > stock);
+            const usedElsewhere = inputs
+              .filter((r) => r.key !== row.key)
+              .map((r) => r.product_id)
+              .filter(Boolean);
             return (
-              <div
-                key={row.key}
-                className="grid gap-2 rounded-lg border border-[var(--line)] p-3 md:grid-cols-[1fr_140px_auto]"
-              >
-                <select
-                  value={row.product_id}
-                  onChange={(e) =>
-                    setInputs((prev) =>
-                      prev.map((r) =>
-                        r.key === row.key
-                          ? { ...r, product_id: e.target.value }
-                          : r,
-                      ),
-                    )
-                  }
-                  className={inputClass}
-                  required={idx === 0}
-                >
-                  <option value="">Materia prima…</option>
-                  {materiasPrimas.map((mp) => (
-                    <option key={mp.id} value={mp.id}>
-                      {mp.name} · {mp.current_stock} {mp.unit} ·{" "}
-                      {formatUnitCost(Number(mp.unit_cost || 0))}/{mp.unit}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="number"
-                  step="any"
-                  min="0"
-                  placeholder={`Cantidad ${p?.unit ?? ""}`}
-                  value={row.quantity}
-                  onChange={(e) =>
-                    setInputs((prev) =>
-                      prev.map((r) =>
-                        r.key === row.key
-                          ? { ...r, quantity: e.target.value }
-                          : r,
-                      ),
-                    )
-                  }
-                  className={inputClass}
-                />
-                <button
-                  type="button"
-                  className="text-sm text-[var(--muted)]"
-                  onClick={() =>
-                    setInputs((prev) =>
-                      prev.length === 1
-                        ? prev
-                        : prev.filter((r) => r.key !== row.key),
-                    )
-                  }
-                >
-                  Quitar
-                </button>
-                {p ? (
-                  <p className="text-xs text-[var(--muted)] md:col-span-3">
-                    Costo línea ≈{" "}
-                    {formatCOP(
-                      money(row.quantity || 0).times(Number(p.unit_cost || 0)),
+              <div key={row.key} className="space-y-1">
+                <div className="flex flex-wrap items-start gap-2">
+                  <InventoryProductPicker
+                    products={materiasPrimas}
+                    value={row.product_id}
+                    required={idx === 0}
+                    excludeIds={usedElsewhere}
+                    onChange={(productId) =>
+                      setInputs((prev) =>
+                        prev.map((r) =>
+                          r.key === row.key
+                            ? { ...r, product_id: productId }
+                            : r,
+                        ),
+                      )
+                    }
+                  />
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    max={stock > 0 ? stock : undefined}
+                    inputMode="decimal"
+                    placeholder={p ? `Cant. ${p.unit}` : "Cantidad"}
+                    value={row.quantity}
+                    onChange={(e) =>
+                      setInputs((prev) =>
+                        prev.map((r) =>
+                          r.key === row.key
+                            ? { ...r, quantity: e.target.value }
+                            : r,
+                        ),
+                      )
+                    }
+                    className={cn(
+                      inputClass,
+                      "w-28",
+                      overStock && "border-red-400",
                     )}
+                    required={idx === 0}
+                  />
+                  {inputs.length > 1 ? (
+                    <button
+                      type="button"
+                      className="mt-2 text-sm text-[var(--muted)]"
+                      onClick={() =>
+                        setInputs((prev) =>
+                          prev.filter((r) => r.key !== row.key),
+                        )
+                      }
+                      aria-label="Quitar línea"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                </div>
+                {overStock && p ? (
+                  <p className="text-xs text-red-700">
+                    {stock <= 0
+                      ? `Sin existencia de ${p.name}`
+                      : `Máximo disponible: ${stock} ${p.unit}`}
                   </p>
                 ) : null}
               </div>
@@ -321,82 +542,72 @@ export function InsumoProductionForm({
         </div>
       </section>
 
-      <section className="grid gap-4 rounded-xl border border-[var(--line)] bg-white p-4 md:grid-cols-2">
+      {/* Resultado útil */}
+      <section className="rounded-xl border border-[var(--line)] bg-white p-4">
         <label className="space-y-1 text-sm">
           <span className="text-[var(--muted)]">
-            Cantidad útil del insumo ({outputProduct?.unit ?? "u"})
+            Quedó usable ({outputProduct?.unit ?? "u"})
           </span>
           <input
             required
             type="number"
             step="any"
             min="0"
+            inputMode="decimal"
             value={outputQty}
             onChange={(e) => setOutputQty(e.target.value)}
-            placeholder="Ej. 1500"
+            placeholder="Cantidad útil"
             className={inputClass}
           />
         </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-[var(--muted)]">
-            Merma (opcional; si vacío se calcula)
-          </span>
-          <input
-            type="number"
-            step="any"
-            min="0"
-            value={mermaQty}
-            onChange={(e) => setMermaQty(e.target.value)}
-            placeholder="Auto"
-            className={inputClass}
-          />
-        </label>
-        <label className="space-y-1 text-sm md:col-span-2">
-          <span className="text-[var(--muted)]">Notas</span>
-          <input
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            className={inputClass}
-          />
-        </label>
+        {preview && preview.mermaQty > 0 ? (
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Merma automática:{" "}
+            <strong className="text-[var(--ink)]">{preview.mermaQty}</strong>
+            {preview.mermaPct != null
+              ? ` (${preview.mermaPct.toFixed(1)}%)`
+              : ""}
+          </p>
+        ) : null}
       </section>
 
-      <section className="space-y-3 rounded-xl border border-[var(--line)] bg-white p-4">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <h2 className="font-medium">Aprovechamientos</h2>
-            <p className="text-xs text-[var(--muted)]">
-              Opcional. Ej. tallos → fondo. Asigne un costo para bajar el del
-              insumo principal.
-            </p>
-          </div>
+      {/* Aprovechamiento opcional */}
+      <section className="rounded-xl border border-[var(--line)] bg-white p-4">
+        {!showAprov && aprov.length === 0 ? (
           <button
             type="button"
             className="text-sm text-[var(--accent)]"
-            onClick={() =>
-              setAprov((prev) => [
-                ...prev,
+            onClick={() => {
+              setShowAprov(true);
+              setAprov([
                 {
                   key: uid(),
                   product_id: "",
                   quantity: "",
                   allocated_cost: "0",
                 },
-              ])
-            }
+              ]);
+            }}
           >
-            + Aprovechamiento
+            + Hubo aprovechamiento
           </button>
-        </div>
-        {aprov.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">Sin aprovechamientos.</p>
         ) : (
           <div className="space-y-3">
-            {aprov.map((row) => (
-              <div
-                key={row.key}
-                className="grid gap-2 rounded-lg border border-[var(--line)] p-3 md:grid-cols-[1fr_120px_140px_auto]"
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">Aprovechamiento</h3>
+              <button
+                type="button"
+                className="text-xs text-[var(--muted)]"
+                onClick={() => {
+                  setShowAprov(false);
+                  setAprov([]);
+                }}
               >
+                Quitar
+              </button>
+            </div>
+            {aprov.map((row) => (
+              <div key={row.key} className="grid gap-2 sm:grid-cols-3">
                 <select
                   value={row.product_id}
                   onChange={(e) =>
@@ -408,9 +619,9 @@ export function InsumoProductionForm({
                       ),
                     )
                   }
-                  className={inputClass}
+                  className={`${inputClass} sm:col-span-3`}
                 >
-                  <option value="">Insumo / preparación…</option>
+                  <option value="">Producto…</option>
                   {aprovechamientoOptions
                     .filter((p) => p.id !== outputProductId)
                     .map((p) => (
@@ -440,7 +651,7 @@ export function InsumoProductionForm({
                   type="number"
                   step="any"
                   min="0"
-                  placeholder="Costo asignado"
+                  placeholder="Costo $"
                   value={row.allocated_cost}
                   onChange={(e) =>
                     setAprov((prev) =>
@@ -453,24 +664,16 @@ export function InsumoProductionForm({
                   }
                   className={inputClass}
                 />
-                <button
-                  type="button"
-                  className="text-sm text-[var(--muted)]"
-                  onClick={() =>
-                    setAprov((prev) => prev.filter((r) => r.key !== row.key))
-                  }
-                >
-                  Quitar
-                </button>
                 {Number(row.quantity) > 0 ? (
-                  <p className="text-xs text-[var(--muted)] md:col-span-4">
-                    Costo/u aprovechamiento ≈{" "}
+                  <p className="text-xs text-[var(--muted)] sm:col-span-3">
+                    ≈{" "}
                     {formatUnitCost(
                       aprovechamientoUnitCost(
                         Number(row.quantity),
                         Number(row.allocated_cost || 0),
                       ),
                     )}
+                    /u
                   </p>
                 ) : null}
               </div>
@@ -480,63 +683,46 @@ export function InsumoProductionForm({
       </section>
 
       {preview ? (
-        <section className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
-          <h2 className="font-medium">Vista previa de costeo</h2>
-          <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <section className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+          <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <dt className="text-[var(--muted)]">Costo entradas</dt>
-              <dd className="font-medium">{formatCOP(preview.inputTotalCost)}</dd>
-            </div>
-            <div>
-              <dt className="text-[var(--muted)]">Merma</dt>
-              <dd className="font-medium">
-                {preview.mermaQty}
-                {preview.mermaPct != null
-                  ? ` (${preview.mermaPct.toFixed(1)}%)`
-                  : ""}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[var(--muted)]">Rendimiento</dt>
-              <dd className="font-medium">
-                {preview.yieldPct != null
-                  ? `${preview.yieldPct.toFixed(1)}%`
-                  : "—"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[var(--muted)]">
-                Nuevo costo / {outputProduct?.unit ?? "u"}
-              </dt>
-              <dd className="font-display text-xl font-semibold">
+              <p className="text-xs text-[var(--muted)]">Nuevo costo / u</p>
+              <p className="font-display text-2xl font-semibold">
                 {formatUnitCost(preview.outputUnitCost)}
-              </dd>
+              </p>
             </div>
-          </dl>
-          {preview.aprovechamientoTotalCost > 0 ? (
-            <p className="mt-2 text-xs text-[var(--muted)]">
-              Aprovechamientos llevan {formatCOP(preview.aprovechamientoTotalCost)}{" "}
-              del costo; el principal queda en{" "}
-              {formatCOP(preview.outputTotalCost)}.
+            <p className="text-sm text-[var(--muted)]">
+              Entradas {formatCOP(preview.inputTotalCost)}
+              {preview.yieldPct != null
+                ? ` · rinde ${preview.yieldPct.toFixed(0)}%`
+                : ""}
             </p>
-          ) : null}
+          </div>
         </section>
       ) : null}
 
+      {stockIssues.length > 0 ? (
+        <p className="text-sm text-red-700">{stockIssues[0]}</p>
+      ) : null}
       {error ? <p className="text-sm text-red-700">{error}</p> : null}
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button
           type="submit"
-          disabled={pending || !insumos.length || !materiasPrimas.length}
+          disabled={
+            pending ||
+            !insumos.length ||
+            !materiasPrimas.length ||
+            !canSubmit
+          }
           className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
         >
-          {pending ? "Guardando…" : "Completar producción"}
+          {pending ? "Guardando…" : "Crear más"}
         </button>
         <button
           type="button"
           className="text-sm text-[var(--muted)]"
-          onClick={() => router.push("/cocina/producciones")}
+          onClick={() => router.push("/cocina/insumos")}
         >
           Cancelar
         </button>

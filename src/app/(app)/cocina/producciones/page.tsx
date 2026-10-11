@@ -55,7 +55,7 @@ export default async function CocinaProduccionesPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Historial · Crear más"
-            description="Registro de batches. Lo habitual es entrar desde Insumos o Preparaciones con Crear más (producto ya en catálogo + receta). Aquí también puede iniciar un batch genérico."
+            description="Registro de batches. Insumos: Crear más con merma/aprovechamiento (sin receta). Preparaciones: Crear más desde su receta."
           />
           {canCreate ? (
             <div className="flex flex-wrap gap-2">

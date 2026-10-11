@@ -89,11 +89,44 @@ export function PreparacionProductionForm({
     });
   }, [selected, outputQty, recipeYield]);
 
+  const stockIssues = useMemo(() => {
+    if (!selected?.recipe || !preview) return [] as string[];
+    const issues: string[] = [];
+    selected.recipe.lines.forEach((l, i) => {
+      const scaled = preview.scaledLines[i]?.scaledQuantity ?? 0;
+      const stock = Number(l.current_stock || 0);
+      if (!(stock > 0)) {
+        issues.push(`Sin existencia de ${l.name}`);
+        return;
+      }
+      if (scaled > stock) {
+        issues.push(
+          `${l.name}: necesita ${scaled} ${l.unit}, solo hay ${stock} ${l.unit}`,
+        );
+      }
+    });
+    return issues;
+  }, [selected, preview]);
+
+  const canSubmit =
+    Boolean(selected?.recipe) &&
+    outputQty > 0 &&
+    stockIssues.length === 0 &&
+    (selected?.recipe?.lines.length ?? 0) > 0;
+
   return (
     <form
       className="space-y-6"
       action={(fd) => {
         setError(null);
+        if (stockIssues.length > 0) {
+          setError(stockIssues[0]);
+          return;
+        }
+        if (!(outputQty > 0)) {
+          setError("Indique la cantidad a producir");
+          return;
+        }
         fd.set("title", title || `Batch ${selected?.name ?? ""}`);
         fd.set("produced_at", producedAt);
         fd.set("output_product_id", productId);
@@ -204,11 +237,17 @@ export function PreparacionProductionForm({
             Factor ×{preview ? preview.scaleFactor.toFixed(3) : "—"} · producir{" "}
             {outputQty || 0} {selected.unit}
           </p>
+          {stockIssues.length > 0 ? (
+            <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+              No se puede crear más: falta existencia en la base (
+              {stockIssues[0]}).
+            </p>
+          ) : null}
           <ul className="mt-3 space-y-2 text-sm">
             {selected.recipe.lines.map((l, i) => {
               const scaled = preview?.scaledLines[i]?.scaledQuantity ?? 0;
               const stock = Number(l.current_stock || 0);
-              const short = scaled > stock;
+              const short = !(stock > 0) || scaled > stock;
               return (
                 <li
                   key={`${l.component_product_id}-${i}`}
@@ -220,8 +259,10 @@ export function PreparacionProductionForm({
                       ({Number(l.quantity)} {l.unit} en ficha)
                     </span>
                   </span>
-                  <span className={short ? "text-red-700" : ""}>
-                    Consume {scaled} {l.unit} · hay {stock}
+                  <span className={short ? "font-medium text-red-700" : ""}>
+                    {stock <= 0
+                      ? `Sin existencia · pide ${scaled} ${l.unit}`
+                      : `Consume ${scaled} ${l.unit} · hay ${stock}`}
                   </span>
                 </li>
               );
@@ -263,10 +304,10 @@ export function PreparacionProductionForm({
       <div className="flex flex-wrap gap-3">
         <button
           type="submit"
-          disabled={pending || !withRecipe.length || !(outputQty > 0)}
+          disabled={pending || !withRecipe.length || !canSubmit}
           className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
         >
-          {pending ? "Produciendo…" : "Completar producción"}
+          {pending ? "Produciendo…" : "Crear más"}
         </button>
         <button
           type="button"

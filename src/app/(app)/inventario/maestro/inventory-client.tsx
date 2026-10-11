@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   bulkImportProductsAction,
@@ -11,12 +12,17 @@ import {
   softDeleteProductCategoryAction,
   softDeleteProductUnitAction,
   updateProductAction,
+  updateProductCategoryAction,
   updateProductMinStockAction,
   updateProductUnitAction,
   updateProductUnitCostAction,
 } from "../../compras/inventory-actions";
 import { money } from "@/lib/money";
 import { indexUnitCost, suggestedPurchaseQty } from "@/lib/inventory/cost";
+import {
+  KITCHEN_ITEM_KIND_LABELS,
+  type KitchenItemKind,
+} from "@/lib/kitchen/cost";
 import {
   BULK_PRODUCT_COLUMN_META,
   BULK_PRODUCT_HEADER_REQUIRED,
@@ -55,7 +61,39 @@ export type ProductRow = {
   current_stock: number | string;
   unit_cost: number | string;
   notes: string | null;
+  /** Si falta (productos viejos), se trata como materia prima. */
+  item_kind?: KitchenItemKind | string | null;
 };
+
+function productKind(product: ProductRow): KitchenItemKind {
+  const kind = product.item_kind;
+  if (
+    kind === "INSUMO_PREPARACION" ||
+    kind === "PREPARACION" ||
+    kind === "PRODUCTO_CARTA"
+  ) {
+    return kind;
+  }
+  return "MATERIA_PRIMA";
+}
+
+function isEditableInInventario(product: ProductRow) {
+  return productKind(product) === "MATERIA_PRIMA";
+}
+
+function cocinaHrefForProduct(product: ProductRow) {
+  const kind = productKind(product);
+  if (kind === "INSUMO_PREPARACION") {
+    return `/cocina/insumos?producto=${product.id}`;
+  }
+  if (kind === "PREPARACION") {
+    return `/cocina/preparaciones?producto=${product.id}`;
+  }
+  if (kind === "PRODUCTO_CARTA") {
+    return `/cocina/carta?producto=${product.id}`;
+  }
+  return "/cocina";
+}
 
 const inputClass =
   "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
@@ -686,8 +724,12 @@ function ProductCard({
   const [editingCost, setEditingCost] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const editable = isEditableInInventario(product);
+  const kind = productKind(product);
   const stock = Number(product.current_stock);
-  const suggest = suggestedPurchaseQty(stock, Number(product.min_stock));
+  const suggest = editable
+    ? suggestedPurchaseQty(stock, Number(product.min_stock))
+    : 0;
   const underMin = suggest > 0;
   const zeroStock = !Number.isNaN(stock) && stock <= 0;
 
@@ -702,12 +744,21 @@ function ProductCard({
       className={
         focused
           ? "scroll-mt-24 border-t border-[var(--line)] bg-amber-50 px-4 py-3 ring-2 ring-inset ring-amber-400 first:border-t-0"
-          : "scroll-mt-24 border-t border-[var(--line)] bg-white px-4 py-3 first:border-t-0"
+          : editable
+            ? "scroll-mt-24 border-t border-[var(--line)] bg-white px-4 py-3 first:border-t-0"
+            : "scroll-mt-24 border-t border-[var(--line)] bg-neutral-50/80 px-4 py-3 first:border-t-0"
       }
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="font-medium">{product.name}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-medium">{product.name}</p>
+            {!editable ? (
+              <span className="rounded-md bg-white px-2 py-0.5 text-xs text-[var(--muted)] ring-1 ring-[var(--line)]">
+                {KITCHEN_ITEM_KIND_LABELS[kind]} · solo lectura
+              </span>
+            ) : null}
+          </div>
           <p className="text-sm text-[var(--muted)]">
             {product.sku ? `SKU ${product.sku} · ` : ""}
             {product.unit}
@@ -723,68 +774,81 @@ function ProductCard({
             >
               stock {product.current_stock}
             </span>
-            {" / mín. "}
-            {product.min_stock}
+            {editable ? (
+              <>
+                {" / mín. "}
+                {product.min_stock}
+              </>
+            ) : null}
             {" · "}
             {formatUnitCost(product.unit_cost)}/u
             {underMin ? ` · sugerido comprar ${suggest}` : ""}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
-            onClick={() => {
-              setError(null);
-              setEditing(false);
-              setEditingMin(false);
-              setEditingCost((v) => !v);
-            }}
-          >
-            {editingCost ? "Cerrar costo" : "Costo"}
-          </button>
-          {canEditMinStock ? (
+        {editable ? (
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
               onClick={() => {
                 setError(null);
                 setEditing(false);
-                setEditingCost(false);
-                setEditingMin((v) => !v);
+                setEditingMin(false);
+                setEditingCost((v) => !v);
               }}
             >
-              {editingMin ? "Cerrar mín." : "Stock mín."}
+              {editingCost ? "Cerrar costo" : "Costo"}
             </button>
-          ) : null}
-          <button
-            type="button"
-            className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
-            onClick={() => {
-              setError(null);
-              closeQuickPanels();
-              setEditing((v) => !v);
-            }}
+            {canEditMinStock ? (
+              <button
+                type="button"
+                className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
+                onClick={() => {
+                  setError(null);
+                  setEditing(false);
+                  setEditingCost(false);
+                  setEditingMin((v) => !v);
+                }}
+              >
+                {editingMin ? "Cerrar mín." : "Stock mín."}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
+              onClick={() => {
+                setError(null);
+                closeQuickPanels();
+                setEditing((v) => !v);
+              }}
+            >
+              {editing ? "Cerrar" : "Editar"}
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              className="text-sm text-red-700"
+              onClick={() => {
+                if (!confirm("¿Desactivar producto?")) return;
+                startTransition(async () => {
+                  await softDeleteProductAction(product.id);
+                });
+              }}
+            >
+              Desactivar
+            </button>
+          </div>
+        ) : (
+          <Link
+            href={cocinaHrefForProduct(product)}
+            className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm"
           >
-            {editing ? "Cerrar" : "Editar"}
-          </button>
-          <button
-            type="button"
-            disabled={pending}
-            className="text-sm text-red-700"
-            onClick={() => {
-              if (!confirm("¿Desactivar producto?")) return;
-              startTransition(async () => {
-                await softDeleteProductAction(product.id);
-              });
-            }}
-          >
-            Desactivar
-          </button>
-        </div>
+            Ir a Cocina
+          </Link>
+        )}
       </div>
 
-      {editingCost ? (
+      {editable && editingCost ? (
         <form
           className="mt-3 flex flex-wrap items-end gap-2 border-t border-[var(--line)] pt-3"
           action={(fd) => {
@@ -817,7 +881,7 @@ function ProductCard({
         </form>
       ) : null}
 
-      {editingMin && canEditMinStock ? (
+      {editable && editingMin && canEditMinStock ? (
         <form
           className="mt-3 flex flex-wrap items-end gap-2 border-t border-[var(--line)] pt-3"
           action={(fd) => {
@@ -850,7 +914,7 @@ function ProductCard({
         </form>
       ) : null}
 
-      {editing ? (
+      {editable && editing ? (
         <form
           className="mt-4 space-y-3 border-t border-[var(--line)] pt-4"
           action={(fd) => {
@@ -897,6 +961,7 @@ function CategoryGroup({
   focusProductId?: string | null;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   useEffect(() => {
@@ -912,8 +977,10 @@ function CategoryGroup({
   }, [focusProductId, products]);
   const underMinCount = products.filter(
     (p) =>
+      isEditableInInventario(p) &&
       suggestedPurchaseQty(Number(p.current_stock), Number(p.min_stock)) > 0,
   ).length;
+  const cocinaCount = products.filter((p) => !isEditableInInventario(p)).length;
   const title = category
     ? `${category.code} — ${category.name}`
     : "Sin categoría";
@@ -921,60 +988,146 @@ function CategoryGroup({
 
   return (
     <section className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]">
-      <div className="flex items-start gap-2 border-l-4 border-l-[var(--ink)] bg-neutral-50 px-4 py-3">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex min-w-0 flex-1 items-start justify-between gap-3 text-left"
-          aria-expanded={open}
-        >
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="font-medium">{title}</h3>
-              <span className="rounded-md bg-white px-2 py-0.5 text-xs text-[var(--muted)] ring-1 ring-[var(--line)]">
-                {products.length}{" "}
-                {products.length === 1 ? "producto" : "productos"}
-              </span>
-              {underMinCount > 0 ? (
-                <span className="rounded-md bg-amber-50 px-2 py-0.5 text-xs text-amber-900 ring-1 ring-amber-200">
-                  {underMinCount} bajo mínimo
-                </span>
-              ) : null}
-            </div>
-            {description ? (
-              <p className="mt-1 text-sm text-[var(--muted)]">{description}</p>
-            ) : null}
-            {error ? (
-              <p className="mt-1 text-xs text-red-700">{error}</p>
-            ) : null}
-          </div>
-          <span className="mt-0.5 shrink-0 text-sm text-[var(--muted)]">
-            {open ? "Ocultar" : "Ver"}
-          </span>
-        </button>
-        {category ? (
-          <button
-            type="button"
-            disabled={pending}
-            className="mt-0.5 shrink-0 text-xs text-red-700 disabled:opacity-60"
-            onClick={() => {
-              if (
-                !confirm(
-                  `¿Eliminar categoría ${category.code}? Solo si no tiene productos.`,
-                )
-              ) {
-                return;
-              }
+      <div className="border-l-4 border-l-[var(--ink)] bg-neutral-50 px-4 py-3">
+        {editing && category ? (
+          <form
+            className="space-y-2"
+            action={(fd) => {
               setError(null);
               startTransition(async () => {
-                const r = await softDeleteProductCategoryAction(category.id);
+                const r = await updateProductCategoryAction(category.id, fd);
                 if (!r.ok) setError(r.error ?? "Error");
+                else setEditing(false);
               });
             }}
           >
-            Eliminar
-          </button>
-        ) : null}
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="block text-sm">
+                <span className="mb-1 block text-[var(--muted)]">Código</span>
+                <input
+                  name="code"
+                  required
+                  defaultValue={category.code}
+                  className={inputClass}
+                  aria-label="Código de categoría"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block text-[var(--muted)]">Nombre</span>
+                <input
+                  name="name"
+                  required
+                  autoFocus
+                  defaultValue={category.name}
+                  className={inputClass}
+                  aria-label="Nombre de categoría"
+                />
+              </label>
+              <label className="block text-sm sm:col-span-2">
+                <span className="mb-1 block text-[var(--muted)]">Descripción</span>
+                <input
+                  name="description"
+                  defaultValue={category.description ?? ""}
+                  className={inputClass}
+                  aria-label="Descripción de categoría"
+                />
+              </label>
+            </div>
+            {error ? <p className="text-xs text-red-700">{error}</p> : null}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                disabled={pending}
+                className="rounded-md bg-[var(--ink)] px-2.5 py-1 text-xs text-white disabled:opacity-60"
+              >
+                {pending ? "Guardando…" : "Guardar"}
+              </button>
+              <button
+                type="button"
+                className="text-xs text-[var(--muted)]"
+                onClick={() => {
+                  setError(null);
+                  setEditing(false);
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="flex items-start gap-2">
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="flex min-w-0 flex-1 items-start justify-between gap-3 text-left"
+              aria-expanded={open}
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-medium">{title}</h3>
+                  <span className="rounded-md bg-white px-2 py-0.5 text-xs text-[var(--muted)] ring-1 ring-[var(--line)]">
+                    {products.length}{" "}
+                    {products.length === 1 ? "producto" : "productos"}
+                  </span>
+                  {underMinCount > 0 ? (
+                    <span className="rounded-md bg-amber-50 px-2 py-0.5 text-xs text-amber-900 ring-1 ring-amber-200">
+                      {underMinCount} bajo mínimo
+                    </span>
+                  ) : null}
+                  {cocinaCount > 0 ? (
+                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-700 ring-1 ring-slate-200">
+                      {cocinaCount} cocina (solo lectura)
+                    </span>
+                  ) : null}
+                </div>
+                {description ? (
+                  <p className="mt-1 text-sm text-[var(--muted)]">{description}</p>
+                ) : null}
+                {error ? (
+                  <p className="mt-1 text-xs text-red-700">{error}</p>
+                ) : null}
+              </div>
+              <span className="mt-0.5 shrink-0 text-sm text-[var(--muted)]">
+                {open ? "Ocultar" : "Ver"}
+              </span>
+            </button>
+            {category ? (
+              <div className="mt-0.5 flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  className="text-xs text-[var(--muted)] hover:text-[var(--ink)]"
+                  onClick={() => {
+                    setError(null);
+                    setEditing(true);
+                  }}
+                >
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  disabled={pending}
+                  className="text-xs text-red-700 disabled:opacity-60"
+                  onClick={() => {
+                    if (
+                      !confirm(
+                        `¿Eliminar categoría ${category.code}? Solo si no tiene productos.`,
+                      )
+                    ) {
+                      return;
+                    }
+                    setError(null);
+                    startTransition(async () => {
+                      const r = await softDeleteProductCategoryAction(category.id);
+                      if (!r.ok) setError(r.error ?? "Error");
+                    });
+                  }}
+                >
+                  Eliminar
+                </button>
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
 
       {open ? (
@@ -1034,11 +1187,15 @@ function IndexCostsPanel({
   const pctValid = Number.isFinite(pct) && pct !== 0;
 
   const targetProducts = useMemo(() => {
-    if (scope === "visible") return filteredProducts;
+    const onlyPurchasable = (list: ProductRow[]) =>
+      list.filter((p) => isEditableInInventario(p));
+    if (scope === "visible") return onlyPurchasable(filteredProducts);
     if (scope === "category") {
-      return products.filter((p) => p.category_id === categoryId);
+      return onlyPurchasable(
+        products.filter((p) => p.category_id === categoryId),
+      );
     }
-    return products;
+    return onlyPurchasable(products);
   }, [scope, filteredProducts, products, categoryId]);
 
   const sample = useMemo(() => {
@@ -1225,12 +1382,15 @@ export function InventoryLists({
     if (!searching) return products;
     return products.filter((p) => {
       const cat = categoryById.get(p.category_id);
+      const kind = productKind(p);
       const haystack = [
         p.name,
         p.sku ?? "",
         p.unit,
         cat?.code ?? "",
         cat?.name ?? "",
+        KITCHEN_ITEM_KIND_LABELS[kind],
+        kind === "MATERIA_PRIMA" ? "materia prima compras" : "cocina",
       ]
         .join(" ")
         .toLowerCase();
@@ -1304,7 +1464,7 @@ export function InventoryLists({
           <div>
             <h3 className="font-medium">Inventario por categoría</h3>
             <p className="text-sm text-[var(--muted)]">
-              Los productos viven dentro de su categoría
+              Materias primas editables · ítems de Cocina visibles en solo lectura
             </p>
           </div>
           <div className="flex w-full flex-wrap items-end gap-2 sm:w-auto">

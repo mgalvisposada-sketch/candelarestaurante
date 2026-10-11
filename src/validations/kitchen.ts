@@ -21,6 +21,17 @@ export const createKitchenProductSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
+export const updateKitchenProductSchema = z.object({
+  category_id: z.string().uuid("Categoría inválida"),
+  unit_id: z.string().uuid("Unidad inválida"),
+  sku: z.string().optional().nullable(),
+  name: z.string().min(1, "Nombre obligatorio"),
+  min_stock: z.string().optional().nullable(),
+  current_stock: z.string().min(1, "Stock obligatorio"),
+  unit_cost: z.string().min(1, "Costo unitario obligatorio"),
+  notes: z.string().optional().nullable(),
+});
+
 export const kitchenProductionInputSchema = z.object({
   product_id: z.string().uuid("Materia prima inválida"),
   quantity: z.string().min(1, "Cantidad obligatoria"),

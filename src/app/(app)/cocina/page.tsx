@@ -195,12 +195,12 @@ export default async function CocinaPage() {
               cta={canInventario ? "Ver inventario" : undefined}
               tone="base"
             />
-            <CascadeArrow label="limpia / porciona" />
+            <CascadeArrow label="merma / aprovechamiento" />
             <CascadeLevel
               step="1"
               title="Insumo preparación"
               subtitle="Inventario de cocina"
-              detail="Resultado usable tras merma (cebolla limpia, solomito porcionado)."
+              detail="Sin receta: limpia/porciona materia prima, registra merma y aprovechamientos."
               count={insumosCount ?? 0}
               href={canMaestro ? "/cocina/insumos" : undefined}
               cta={canMaestro ? "Ver insumos" : undefined}
@@ -337,15 +337,14 @@ export default async function CocinaPage() {
             </h2>
             <p className="mt-2 text-sm text-[var(--muted)]">
               Fabricar más cantidad de un producto que ya está en el catálogo.
-              Usa la receta, consume inventario y entra stock. No da de alta
-              productos nuevos.
+              Consume inventario y entra stock. No da de alta productos nuevos.
             </p>
             <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm">
               <p>
                 <span className="font-medium">Crear más · Insumo</span>
                 <span className="text-[var(--muted)]">
                   {" "}
-                  · receta con materia prima (+ merma)
+                  · materia prima + merma (+ aprovechamiento)
                 </span>
               </p>
               <p className="mt-2">

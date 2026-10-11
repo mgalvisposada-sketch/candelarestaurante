@@ -65,10 +65,9 @@ export default async function InventarioMaestroPage({
       supabase
         .from("products")
         .select(
-          "id, category_id, unit_id, sku, name, unit, min_stock, current_stock, unit_cost, notes",
+          "id, category_id, unit_id, sku, name, unit, min_stock, current_stock, unit_cost, notes, item_kind",
         )
         .eq("organization_id", ctx.organization.id)
-        .eq("item_kind", "MATERIA_PRIMA")
         .is("deleted_at", null)
         .order("name"),
     ]);
@@ -76,6 +75,9 @@ export default async function InventarioMaestroPage({
   const categories = (catRows ?? []) as CategoryRow[];
   const units = (unitRows ?? []) as UnitRow[];
   const products = (prodRows ?? []) as ProductRow[];
+  const kitchenVisible = products.some(
+    (p) => (p.item_kind ?? "MATERIA_PRIMA") !== "MATERIA_PRIMA",
+  );
 
   return (
     <>
@@ -87,8 +89,8 @@ export default async function InventarioMaestroPage({
         />
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
-            title="Maestro de materias primas"
-            description="Inventario comprable (proteínas, fruver, lácteos…). Los insumos de cocina, preparaciones y carta viven en Cocina."
+            title="Maestro de inventario"
+            description="Aquí edita materias primas (compras). Los insumos, preparaciones y carta de Cocina se muestran en solo lectura dentro de su categoría."
           />
           <div className="flex w-full flex-wrap gap-2">
             <Link
@@ -108,11 +110,21 @@ export default async function InventarioMaestroPage({
           <Link href="/proveedores/maestro" className="text-[var(--accent)]">
             Maestro de proveedores
           </Link>
-          . Reposiciones en{" "}
+          {" "}y Cocina. Reposiciones en{" "}
           <Link href="/compras/sugeridos" className="text-[var(--accent)]">
             Sugeridos
           </Link>
           .
+          {kitchenVisible ? (
+            <>
+              {" "}
+              Los ítems de Cocina aparecen marcados y solo se gestionan desde{" "}
+              <Link href="/cocina" className="text-[var(--accent)]">
+                Cocina
+              </Link>
+              .
+            </>
+          ) : null}
         </p>
         {categories.length === 0 && units.length === 0 && products.length === 0 ? (
           <EmptyState

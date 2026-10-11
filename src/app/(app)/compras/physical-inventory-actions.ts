@@ -522,6 +522,25 @@ export async function submitPhysicalCountCategoryAction(
   }
 
   const canOverride = ctxCanAccess(ctx, "inventario.fisico.ajustar");
+
+  // Todos los productos de la categoría deben tener conteo (0 vale).
+  const { data: countedRows } = await supabase
+    .from("physical_inventory_count_items")
+    .select("product_id")
+    .eq("count_id", countId)
+    .eq("organization_id", ctx.organization.id)
+    .in("product_id", productIds)
+    .is("deleted_at", null);
+
+  const countedIds = new Set((countedRows ?? []).map((r) => r.product_id));
+  const missing = productIds.filter((id) => !countedIds.has(id)).length;
+  if (missing > 0) {
+    return {
+      ok: false,
+      error: `Faltan ${missing} producto${missing === 1 ? "" : "s"} por contar en esta categoría (puede registrar 0)`,
+    };
+  }
+
   const { data: items } = await supabase
     .from("physical_inventory_count_items")
     .select("id, product_id, status, created_by")
@@ -534,7 +553,7 @@ export async function submitPhysicalCountCategoryAction(
   if (!items?.length) {
     return {
       ok: false,
-      error: "Cuente al menos un producto de la categoría antes de enviar",
+      error: "No hay productos en borrador para enviar en esta categoría",
     };
   }
 
