@@ -41,6 +41,13 @@ export const correctPhysicalCountItemSchema = z.object({
   counted_qty: z.string().min(1, "Cantidad contada obligatoria"),
 });
 
+/** Autorizar uno o varios ítems ENVIADO (selección / individual). */
+export const applyPhysicalCountItemsSchema = z.object({
+  item_ids: z
+    .array(z.string().uuid("Ítem inválido"))
+    .min(1, "Seleccione al menos un producto"),
+});
+
 export const rejectPhysicalCountSchema = z.object({
   rejection_reason: z.string().min(2, "Indique el motivo"),
 });

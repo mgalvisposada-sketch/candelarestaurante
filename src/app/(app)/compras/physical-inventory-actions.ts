@@ -11,6 +11,7 @@ import {
   normalizePhysicalCategoryId,
 } from "@/lib/inventory/physical-count";
 import {
+  applyPhysicalCountItemsSchema,
   correctPhysicalCountItemSchema,
   createPhysicalCountSchema,
   physicalCountItemSchema,
@@ -897,6 +898,90 @@ export async function rejectPhysicalCountAction(
     ctx.organization.id,
     ctx.userId,
   );
+  revalidatePhysical(countId);
+  return { ok: true, id: countId };
+}
+
+/**
+ * Aplica ajustes de ítems ENVIADO seleccionados (uno o varios).
+ * Solo Gestión / permiso ajustar.
+ */
+export async function applyPhysicalCountItemsAction(
+  countId: string,
+  itemIds: string[],
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "inventario.fisico.ajustar")) {
+    return { ok: false, error: "Sin permiso para ajustar inventario" };
+  }
+
+  const parsed = applyPhysicalCountItemsSchema.safeParse({ item_ids: itemIds });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Selección inválida",
+    };
+  }
+
+  const uniqueIds = [...new Set(parsed.data.item_ids)];
+  const supabase = await createClient();
+  const { data: count } = await supabase
+    .from("physical_inventory_counts")
+    .select("id")
+    .eq("id", countId)
+    .eq("organization_id", ctx.organization.id)
+    .maybeSingle();
+  if (!count) return { ok: false, error: "Conteo no encontrado" };
+
+  const { data: items } = await supabase
+    .from("physical_inventory_count_items")
+    .select("id, product_id, system_qty, counted_qty")
+    .eq("count_id", countId)
+    .eq("organization_id", ctx.organization.id)
+    .in("id", uniqueIds)
+    .eq("status", "ENVIADO")
+    .is("deleted_at", null);
+
+  if (!items?.length) {
+    return { ok: false, error: "No hay ítems en revisión en la selección" };
+  }
+  if (items.length !== uniqueIds.length) {
+    return {
+      ok: false,
+      error: "Algunos productos ya no están en revisión; actualice y reintente",
+    };
+  }
+
+  const applyError = await applyItemsToStock(
+    supabase,
+    ctx.organization.id,
+    ctx.userId,
+    countId,
+    items,
+  );
+  if (applyError) return { ok: false, error: applyError };
+
+  await syncCountHeaderStatus(
+    supabase,
+    countId,
+    ctx.organization.id,
+    ctx.userId,
+  );
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "ADJUST",
+    entity: "physical_inventory_counts",
+    entity_id: countId,
+    new_values: {
+      item_ids: uniqueIds,
+      applied_count: items.length,
+      mode: "selection",
+    },
+  });
+
   revalidatePhysical(countId);
   return { ok: true, id: countId };
 }
