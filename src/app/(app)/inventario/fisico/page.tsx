@@ -122,21 +122,25 @@ export default async function InventarioFisicoPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Conteo físico"
-            description="El físico manda: al aplicar el ajuste, el stock queda en lo contado — materia prima, insumos preparación y preparaciones. Conteo a ciegas por categoría; Gestión aplica o rechaza."
+            description="Cuente a ciegas por categoría y envíe a revisión. La auditoría (novedades y ajuste de stock) está en Revisión física."
           />
           {canCreate ? <CreatePhysicalCountForm /> : null}
         </div>
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard
-            label="Por revisar"
+            label="En conteo"
+            value={String(drafts)}
+            hint="Borradores por digitar o enviar"
+          />
+          <StatCard
+            label="En revisión"
             value={String(pendingReview)}
             hint={
               canAdjust
-                ? "Esperan autorización de Gestión"
-                : "Enviados a Gestión"
+                ? "Autorizar en Revisión física"
+                : "Esperando Gestión"
             }
           />
-          <StatCard label="En conteo" value={String(drafts)} hint="Borradores" />
           <StatCard
             label="Conteos"
             value={String(counts.length)}

@@ -11,6 +11,7 @@ import {
   normalizePhysicalCategoryId,
 } from "@/lib/inventory/physical-count";
 import {
+  correctPhysicalCountItemSchema,
   createPhysicalCountSchema,
   physicalCountItemSchema,
   rejectPhysicalCountSchema,
@@ -38,7 +39,11 @@ function parseNumber(raw: string | null | undefined, fallback?: number) {
 
 function revalidatePhysical(countId?: string) {
   revalidatePath("/inventario/fisico");
-  if (countId) revalidatePath(`/inventario/fisico/${countId}`);
+  revalidatePath("/inventario/revision");
+  if (countId) {
+    revalidatePath(`/inventario/fisico/${countId}`);
+    revalidatePath(`/inventario/revision/${countId}`);
+  }
   revalidatePath("/inventario/maestro");
   revalidatePath("/inventario/lista");
   revalidatePath("/compras/sugeridos");
@@ -680,6 +685,103 @@ export async function submitPhysicalCountAction(
   );
   revalidatePhysical(countId);
   return { ok: true, id: countId };
+}
+
+/**
+ * Gestión corrige la cantidad contada de un ítem en revisión (p. ej. digitó
+ * gramos con unidad en kilos). Recalcula diferencia; el ítem sigue ENVIADO.
+ */
+export async function correctPhysicalCountItemAction(
+  countId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "inventario.fisico.ajustar")) {
+    return { ok: false, error: "Sin permiso para corregir en revisión" };
+  }
+
+  const parsed = correctPhysicalCountItemSchema.safeParse({
+    item_id: formData.get("item_id"),
+    counted_qty: formData.get("counted_qty"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const countedQty = parseNumber(parsed.data.counted_qty);
+  if (countedQty === null || countedQty < 0) {
+    return { ok: false, error: "Cantidad contada inválida" };
+  }
+
+  const supabase = await createClient();
+  const { data: count } = await supabase
+    .from("physical_inventory_counts")
+    .select("id, status")
+    .eq("id", countId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!count) return { ok: false, error: "Conteo no encontrado" };
+  if (count.status === "AJUSTADO") {
+    return { ok: false, error: "Este conteo ya está cerrado" };
+  }
+
+  const { data: item } = await supabase
+    .from("physical_inventory_count_items")
+    .select("id, status, counted_qty, system_qty, product_id")
+    .eq("id", parsed.data.item_id)
+    .eq("count_id", countId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!item) return { ok: false, error: "Ítem no encontrado" };
+  if (item.status !== "ENVIADO") {
+    return {
+      ok: false,
+      error: "Solo se corrigen productos que están en revisión",
+    };
+  }
+
+  const previousQty = Number(item.counted_qty);
+  if (previousQty === countedQty) {
+    return { ok: true, id: item.id };
+  }
+
+  const { error } = await supabase
+    .from("physical_inventory_count_items")
+    .update({
+      counted_qty: countedQty,
+      updated_by: ctx.userId,
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq("id", item.id)
+    .eq("status", "ENVIADO");
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "UPDATE",
+    entity: "physical_inventory_count_items",
+    entity_id: item.id,
+    old_values: {
+      counted_qty: previousQty,
+      system_qty: item.system_qty,
+      count_id: countId,
+      product_id: item.product_id,
+    },
+    new_values: {
+      counted_qty: countedQty,
+      count_id: countId,
+      product_id: item.product_id,
+      corrected_in_review: true,
+    },
+  });
+
+  revalidatePhysical(countId);
+  return { ok: true, id: item.id };
 }
 
 export async function rejectPhysicalCountCategoryAction(

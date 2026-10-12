@@ -173,8 +173,9 @@ export const APP_MODULES: AppModuleDef[] = [
       },
       {
         key: "inventario.fisico.ajustar",
-        label: "Aprobar ajuste de stock (auditor)",
-        description: "Solo quien audita: aplica o rechaza el conteo físico.",
+        label: "Revisión de inventario físico",
+        description:
+          "Bandeja de auditoría: ver novedades y aplicar o rechazar categorías enviadas.",
       },
     ],
   },

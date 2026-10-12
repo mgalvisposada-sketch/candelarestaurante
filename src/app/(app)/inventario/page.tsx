@@ -13,5 +13,8 @@ export default async function InventarioIndexPage() {
   if (ctxCanAccess(ctx, "inventario.fisico")) {
     redirect("/inventario/fisico");
   }
+  if (ctxCanAccess(ctx, "inventario.fisico.ajustar")) {
+    redirect("/inventario/revision");
+  }
   redirect("/inicio");
 }

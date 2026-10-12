@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  applyPhysicalCountCategoryAction,
-  rejectPhysicalCountCategoryAction,
   removePhysicalCountItemAction,
   submitPhysicalCountCategoryAction,
   upsertPhysicalCountItemAction,
@@ -68,7 +67,7 @@ const STATUS_META: Record<
   { label: string; tone: "neutral" | "ok" | "warn" | "danger" | "info" }
 > = {
   BORRADOR: { label: "Contando", tone: "info" },
-  ENVIADO: { label: "En progreso", tone: "warn" },
+  ENVIADO: { label: "En revisión", tone: "warn" },
   AJUSTADO: { label: "Ajustado", tone: "ok" },
   RECHAZADO: { label: "Rechazado", tone: "danger" },
 };
@@ -136,7 +135,6 @@ export function PhysicalCountDetailClient({
   const [draftQty, setDraftQty] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
   const [localItems, setLocalItems] = useState(items);
-  const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setLocalItems(items);
@@ -308,7 +306,8 @@ export function PhysicalCountDetailClient({
     }
 
     // Con filtro Pendientes: si ya contó todo lo digitable pero hay borradores
-    // por enviar (o hay revisión), la categoría debe seguir visible.
+    // por enviar (o hay revisión), la categoría debe seguir visible con esos
+    // productos — no solo el encabezado vacío ("0 en vista").
     if (filter === "pending" && !q) {
       for (const [categoryId, stats] of statsPerCat) {
         if (byCat.has(categoryId)) continue;
@@ -319,7 +318,10 @@ export function PhysicalCountDetailClient({
           products: products.filter((p) => {
             if (catKey(p.category_id) !== categoryId) return false;
             const item = itemByProduct.get(p.id);
-            return Boolean(item && itemEditable(item.status));
+            if (!item) return false;
+            return (
+              itemEditable(item.status) || item.status === "ENVIADO"
+            );
           }),
         });
       }
@@ -336,8 +338,21 @@ export function PhysicalCountDetailClient({
           adjusted: 0,
           label: g.label,
         };
+        // En revisión de gestión: novedades (dif ≠ 0) primero.
+        const sortedProducts =
+          canAdjust && stats.review > 0
+            ? [...g.products].sort((a, b) => {
+                const ia = itemByProduct.get(a.id);
+                const ib = itemByProduct.get(b.id);
+                const da = Math.abs(Number(ia?.difference_qty ?? 0));
+                const db = Math.abs(Number(ib?.difference_qty ?? 0));
+                if (da !== db) return db - da;
+                return a.name.localeCompare(b.name, "es");
+              })
+            : g.products;
         return {
           ...g,
+          products: sortedProducts,
           totalInCategory: stats.total,
           countedInCategory: stats.counted,
           draftInCategory: stats.draft,
@@ -562,9 +577,9 @@ export function PhysicalCountDetailClient({
               <p className="max-w-2xl text-sm text-[var(--muted)]">{count.notes}</p>
             ) : null}
             <p className="text-sm text-[var(--muted)]">
-              Incluye materia prima, insumos y preparaciones. Al aplicar el
-              ajuste, el físico manda: el stock del sistema queda en lo contado.
-              Una categoría a la vez; Gestión puede revisar mientras sigue.
+              Incluye materia prima, insumos y preparaciones. Cuente a ciegas
+              por categoría y envíe a revisión. La auditoría se hace en Revisión
+              física.
             </p>
           </div>
           <div className="w-full rounded-xl bg-white/80 px-4 py-3 shadow-[0_1px_0_rgba(18,18,18,0.04)] md:min-w-[180px] md:w-auto">
@@ -597,6 +612,25 @@ export function PhysicalCountDetailClient({
           </div>
         </div>
       </header>
+
+      {!isClosed && canAdjust && reviewCount > 0 ? (
+        <Link
+          href={`/inventario/revision/${count.id}`}
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/50 px-4 py-3.5 transition hover:bg-amber-50"
+        >
+          <div>
+            <p className="font-medium">
+              {reviewCount} producto{reviewCount === 1 ? "" : "s"} en revisión
+            </p>
+            <p className="mt-0.5 text-sm text-amber-950/70">
+              Vea novedades y autorice el ajuste en Revisión física.
+            </p>
+          </div>
+          <span className="text-sm font-medium text-[var(--accent)]">
+            Ir a revisión →
+          </span>
+        </Link>
+      ) : null}
 
       {!isClosed && canEdit ? (
         <section className="space-y-3 md:space-y-4">
@@ -877,7 +911,8 @@ export function PhysicalCountDetailClient({
                                       ) : null}
                                       {showCompare ? (
                                         <p className="mt-1 text-xs text-[var(--muted)]">
-                                          Sistema {formatQty(item.system_qty)} ·
+                                          Sistema {formatQty(item.system_qty)} →
+                                          Contado {formatQty(item.counted_qty)} ·
                                           Dif.{" "}
                                           <span
                                             className={cn(
@@ -893,6 +928,11 @@ export function PhysicalCountDetailClient({
                                               ? `+${formatQty(item.difference_qty)}`
                                               : formatQty(item.difference_qty)}
                                           </span>
+                                          {Number(item.difference_qty) !== 0 ? (
+                                            <span className="ml-1.5 font-medium text-amber-800">
+                                              Novedad
+                                            </span>
+                                          ) : null}
                                         </p>
                                       ) : null}
                                     </div>
@@ -1059,104 +1099,24 @@ export function PhysicalCountDetailClient({
                           </div>
                         ) : null}
 
-                        {canAdjust && group.reviewInCategory > 0 ? (
-                          <div className="space-y-3 border-t border-[var(--line)] bg-amber-50/50 p-3 sm:p-4">
-                            <div>
-                              <p className="text-sm font-medium">
-                                Revisión Gestión · {group.label}
-                              </p>
-                              <p className="text-xs text-[var(--muted)]">
-                                {group.reviewInCategory} productos en revisión.
-                                Al aplicar, el stock se iguala a lo contado.
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              disabled={pending}
-                              className="min-h-12 w-full rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-50 sm:w-auto"
-                              onClick={() => {
-                                if (
-                                  !confirm(
-                                    `¿Aplicar ajustes de “${group.label}” al stock del sistema?`,
-                                  )
-                                ) {
-                                  return;
-                                }
-                                startTransition(async () => {
-                                  setError(null);
-                                  const r = await applyPhysicalCountCategoryAction(
-                                    count.id,
-                                    group.categoryId,
-                                  );
-                                  if (!r.ok) setError(r.error ?? "Error");
-                                });
-                              }}
-                            >
-                              Aplicar “{group.label}”
-                            </button>
-                            <form
-                              className="flex flex-col gap-2 border-t border-amber-200/80 pt-3 sm:flex-row sm:items-end"
-                              onSubmit={(e) => {
-                                e.preventDefault();
-                                const reason =
-                                  rejectReason[group.categoryId]?.trim() ?? "";
-                                if (!reason) {
-                                  setError("Indique el motivo de rechazo");
-                                  return;
-                                }
-                                const fd = new FormData();
-                                fd.set("rejection_reason", reason);
-                                startTransition(async () => {
-                                  setError(null);
-                                  const r =
-                                    await rejectPhysicalCountCategoryAction(
-                                      count.id,
-                                      group.categoryId,
-                                      fd,
-                                    );
-                                  if (!r.ok) setError(r.error ?? "Error");
-                                  else {
-                                    setRejectReason((prev) => {
-                                      const next = { ...prev };
-                                      delete next[group.categoryId];
-                                      return next;
-                                    });
-                                  }
-                                });
-                              }}
-                            >
-                              <label className="w-full flex-1 text-sm">
-                                <span className="mb-1.5 block text-[var(--muted)]">
-                                  Motivo de rechazo
-                                </span>
-                                <input
-                                  value={rejectReason[group.categoryId] ?? ""}
-                                  onChange={(e) =>
-                                    setRejectReason((prev) => ({
-                                      ...prev,
-                                      [group.categoryId]: e.target.value,
-                                    }))
-                                  }
-                                  required
-                                  placeholder="Ej. reconteo de Aseo"
-                                  className={inputClass}
-                                />
-                              </label>
-                              <button
-                                type="submit"
-                                disabled={pending}
-                                className="min-h-12 rounded-xl px-4 text-sm font-medium text-red-700 hover:bg-red-50 sm:min-h-0 sm:py-2.5"
-                              >
-                                Rechazar categoría
-                              </button>
-                            </form>
-                          </div>
-                        ) : null}
-
-                        {!canAdjust && group.reviewInCategory > 0 ? (
+                        {group.reviewInCategory > 0 ? (
                           <div className="border-t border-[var(--line)] bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                            “{group.label}” enviado. Esperando revisión de
-                            Gestión.
+                            {canAdjust ? (
+                              <>
+                                “{group.label}” en revisión.{" "}
+                                <Link
+                                  href={`/inventario/revision/${count.id}`}
+                                  className="font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+                                >
+                                  Autorizar en Revisión física
+                                </Link>
+                              </>
+                            ) : (
+                              <>
+                                “{group.label}” enviado. Esperando revisión de
+                                Gestión.
+                              </>
+                            )}
                           </div>
                         ) : null}
                       </div>

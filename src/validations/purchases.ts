@@ -35,6 +35,12 @@ export const physicalCountItemSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
+/** Corrección de cantidad por Gestión mientras el ítem está en revisión. */
+export const correctPhysicalCountItemSchema = z.object({
+  item_id: z.string().uuid("Ítem inválido"),
+  counted_qty: z.string().min(1, "Cantidad contada obligatoria"),
+});
+
 export const rejectPhysicalCountSchema = z.object({
   rejection_reason: z.string().min(2, "Indique el motivo"),
 });

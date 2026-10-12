@@ -26,6 +26,12 @@ const LINKS = [
     permission: "inventario.fisico",
     active: (pathname: string) => pathname.startsWith("/inventario/fisico"),
   },
+  {
+    href: "/inventario/revision",
+    label: "Revisión física",
+    permission: "inventario.fisico.ajustar",
+    active: (pathname: string) => pathname.startsWith("/inventario/revision"),
+  },
 ] as const;
 
 export function InventarioNav({
