@@ -65,7 +65,7 @@ export default async function InventarioMaestroPage({
       supabase
         .from("products")
         .select(
-          "id, category_id, unit_id, sku, name, unit, min_stock, current_stock, unit_cost, notes, item_kind",
+          "id, category_id, unit_id, sku, name, unit, min_stock, current_stock, unit_cost, notes, item_kind, tracks_inventory",
         )
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
@@ -74,7 +74,10 @@ export default async function InventarioMaestroPage({
 
   const categories = (catRows ?? []) as CategoryRow[];
   const units = (unitRows ?? []) as UnitRow[];
-  const products = (prodRows ?? []) as ProductRow[];
+  // Agua de grifo y similares no se gestionan en el maestro de inventario
+  const products = ((prodRows ?? []) as ProductRow[]).filter(
+    (p) => p.tracks_inventory !== false,
+  );
   const kitchenVisible = products.some(
     (p) => (p.item_kind ?? "MATERIA_PRIMA") !== "MATERIA_PRIMA",
   );

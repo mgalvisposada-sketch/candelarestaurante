@@ -155,17 +155,14 @@ export type RecipeLineCostInput = {
 };
 
 /**
- * Escala líneas de receta según el rendimiento real vs el de la ficha.
- * Ej: ficha rinde 5 kg; produce 10 kg → factor 2.
+ * Escala líneas de receta por número de batches (veces que se cocina la ficha).
+ * El consumo NO depende del rendimiento real: la merma se refleja en el costo/u.
  */
 export function scaleRecipeLines<T extends { quantity: number }>(
   lines: T[],
-  recipeYieldQty: number,
-  outputQty: number,
+  batches: number,
 ): Array<T & { scaledQuantity: number }> {
-  const yieldQty = Number(recipeYieldQty) || 0;
-  const out = Number(outputQty) || 0;
-  const factor = yieldQty > 0 ? out / yieldQty : 0;
+  const factor = Math.max(0, Number(batches) || 0);
   return lines.map((line) => ({
     ...line,
     scaledQuantity: money(Math.max(0, Number(line.quantity) || 0))
@@ -200,34 +197,65 @@ export function estimateRecipeCost(
 }
 
 /**
- * Costo de producir un batch: escala la receta al output y concentra el costo.
- * Merma de cocina opcional (evaporación, etc.) no cambia el costo total,
- * solo el unitario si output < rendimiento teórico escalado.
+ * Costo de producir N batches de una receta.
+ *
+ * - Consumo = cantidades de ficha × batches (fijo).
+ * - outputQty = lo que realmente quedó de la preparación (tras merma de cocción).
+ * - Costo total de insumos se concentra en el output real → merma sube el costo/u.
  */
 export function computeRecipeBatchCost(args: {
   recipeLines: RecipeLineCostInput[];
   recipeYieldQty: number;
+  /** Veces que se cocina la ficha (define el consumo). */
+  batches: number;
+  /** Cantidad real obtenida de la preparación. */
   outputQty: number;
 }): {
   scaleFactor: number;
   scaledLines: Array<RecipeLineCostInput & { scaledQuantity: number }>;
   inputTotalCost: number;
   outputUnitCost: number;
+  theoreticalOutputQty: number;
+  mermaQty: number;
+  yieldPct: number | null;
+  mermaPct: number | null;
 } {
   const recipeYield = Math.max(0, Number(args.recipeYieldQty) || 0);
+  const batches = Math.max(0, Number(args.batches) || 0);
   const outputQty = Math.max(0, Number(args.outputQty) || 0);
-  const scaleFactor = recipeYield > 0 ? outputQty / recipeYield : 0;
-  const scaledLines = scaleRecipeLines(
-    args.recipeLines,
-    recipeYield,
-    outputQty,
-  );
+  const scaleFactor = batches;
+  const scaledLines = scaleRecipeLines(args.recipeLines, batches);
   let inputTotalCost = money(0);
   for (const line of scaledLines) {
     inputTotalCost = inputTotalCost.plus(
       money(line.scaledQuantity).times(Math.max(0, Number(line.unitCost) || 0)),
     );
   }
+  const theoreticalOutputQty = money(recipeYield)
+    .times(batches)
+    .toDecimalPlaces(3)
+    .toNumber();
+  const mermaQty = money(theoreticalOutputQty)
+    .minus(outputQty)
+    .toDecimalPlaces(3)
+    .toNumber();
+  const mermaClamped = Math.max(0, mermaQty);
+  const yieldPct =
+    theoreticalOutputQty > 0
+      ? money(outputQty)
+          .div(theoreticalOutputQty)
+          .times(100)
+          .toDecimalPlaces(4)
+          .toNumber()
+      : null;
+  const mermaPct =
+    theoreticalOutputQty > 0
+      ? money(mermaClamped)
+          .div(theoreticalOutputQty)
+          .times(100)
+          .toDecimalPlaces(4)
+          .toNumber()
+      : null;
   const outputUnitCost =
     outputQty > 0
       ? inputTotalCost.div(outputQty).toDecimalPlaces(6).toNumber()
@@ -237,5 +265,9 @@ export function computeRecipeBatchCost(args: {
     scaledLines,
     inputTotalCost: inputTotalCost.toDecimalPlaces(6).toNumber(),
     outputUnitCost,
+    theoreticalOutputQty,
+    mermaQty: mermaClamped,
+    yieldPct,
+    mermaPct,
   };
 }

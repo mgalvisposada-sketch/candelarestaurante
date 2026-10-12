@@ -63,6 +63,8 @@ export type ProductRow = {
   notes: string | null;
   /** Si falta (productos viejos), se trata como materia prima. */
   item_kind?: KitchenItemKind | string | null;
+  /** false = no se gestiona en inventario (ej. agua de grifo). */
+  tracks_inventory?: boolean | null;
 };
 
 function productKind(product: ProductRow): KitchenItemKind {

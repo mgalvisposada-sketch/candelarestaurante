@@ -71,7 +71,12 @@ export const completePreparacionProductionSchema = z.object({
   title: z.string().min(2, "Título obligatorio"),
   produced_at: z.string().min(1, "Fecha obligatoria"),
   output_product_id: z.string().uuid("Preparación inválida"),
-  output_qty: z.string().min(1, "Cantidad producida obligatoria"),
+  /** Veces que se cocina la ficha (define el consumo de componentes). */
+  batches: z.string().min(1, "Batches obligatorios"),
+  /** Cantidad real obtenida tras merma de cocción. */
+  output_qty: z.string().min(1, "Cantidad resultante obligatoria"),
+  /** Obligatoria en servidor si el real ≠ rendimiento teórico. */
+  yield_variance_note: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
 });
 

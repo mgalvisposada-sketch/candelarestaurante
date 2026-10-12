@@ -38,7 +38,7 @@ export default async function NuevaProduccionPreparacionPage({
     supabase
       .from("kitchen_recipes")
       .select(
-        "id, product_id, name, yield_qty, kitchen_recipe_lines(component_product_id, quantity, products:component_product_id(name, unit, unit_cost, current_stock))",
+        "id, product_id, name, yield_qty, kitchen_recipe_lines(component_product_id, quantity, products:component_product_id(name, unit, unit_cost, current_stock, tracks_inventory))",
       )
       .eq("organization_id", orgId)
       .eq("is_active", true)
@@ -75,6 +75,9 @@ export default async function NuevaProduccionPreparacionPage({
                 current_stock:
                   (comp as { current_stock?: number | string } | null)
                     ?.current_stock ?? 0,
+                tracks_inventory:
+                  (comp as { tracks_inventory?: boolean | null } | null)
+                    ?.tracks_inventory ?? true,
               };
             }),
           }
@@ -95,7 +98,7 @@ export default async function NuevaProduccionPreparacionPage({
         />
         <PageIntro
           title="Crear más de una preparación"
-          description="No crea un producto nuevo: escala la receta del catálogo, consume materias primas e insumos preparación, y entra stock con costo recalculado."
+          description="Cocina N batches de la ficha (se gasta lo de la receta), indica cuánto resultó realmente tras la merma de cocción, y el costo/u queda = costo gastado ÷ resultado. Luego entra a stock."
         />
 
         {!options.length ? (

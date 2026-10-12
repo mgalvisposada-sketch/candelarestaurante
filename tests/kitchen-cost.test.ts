@@ -90,26 +90,43 @@ describe("estimateRecipeCost / scaleRecipeLines", () => {
   });
 
   it("escala el doble de batches", () => {
-    const scaled = scaleRecipeLines(
-      [{ quantity: 100 }, { quantity: 50 }],
-      5,
-      10,
-    );
+    const scaled = scaleRecipeLines([{ quantity: 100 }, { quantity: 50 }], 2);
     expect(scaled[0].scaledQuantity).toBe(200);
     expect(scaled[1].scaledQuantity).toBe(100);
   });
 
-  it("costea un batch escalado", () => {
+  it("costea batches con merma de cocción (consumo fijo, rinde menos)", () => {
+    // Ficha: 100@10 + 50@4 = 1200 por batch, rinde teórico 1000 g
+    // 1 batch, salieron 800 g → merma 200; costo/u = 1200/800
     const batch = computeRecipeBatchCost({
       recipeLines: [
         { quantity: 100, unitCost: 10 },
         { quantity: 50, unitCost: 4 },
       ],
-      recipeYieldQty: 5,
-      outputQty: 10,
+      recipeYieldQty: 1000,
+      batches: 1,
+      outputQty: 800,
     });
-    expect(batch.scaleFactor).toBe(2);
-    expect(batch.inputTotalCost).toBeCloseTo(100 * 2 * 10 + 50 * 2 * 4, 5);
-    expect(batch.outputUnitCost).toBeCloseTo(batch.inputTotalCost / 10, 5);
+    expect(batch.scaleFactor).toBe(1);
+    expect(batch.scaledLines[0].scaledQuantity).toBe(100);
+    expect(batch.inputTotalCost).toBeCloseTo(1200, 5);
+    expect(batch.theoreticalOutputQty).toBe(1000);
+    expect(batch.mermaQty).toBe(200);
+    expect(batch.yieldPct).toBeCloseTo(80, 4);
+    expect(batch.outputUnitCost).toBeCloseTo(1200 / 800, 5);
+  });
+
+  it("dos batches consumen el doble aunque el output real varíe", () => {
+    const batch = computeRecipeBatchCost({
+      recipeLines: [{ quantity: 100, unitCost: 10 }],
+      recipeYieldQty: 500,
+      batches: 2,
+      outputQty: 900,
+    });
+    expect(batch.scaledLines[0].scaledQuantity).toBe(200);
+    expect(batch.inputTotalCost).toBeCloseTo(2000, 5);
+    expect(batch.theoreticalOutputQty).toBe(1000);
+    expect(batch.mermaQty).toBe(100);
+    expect(batch.outputUnitCost).toBeCloseTo(2000 / 900, 5);
   });
 });

@@ -78,7 +78,9 @@ export default async function CocinaPreparacionesPage({
       .order("code"),
     supabase
       .from("products")
-      .select("id, name, unit, item_kind, unit_cost")
+      .select(
+        "id, name, unit, item_kind, unit_cost, density_g_per_ml, tracks_inventory",
+      )
       .eq("organization_id", orgId)
       .is("deleted_at", null)
       .eq("is_active", true)
@@ -87,7 +89,7 @@ export default async function CocinaPreparacionesPage({
     supabase
       .from("kitchen_recipes")
       .select(
-        "id, product_id, name, yield_qty, kitchen_recipe_lines(quantity, component_product_id, products:component_product_id(name, unit, unit_cost))",
+        "id, product_id, name, yield_qty, kitchen_recipe_lines(quantity, component_product_id, products:component_product_id(name, unit, unit_cost, density_g_per_ml, current_stock, tracks_inventory))",
       )
       .eq("organization_id", orgId)
       .eq("is_active", true)
@@ -157,11 +159,28 @@ export default async function CocinaPreparacionesPage({
             ),
             name: (comp as { name?: string } | null)?.name ?? "—",
             unit: (comp as { unit?: string } | null)?.unit ?? "",
+            density_g_per_ml:
+              (comp as { density_g_per_ml?: number | string | null } | null)
+                ?.density_g_per_ml ?? null,
+            current_stock: Number(
+              (comp as { current_stock?: number | string } | null)
+                ?.current_stock ?? 0,
+            ),
+            tracks_inventory:
+              (comp as { tracks_inventory?: boolean | null } | null)
+                ?.tracks_inventory ?? true,
+            component_product_id: l.component_product_id as string,
           };
         });
         const est = recipe
           ? estimateRecipeCost(recipeLines, Number(recipe.yield_qty || 1))
           : null;
+        const canProduceBatch =
+          recipeLines.length > 0 &&
+          recipeLines.every(
+            (l) =>
+              l.tracks_inventory === false || l.current_stock >= l.quantity,
+          );
 
         return {
           id: p.id,
@@ -173,12 +192,27 @@ export default async function CocinaPreparacionesPage({
           theoreticalBatchCost: est ? est.totalCost : null,
           yieldQty: recipe ? Number(recipe.yield_qty || 1) : null,
           recipeName: recipe?.name ?? null,
-          recipeLines: recipeLines.map(({ quantity, unit, name }) => ({
-            quantity,
-            unit,
-            name,
-          })),
+          recipeLines: recipeLines.map(
+            ({
+              quantity,
+              unit,
+              name,
+              density_g_per_ml,
+              component_product_id,
+              current_stock,
+              tracks_inventory,
+            }) => ({
+              quantity,
+              unit,
+              name,
+              density_g_per_ml,
+              component_product_id,
+              current_stock,
+              tracks_inventory,
+            }),
+          ),
           hasRecipe: Boolean(recipe),
+          canProduceBatch,
         };
       }),
     }));

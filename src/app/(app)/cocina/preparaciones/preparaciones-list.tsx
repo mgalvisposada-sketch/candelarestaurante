@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/primitives";
+import {
+  formatRecipeComponentQty,
+  productTracksInventory,
+} from "@/lib/kitchen/density";
 import { formatCOP } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { FocusProductEffect, productAnchorId } from "../focus-product";
@@ -38,8 +42,18 @@ export type PreparacionListItem = {
   theoreticalBatchCost: number | null;
   yieldQty: number | null;
   recipeName: string | null;
-  recipeLines: { quantity: number; unit: string; name: string }[];
+  recipeLines: {
+    quantity: number;
+    unit: string;
+    name: string;
+    density_g_per_ml?: number | string | null;
+    component_product_id: string;
+    current_stock: number;
+    tracks_inventory?: boolean | null;
+  }[];
   hasRecipe: boolean;
+  /** Hay stock suficiente de todos los componentes para 1 batch de la ficha. */
+  canProduceBatch: boolean;
 };
 
 export type PreparacionCategoryGroup = {
@@ -298,9 +312,20 @@ export function PreparacionesByCategoryList({
                                 components={components.filter(
                                   (c) => c.id !== p.id,
                                 )}
+                                initialLines={p.recipeLines.map((l) => ({
+                                  component_product_id: l.component_product_id,
+                                  inventory_quantity: l.quantity,
+                                }))}
                               />
                               {canProduce ? (
-                                p.hasRecipe ? (
+                                !p.hasRecipe ? (
+                                  <span
+                                    className="rounded-md border border-dashed border-[var(--line)] px-2.5 py-1 text-xs text-[var(--muted)]"
+                                    title="Defina la receta primero"
+                                  >
+                                    Crear más (falta receta)
+                                  </span>
+                                ) : p.canProduceBatch ? (
                                   <Link
                                     href={`/cocina/producciones/nueva-preparacion?producto=${p.id}`}
                                     className="rounded-md bg-[var(--ink)] px-2.5 py-1 text-xs text-white"
@@ -309,28 +334,99 @@ export function PreparacionesByCategoryList({
                                   </Link>
                                 ) : (
                                   <span
-                                    className="rounded-md border border-dashed border-[var(--line)] px-2.5 py-1 text-xs text-[var(--muted)]"
-                                    title="Defina la receta primero"
+                                    className="rounded-md border border-dashed border-red-200 px-2.5 py-1 text-xs text-red-700"
+                                    title={
+                                      p.recipeLines
+                                        .filter(
+                                          (l) =>
+                                            productTracksInventory(
+                                              l.tracks_inventory,
+                                            ) &&
+                                            !(l.current_stock >= l.quantity),
+                                        )
+                                        .map(
+                                          (l) =>
+                                            `${l.name}: hay ${l.current_stock}, pide ${l.quantity} ${l.unit}`,
+                                        )
+                                        .join(" · ") ||
+                                      "Falta stock de componentes"
+                                    }
                                   >
-                                    Crear más (falta receta)
+                                    Crear más (sin stock base)
                                   </span>
                                 )
                               ) : null}
                             </div>
                           </div>
                           {p.hasRecipe ? (
-                            <ul className="mt-3 space-y-1 text-sm text-[var(--muted)]">
-                              {p.recipeLines.map((l, i) => (
-                                <li key={`${p.id}-${i}`}>
-                                  {l.quantity} {l.unit} · {l.name}
+                            <div className="mt-3 space-y-2">
+                              {!p.canProduceBatch ? (
+                                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                                  Sin stock suficiente para 1 batch:{" "}
+                                  {p.recipeLines
+                                    .filter(
+                                      (l) =>
+                                        productTracksInventory(
+                                          l.tracks_inventory,
+                                        ) &&
+                                        !(l.current_stock >= l.quantity),
+                                    )
+                                    .map(
+                                      (l) =>
+                                        `${l.name} (hay ${l.current_stock}, pide ${l.quantity} ${l.unit})`,
+                                    )
+                                    .join(" · ")}
+                                </p>
+                              ) : null}
+                              <ul className="space-y-1 text-sm text-[var(--muted)]">
+                                {p.recipeLines.map((l, i) => {
+                                  const tracks = productTracksInventory(
+                                    l.tracks_inventory,
+                                  );
+                                  const short =
+                                    tracks && !(l.current_stock >= l.quantity);
+                                  return (
+                                    <li
+                                      key={`${p.id}-${i}`}
+                                      className={
+                                        short
+                                          ? "font-medium text-red-700"
+                                          : undefined
+                                      }
+                                    >
+                                      {formatRecipeComponentQty(
+                                        l.quantity,
+                                        l.unit,
+                                        l.density_g_per_ml,
+                                      )}{" "}
+                                      · {l.name}
+                                      {!tracks ? (
+                                        <span className="text-[var(--muted)]">
+                                          {" "}
+                                          · sin inventario
+                                        </span>
+                                      ) : short ? (
+                                        <span>
+                                          {" "}
+                                          · sin stock (hay {l.current_stock}{" "}
+                                          {l.unit})
+                                        </span>
+                                      ) : (
+                                        <span className="text-[var(--muted)]">
+                                          {" "}
+                                          · stock {l.current_stock} {l.unit}
+                                        </span>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                                <li className="pt-1 text-[var(--ink)]">
+                                  Costo batch teórico ≈{" "}
+                                  {formatCOP(p.theoreticalBatchCost ?? 0)} para{" "}
+                                  {p.yieldQty ?? 1} {p.unit}
                                 </li>
-                              ))}
-                              <li className="pt-1 text-[var(--ink)]">
-                                Costo batch teórico ≈{" "}
-                                {formatCOP(p.theoreticalBatchCost ?? 0)} para{" "}
-                                {p.yieldQty ?? 1} {p.unit}
-                              </li>
-                            </ul>
+                              </ul>
+                            </div>
                           ) : null}
                         </Card>
                       );

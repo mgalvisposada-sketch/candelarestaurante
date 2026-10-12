@@ -31,7 +31,7 @@ export default async function NuevaProduccionPage({
     supabase
       .from("products")
       .select(
-        "id, name, unit, current_stock, unit_cost, product_categories(name)",
+        "id, name, unit, current_stock, unit_cost, tracks_inventory, product_categories(name)",
       )
       .eq("organization_id", orgId)
       .eq("item_kind", "MATERIA_PRIMA")
@@ -66,6 +66,7 @@ export default async function NuevaProduccionPage({
       unit: p.unit,
       current_stock: p.current_stock,
       unit_cost: p.unit_cost,
+      tracks_inventory: p.tracks_inventory ?? true,
       category_name: (cat as { name?: string } | null)?.name ?? null,
     };
   });

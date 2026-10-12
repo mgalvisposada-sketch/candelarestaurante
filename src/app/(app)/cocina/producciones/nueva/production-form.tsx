@@ -7,6 +7,7 @@ import {
   computeKitchenProductionCost,
   aprovechamientoUnitCost,
 } from "@/lib/kitchen/cost";
+import { productTracksInventory } from "@/lib/kitchen/density";
 import { formatCOP } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { completeInsumoProductionAction } from "../../kitchen-actions";
@@ -21,6 +22,7 @@ export type StockProduct = {
   current_stock: number | string;
   unit_cost: number | string;
   category_name?: string | null;
+  tracks_inventory?: boolean | null;
 };
 
 type InputRow = { key: string; product_id: string; quantity: string };
@@ -85,8 +87,11 @@ function InventoryProductPicker({
       })
       .slice()
       .sort((a, b) => {
-        const sa = Number(a.current_stock || 0) > 0 ? 0 : 1;
-        const sb = Number(b.current_stock || 0) > 0 ? 0 : 1;
+        const tracksA = productTracksInventory(a.tracks_inventory);
+        const tracksB = productTracksInventory(b.tracks_inventory);
+        if (tracksA !== tracksB) return tracksA ? 0 : 1;
+        const sa = !tracksA || Number(a.current_stock || 0) > 0 ? 0 : 1;
+        const sb = !tracksB || Number(b.current_stock || 0) > 0 ? 0 : 1;
         if (sa !== sb) return sa - sb;
         return a.name.localeCompare(b.name, "es");
       })
@@ -103,12 +108,14 @@ function InventoryProductPicker({
   }, [open]);
 
   if (selected && !open) {
+    const tracks = productTracksInventory(selected.tracks_inventory);
     const stock = Number(selected.current_stock || 0);
+    const ok = !tracks || stock > 0;
     return (
       <div
         className={cn(
           "flex min-w-[12rem] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-sm",
-          stock > 0
+          ok
             ? "border-[var(--line)] bg-white"
             : "border-red-200 bg-red-50/50",
         )}
@@ -118,13 +125,15 @@ function InventoryProductPicker({
           <p
             className={cn(
               "truncate text-xs",
-              stock > 0 ? "text-[var(--muted)]" : "text-red-700",
+              ok ? "text-[var(--muted)]" : "text-red-700",
             )}
           >
             {selected.category_name ? `${selected.category_name} · ` : ""}
-            {stock > 0
-              ? `${stock} ${selected.unit}`
-              : `Sin existencia (${selected.unit})`}
+            {!tracks
+              ? `Sin inventario · ${selected.unit}`
+              : stock > 0
+                ? `${stock} ${selected.unit}`
+                : `Sin existencia (${selected.unit})`}
           </p>
         </div>
         <button
@@ -183,8 +192,9 @@ function InventoryProductPicker({
             </li>
           ) : (
             filtered.map((mp) => {
+              const tracks = productTracksInventory(mp.tracks_inventory);
               const stock = Number(mp.current_stock || 0);
-              const unavailable = !(stock > 0);
+              const unavailable = tracks && !(stock > 0);
               return (
                 <li key={mp.id}>
                   <button
@@ -212,9 +222,11 @@ function InventoryProductPicker({
                       )}
                     >
                       {mp.category_name ? `${mp.category_name} · ` : ""}
-                      {unavailable
-                        ? "Sin existencia"
-                        : `stock ${stock} ${mp.unit}`}
+                      {!tracks
+                        ? `sin inventario · ${mp.unit}`
+                        : unavailable
+                          ? "Sin existencia"
+                          : `stock ${stock} ${mp.unit}`}
                     </span>
                   </button>
                 </li>
@@ -277,6 +289,7 @@ export function InsumoProductionForm({
       if (!row.product_id) continue;
       const p = mpMap.get(row.product_id);
       if (!p) continue;
+      if (!productTracksInventory(p.tracks_inventory)) continue;
       const stock = Number(p.current_stock || 0);
       const qty = Number(row.quantity);
       if (!(stock > 0)) {
@@ -293,7 +306,12 @@ export function InsumoProductionForm({
   }, [inputs, mpMap]);
 
   const hasStockAvailable = useMemo(
-    () => materiasPrimas.some((p) => Number(p.current_stock || 0) > 0),
+    () =>
+      materiasPrimas.some(
+        (p) =>
+          !productTracksInventory(p.tracks_inventory) ||
+          Number(p.current_stock || 0) > 0,
+      ),
     [materiasPrimas],
   );
 

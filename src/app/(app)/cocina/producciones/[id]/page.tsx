@@ -171,8 +171,10 @@ export default async function ProduccionDetailPage({
                 <p>
                   Receta:{" "}
                   <strong>
-                    {(recipe as { name?: string }).name} (rinde{" "}
-                    {Number((recipe as { yield_qty?: number }).yield_qty)})
+                    {(recipe as { name?: string }).name} (rend. teórico{" "}
+                    {Number((recipe as { yield_qty?: number }).yield_qty)}{" "}
+                    {(product as { unit?: string } | null)?.unit ?? "u"}
+                    /batch)
                   </strong>
                 </p>
               ) : null}

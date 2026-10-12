@@ -66,6 +66,7 @@ export default async function InventarioFisicoDetailPage({
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
         .eq("is_active", true)
+        .eq("tracks_inventory", true)
         .in("item_kind", [...PHYSICAL_COUNT_ITEM_KINDS])
         .order("name"),
       supabase

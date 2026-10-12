@@ -6,6 +6,13 @@ import {
   computeKitchenProductionCost,
   computeRecipeBatchCost,
 } from "@/lib/kitchen/cost";
+import {
+  inventoryQtyFromGrams,
+  isVolumeUnit,
+  productTracksInventory,
+  roundQty,
+} from "@/lib/kitchen/density";
+import { money } from "@/lib/money";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -596,7 +603,9 @@ export async function completeInsumoProductionAction(
   const inputIds = [...new Set(normalizedInputs.map((i) => i.product_id))];
   const { data: inputProducts } = await supabase
     .from("products")
-    .select("id, name, item_kind, current_stock, unit_cost, unit")
+    .select(
+      "id, name, item_kind, current_stock, unit_cost, unit, tracks_inventory",
+    )
     .eq("organization_id", orgId)
     .is("deleted_at", null)
     .in("id", inputIds);
@@ -611,6 +620,7 @@ export async function completeInsumoProductionAction(
         error: `"${p.name}" no es materia prima. Use solo inventario de compras.`,
       };
     }
+    if (!productTracksInventory(p.tracks_inventory)) continue;
     const stock = Number(p.current_stock || 0);
     if (!(stock > 0)) {
       return {
@@ -752,9 +762,11 @@ export async function completeInsumoProductionAction(
     return { ok: false, error: outputsError.message };
   }
 
-  // Consumir materias primas
+  // Consumir materias primas (omitir sin inventario: solo costean)
   for (const line of normalizedInputs) {
     const p = inputMap.get(line.product_id)!;
+    if (!productTracksInventory(p.tracks_inventory)) continue;
+
     const stockBefore = Number(p.current_stock || 0);
     const unitCost = Number(p.unit_cost || 0);
     const stockAfter = stockBefore - line.quantity;
@@ -882,11 +894,15 @@ export async function upsertKitchenRecipeAction(
     return { ok: false, error: "Rendimiento inválido" };
   }
 
-  let lines: Array<{
+  type RawRecipeLine = {
     component_product_id: string;
     quantity: number;
     notes?: string | null;
-  }> = [];
+    quantity_is_grams?: boolean;
+    density_g_per_ml?: number | null;
+  };
+
+  let rawLines: RawRecipeLine[] = [];
   try {
     const raw = JSON.parse(String(formData.get("lines_json") || "[]"));
     if (!Array.isArray(raw) || raw.length === 0) {
@@ -908,10 +924,17 @@ export async function upsertKitchenRecipeAction(
       if (qty === null || qty <= 0) {
         return { ok: false, error: "Cantidad de componente inválida" };
       }
-      lines.push({
+      const densityRaw = row.density_g_per_ml;
+      const density =
+        densityRaw === undefined || densityRaw === null || densityRaw === ""
+          ? null
+          : parseNumber(String(densityRaw));
+      rawLines.push({
         component_product_id: lineParsed.data.component_product_id,
         quantity: qty,
         notes: emptyToNull(lineParsed.data.notes),
+        quantity_is_grams: Boolean(row.quantity_is_grams),
+        density_g_per_ml: density,
       });
     }
   } catch {
@@ -946,16 +969,26 @@ export async function upsertKitchenRecipeAction(
     };
   }
 
-  const componentIds = [...new Set(lines.map((l) => l.component_product_id))];
+  const componentIds = [
+    ...new Set(rawLines.map((l) => l.component_product_id)),
+  ];
   const { data: components } = await supabase
     .from("products")
-    .select("id, item_kind, name")
+    .select("id, item_kind, name, unit, density_g_per_ml")
     .eq("organization_id", orgId)
     .is("deleted_at", null)
     .in("id", componentIds);
 
   const componentMap = new Map((components ?? []).map((c) => [c.id, c]));
-  for (const line of lines) {
+
+  const lines: Array<{
+    component_product_id: string;
+    quantity: number;
+    notes?: string | null;
+  }> = [];
+  const densityUpdates = new Map<string, number>();
+
+  for (const line of rawLines) {
     const c = componentMap.get(line.component_product_id);
     if (!c) return { ok: false, error: "Componente no encontrado" };
     if (c.id === product.id) {
@@ -972,6 +1005,68 @@ export async function upsertKitchenRecipeAction(
       return {
         ok: false,
         error: `"${c.name}" no es un componente válido para esta receta`,
+      };
+    }
+
+    const volume = isVolumeUnit(c.unit);
+    if (volume || line.quantity_is_grams) {
+      if (!volume) {
+        return {
+          ok: false,
+          error: `"${c.name}" no es volumen (ML/L): no use gramos con densidad`,
+        };
+      }
+      const density =
+        line.density_g_per_ml != null && line.density_g_per_ml > 0
+          ? line.density_g_per_ml
+          : Number(c.density_g_per_ml || 0);
+      if (!(density > 0)) {
+        return {
+          ok: false,
+          error: `Indique la densidad (g/ml) de ${c.name} para convertir gramos a ${c.unit}`,
+        };
+      }
+      const invQty = inventoryQtyFromGrams(line.quantity, c.unit, density);
+      if (invQty == null || !(invQty > 0)) {
+        return {
+          ok: false,
+          error: `No se pudo convertir gramos → ${c.unit} para ${c.name}`,
+        };
+      }
+      densityUpdates.set(c.id, density);
+      lines.push({
+        component_product_id: line.component_product_id,
+        quantity: roundQty(invQty),
+        notes: line.notes,
+      });
+    } else {
+      lines.push({
+        component_product_id: line.component_product_id,
+        quantity: line.quantity,
+        notes: line.notes,
+      });
+    }
+  }
+
+  // Persistir densidades capturadas en la receta sobre cada producto
+  for (const [componentId, density] of densityUpdates) {
+    const existing = Number(
+      componentMap.get(componentId)?.density_g_per_ml || 0,
+    );
+    if (existing === density) continue;
+    const { error: densError } = await supabase
+      .from("products")
+      .update({
+        density_g_per_ml: density,
+        updated_by: ctx.userId,
+      })
+      .eq("id", componentId)
+      .eq("organization_id", orgId)
+      .is("deleted_at", null);
+    if (densError) {
+      return {
+        ok: false,
+        error: `No se pudo guardar la densidad: ${densError.message}`,
       };
     }
   }
@@ -1043,16 +1138,25 @@ export async function completePreparacionProductionAction(
     title: formData.get("title"),
     produced_at: formData.get("produced_at"),
     output_product_id: formData.get("output_product_id"),
+    batches: formData.get("batches"),
     output_qty: formData.get("output_qty"),
+    yield_variance_note: formData.get("yield_variance_note"),
     notes: formData.get("notes"),
   });
   if (!header.success) {
     return { ok: false, error: header.error.issues[0]?.message ?? "Datos inválidos" };
   }
 
+  const batches = parseNumber(header.data.batches);
+  if (batches === null || batches <= 0) {
+    return { ok: false, error: "Indique cuántos batches de la receta cocinó" };
+  }
   const outputQty = parseNumber(header.data.output_qty);
   if (outputQty === null || outputQty <= 0) {
-    return { ok: false, error: "La cantidad producida debe ser mayor a 0" };
+    return {
+      ok: false,
+      error: "Indique la cantidad resultante real de la preparación",
+    };
   }
 
   const supabase = await createClient();
@@ -1089,8 +1193,37 @@ export async function completePreparacionProductionAction(
 
   const recipeYield = Number(recipe.yield_qty || 0);
   if (!(recipeYield > 0)) {
-    return { ok: false, error: "La receta no tiene rendimiento válido" };
+    return { ok: false, error: "La receta no tiene rendimiento teórico válido" };
   }
+
+  const theoreticalOutput = roundQty(recipeYield * batches);
+  const actualOutput = roundQty(outputQty);
+  const yieldDiff = roundQty(actualOutput - theoreticalOutput);
+  const hasYieldVariance = yieldDiff !== 0;
+  const varianceNote = emptyToNull(header.data.yield_variance_note);
+  if (hasYieldVariance && !varianceNote) {
+    return {
+      ok: false,
+      error:
+        actualOutput < theoreticalOutput
+          ? `El resultado (${actualOutput} ${outputProduct.unit}) está por debajo del teórico (${theoreticalOutput} ${outputProduct.unit}). Indique una observación.`
+          : `El resultado (${actualOutput} ${outputProduct.unit}) está por encima del teórico (${theoreticalOutput} ${outputProduct.unit}). Indique una observación.`,
+    };
+  }
+
+  const yieldDeltaPct =
+    theoreticalOutput > 0
+      ? money(yieldDiff)
+          .div(theoreticalOutput)
+          .times(100)
+          .toDecimalPlaces(1)
+          .toNumber()
+      : 0;
+  const varianceBlock = hasYieldVariance
+    ? `[Desvío de rendimiento] Teórico: ${theoreticalOutput} ${outputProduct.unit} · Real: ${actualOutput} ${outputProduct.unit} (${yieldDiff > 0 ? "+" : ""}${yieldDiff} / ${yieldDeltaPct > 0 ? "+" : ""}${yieldDeltaPct}%): ${varianceNote}`
+    : null;
+  const freeNotes = emptyToNull(header.data.notes);
+  const combinedNotes = [varianceBlock, freeNotes].filter(Boolean).join("\n");
 
   const { data: recipeLines } = await supabase
     .from("kitchen_recipe_lines")
@@ -1109,7 +1242,9 @@ export async function completePreparacionProductionAction(
   ];
   const { data: components } = await supabase
     .from("products")
-    .select("id, name, item_kind, current_stock, unit_cost, unit")
+    .select(
+      "id, name, item_kind, current_stock, unit_cost, unit, tracks_inventory",
+    )
     .eq("organization_id", orgId)
     .is("deleted_at", null)
     .in("id", componentIds);
@@ -1124,6 +1259,7 @@ export async function completePreparacionProductionAction(
       };
     }),
     recipeYieldQty: recipeYield,
+    batches,
     outputQty,
   });
 
@@ -1147,17 +1283,16 @@ export async function completePreparacionProductionAction(
         error: `"${c.name}" no es un componente consumible válido`,
       };
     }
+    if (!productTracksInventory(c.tracks_inventory)) continue;
     const stock = Number(c.current_stock || 0);
-    if (!(stock > 0)) {
+    const needed = scaled.scaledQuantity;
+    if (!(stock > 0) || needed > stock) {
       return {
         ok: false,
-        error: `Sin existencia de ${c.name}: no se puede crear más sin stock del componente base`,
-      };
-    }
-    if (scaled.scaledQuantity > stock) {
-      return {
-        ok: false,
-        error: `Stock insuficiente de ${c.name}: necesita ${scaled.scaledQuantity} ${c.unit}, hay ${stock} ${c.unit}`,
+        error:
+          !(stock > 0)
+            ? `Sin existencia de ${c.name}: se necesitan al menos ${needed} ${c.unit} de la receta`
+            : `Stock insuficiente de ${c.name}: la receta pide ${needed} ${c.unit}, hay ${stock} ${c.unit}`,
       };
     }
   }
@@ -1173,7 +1308,7 @@ export async function completePreparacionProductionAction(
       output_product_id: outputProduct.id,
       recipe_id: recipe.id,
       output_qty: outputQty,
-      merma_qty: 0,
+      merma_qty: batch.mermaQty,
       input_total_qty: batch.scaledLines.reduce(
         (acc, l) => acc + l.scaledQuantity,
         0,
@@ -1182,9 +1317,9 @@ export async function completePreparacionProductionAction(
       aprovechamiento_total_cost: 0,
       output_total_cost: batch.inputTotalCost,
       output_unit_cost: batch.outputUnitCost,
-      yield_pct: 100,
-      merma_pct: 0,
-      notes: emptyToNull(header.data.notes),
+      yield_pct: batch.yieldPct,
+      merma_pct: batch.mermaPct,
+      notes: emptyToNull(combinedNotes),
       completed_at: new Date().toISOString(),
       created_by: ctx.userId,
       updated_by: ctx.userId,
@@ -1239,8 +1374,12 @@ export async function completePreparacionProductionAction(
   for (let i = 0; i < recipeLines.length; i++) {
     const c = componentMap.get(recipeLines[i].component_product_id)!;
     const qty = batch.scaledLines[i].scaledQuantity;
-    const stockBefore = Number(c.current_stock || 0);
     const unitCost = Number(c.unit_cost || 0);
+
+    // Agua de grifo / sin inventario: costea la receta pero no mueve stock
+    if (!productTracksInventory(c.tracks_inventory)) continue;
+
+    const stockBefore = Number(c.current_stock || 0);
     const stockAfter = stockBefore - qty;
 
     const { error: updError } = await supabase
@@ -1430,15 +1569,16 @@ export async function voidKitchenProductionAction(
     if (movError) return { ok: false, error: movError.message };
   }
 
-  // Devolver insumos consumidos
+  // Devolver insumos consumidos (omitir sin inventario)
   for (const inp of inputs ?? []) {
     const { data: prod } = await supabase
       .from("products")
-      .select("id, current_stock, unit_cost")
+      .select("id, current_stock, unit_cost, tracks_inventory")
       .eq("id", inp.product_id)
       .eq("organization_id", orgId)
       .maybeSingle();
     if (!prod) continue;
+    if (!productTracksInventory(prod.tracks_inventory)) continue;
 
     const stockBefore = Number(prod.current_stock || 0);
     const costBefore = Number(prod.unit_cost || 0);

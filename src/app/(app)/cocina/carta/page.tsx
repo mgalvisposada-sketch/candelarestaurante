@@ -1,6 +1,7 @@
 import { AppHeader } from "@/components/layout/app-header";
 import { Card, EmptyState, PageIntro } from "@/components/ui/primitives";
 import { estimateRecipeCost } from "@/lib/kitchen/cost";
+import { formatRecipeComponentQty } from "@/lib/kitchen/density";
 import { formatCOP, money } from "@/lib/money";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
@@ -69,7 +70,9 @@ export default async function CocinaCartaPage({
       .order("code"),
     supabase
       .from("products")
-      .select("id, name, unit, item_kind, unit_cost")
+      .select(
+        "id, name, unit, item_kind, unit_cost, density_g_per_ml, tracks_inventory",
+      )
       .eq("organization_id", orgId)
       .is("deleted_at", null)
       .eq("is_active", true)
@@ -82,7 +85,7 @@ export default async function CocinaCartaPage({
     supabase
       .from("kitchen_recipes")
       .select(
-        "id, product_id, name, yield_qty, kitchen_recipe_lines(quantity, component_product_id, products:component_product_id(name, unit, unit_cost, item_kind))",
+        "id, product_id, name, yield_qty, kitchen_recipe_lines(quantity, component_product_id, products:component_product_id(name, unit, unit_cost, item_kind, density_g_per_ml))",
       )
       .eq("organization_id", orgId)
       .eq("is_active", true)
@@ -184,6 +187,13 @@ export default async function CocinaCartaPage({
                   unit: (comp as { unit?: string } | null)?.unit ?? "",
                   kind:
                     (comp as { item_kind?: string } | null)?.item_kind ?? "",
+                  density_g_per_ml:
+                    (
+                      comp as {
+                        density_g_per_ml?: number | string | null;
+                      } | null
+                    )?.density_g_per_ml ?? null,
+                  component_product_id: l.component_product_id as string,
                 };
               });
               const est = recipe
@@ -221,13 +231,22 @@ export default async function CocinaCartaPage({
                       defaultYield={String(recipe?.yield_qty ?? 1)}
                       existingName={recipe?.name}
                       components={components ?? []}
+                      initialLines={lines.map((l) => ({
+                        component_product_id: l.component_product_id,
+                        inventory_quantity: l.quantity,
+                      }))}
                     />
                   </div>
                   {recipe ? (
                     <ul className="mt-3 space-y-1 text-sm text-[var(--muted)]">
                       {lines.map((l, i) => (
                         <li key={`${p.id}-${i}`}>
-                          {l.quantity} {l.unit} · {l.name}{" "}
+                          {formatRecipeComponentQty(
+                            l.quantity,
+                            l.unit,
+                            l.density_g_per_ml,
+                          )}{" "}
+                          · {l.name}{" "}
                           <span className="text-xs">({l.kind})</span>
                           {" · "}
                           {formatCOP(money(l.quantity).times(l.unitCost))}

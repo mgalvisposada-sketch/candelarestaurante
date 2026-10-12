@@ -51,6 +51,7 @@ export default async function InventarioListaPage() {
       )
       .eq("organization_id", ctx.organization.id)
       .eq("item_kind", "MATERIA_PRIMA")
+      .eq("tracks_inventory", true)
       .is("deleted_at", null)
       .eq("is_active", true)
       .order("name"),

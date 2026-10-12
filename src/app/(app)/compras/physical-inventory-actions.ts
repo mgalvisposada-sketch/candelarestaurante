@@ -209,6 +209,7 @@ async function productIdsInCategory(
     .eq("organization_id", organizationId)
     .is("deleted_at", null)
     .eq("is_active", true)
+    .eq("tracks_inventory", true)
     .in("item_kind", [...PHYSICAL_COUNT_ITEM_KINDS]);
 
   if (normalized === NONE_CATEGORY) {
