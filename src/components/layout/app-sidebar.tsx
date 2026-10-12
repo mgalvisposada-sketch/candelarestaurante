@@ -47,11 +47,19 @@ import { cn } from "@/lib/utils";
 
 function pendingCountForHref(
   href: NavItem["href"],
-  counts: { compras: number; personal: number; pagos: number },
+  counts: {
+    compras: number;
+    personal: number;
+    pagos: number;
+    inventario: number;
+    caja: number;
+  },
 ) {
   if (href === "/compras") return counts.compras;
   if (href === "/personal") return counts.personal;
   if (href === "/solicitudes-pago") return counts.pagos;
+  if (href === "/inventario") return counts.inventario;
+  if (href === "/tesoreria") return counts.caja;
   return 0;
 }
 

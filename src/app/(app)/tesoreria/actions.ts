@@ -3,10 +3,18 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
+import { ctxCanAccess } from "@/lib/permissions";
+import { todayInBogota } from "@/lib/dates";
+import { resolveCashCloseDestinations } from "@/lib/treasury";
 import {
   bankAccountSchema,
   bankBalanceSnapshotSchema,
 } from "@/validations/treasury";
+import {
+  cashDailyCloseApproveSchema,
+  cashDailyCloseDraftSchema,
+  cashDailyCloseRejectSchema,
+} from "@/validations/cash-daily-close";
 import type { ActionResult } from "../empresa/actions";
 
 function emptyToNull(value: string | null | undefined) {
@@ -19,6 +27,47 @@ function parseMoney(raw: string | null | undefined): number | null {
   const n = Number(raw.replace(/,/g, "").trim());
   if (Number.isNaN(n)) return null;
   return n;
+}
+
+function revalidateTreasuryPaths() {
+  revalidatePath("/tesoreria");
+  revalidatePath("/inicio");
+  revalidatePath("/solicitudes-pago");
+  revalidatePath("/empalme");
+}
+
+type CashCloseStatus = "BORRADOR" | "EN_REVISION" | "AVALADO" | "RECHAZADO";
+
+async function loadCashClose(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  closeId: string,
+) {
+  const { data, error } = await supabase
+    .from("cash_daily_closes")
+    .select(
+      "id, business_date, status, cash_float, cash_sales, card_sales, transfer_sales, cash_account_id, card_account_id, transfer_account_id, cash_credited, card_credited, transfer_credited",
+    )
+    .eq("id", closeId)
+    .eq("organization_id", orgId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data as {
+    id: string;
+    business_date: string;
+    status: CashCloseStatus;
+    cash_float: number;
+    cash_sales: number;
+    card_sales: number;
+    transfer_sales: number;
+    cash_account_id: string | null;
+    card_account_id: string | null;
+    transfer_account_id: string | null;
+    cash_credited: number | null;
+    card_credited: number | null;
+    transfer_credited: number | null;
+  } | null;
 }
 
 export async function createBankAccountAction(
@@ -310,4 +359,455 @@ export async function upsertBankBalanceSnapshotAction(
   revalidatePath("/inicio");
   revalidatePath("/empalme");
   return { ok: true, id: data.id };
+}
+
+export async function upsertCashDailyCloseDraftAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "tesoreria.caja.declarar")) {
+    return { ok: false, error: "Sin permiso para declarar cierre de caja" };
+  }
+
+  const parsed = cashDailyCloseDraftSchema.safeParse({
+    business_date: formData.get("business_date") || todayInBogota(),
+    cash_float: formData.get("cash_float"),
+    cash_sales: formData.get("cash_sales"),
+    card_sales: formData.get("card_sales"),
+    transfer_sales: formData.get("transfer_sales") || "0",
+    comments: formData.get("comments"),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+    };
+  }
+
+  const cashFloat = parseMoney(parsed.data.cash_float);
+  const cashSales = parseMoney(parsed.data.cash_sales);
+  const cardSales = parseMoney(parsed.data.card_sales);
+  const transferSales = parseMoney(parsed.data.transfer_sales);
+  if (
+    cashFloat === null ||
+    cashSales === null ||
+    cardSales === null ||
+    transferSales === null
+  ) {
+    return { ok: false, error: "Montos inválidos" };
+  }
+
+  const supabase = await createClient();
+  const orgId = ctx.organization.id;
+
+  const { data: accounts, error: accError } = await supabase
+    .from("bank_accounts")
+    .select("id, account_kind, is_active")
+    .eq("organization_id", orgId)
+    .is("deleted_at", null);
+
+  if (accError) return { ok: false, error: accError.message };
+
+  const destinations = resolveCashCloseDestinations(accounts ?? []);
+  if (!destinations.cashAccountId) {
+    return {
+      ok: false,
+      error:
+        "Falta una cuenta de tipo Caja en Tesorería para cargar el efectivo",
+    };
+  }
+  if (!destinations.cardAccountId) {
+    return {
+      ok: false,
+      error:
+        "Falta una cuenta Banco o Pasarela en Tesorería para datáfono y transferencias",
+    };
+  }
+  const cashAccountId = destinations.cashAccountId;
+  const cardAccountId = destinations.cardAccountId;
+  const transferAccountId =
+    destinations.transferAccountId ?? destinations.cardAccountId;
+
+  const { data: existing } = await supabase
+    .from("cash_daily_closes")
+    .select("id, status")
+    .eq("organization_id", orgId)
+    .eq("business_date", parsed.data.business_date)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (existing) {
+    const status = existing.status as CashCloseStatus;
+    if (status === "AVALADO" || status === "EN_REVISION") {
+      return {
+        ok: false,
+        error:
+          status === "AVALADO"
+            ? "El cierre de ese día ya fue avalado"
+            : "El cierre ya está en revisión; no se puede editar",
+      };
+    }
+
+    const { error } = await supabase
+      .from("cash_daily_closes")
+      .update({
+        cash_float: cashFloat,
+        cash_sales: cashSales,
+        card_sales: cardSales,
+        transfer_sales: transferSales,
+        cash_account_id: cashAccountId,
+        card_account_id: cardAccountId,
+        transfer_account_id: transferAccountId,
+        comments: emptyToNull(parsed.data.comments),
+        status: "BORRADOR",
+        rejection_reason: null,
+        updated_by: ctx.userId,
+      })
+      .eq("id", existing.id)
+      .eq("organization_id", orgId);
+
+    if (error) return { ok: false, error: error.message };
+
+    await supabase.from("audit_logs").insert({
+      organization_id: orgId,
+      user_id: ctx.userId,
+      action: "UPDATE",
+      entity: "cash_daily_closes",
+      entity_id: existing.id,
+      new_values: parsed.data,
+    });
+
+    revalidateTreasuryPaths();
+    return { ok: true, id: existing.id };
+  }
+
+  const { data, error } = await supabase
+    .from("cash_daily_closes")
+    .insert({
+      organization_id: orgId,
+      business_date: parsed.data.business_date,
+      status: "BORRADOR",
+      cash_float: cashFloat,
+      cash_sales: cashSales,
+      card_sales: cardSales,
+      transfer_sales: transferSales,
+      cash_account_id: cashAccountId,
+      card_account_id: cardAccountId,
+      transfer_account_id: transferAccountId,
+      comments: emptyToNull(parsed.data.comments),
+      source: "MANUAL",
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: orgId,
+    user_id: ctx.userId,
+    action: "CREATE",
+    entity: "cash_daily_closes",
+    entity_id: data.id,
+    new_values: parsed.data,
+  });
+
+  revalidateTreasuryPaths();
+  return { ok: true, id: data.id };
+}
+
+export async function submitCashDailyCloseAction(
+  closeId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "tesoreria.caja.declarar")) {
+    return { ok: false, error: "Sin permiso para enviar cierre de caja" };
+  }
+
+  const supabase = await createClient();
+  let close;
+  try {
+    close = await loadCashClose(supabase, ctx.organization.id, closeId);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Error" };
+  }
+  if (!close) return { ok: false, error: "Cierre no encontrado" };
+  if (close.status !== "BORRADOR" && close.status !== "RECHAZADO") {
+    return { ok: false, error: "Solo se pueden enviar borradores o rechazados" };
+  }
+  if (!close.cash_account_id || !close.card_account_id) {
+    return { ok: false, error: "Defina las cuentas destino antes de enviar" };
+  }
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("cash_daily_closes")
+    .update({
+      status: "EN_REVISION",
+      submitted_by: ctx.userId,
+      submitted_at: now,
+      rejection_reason: null,
+      transfer_account_id:
+        close.transfer_account_id ?? close.card_account_id,
+      updated_by: ctx.userId,
+    })
+    .eq("id", closeId)
+    .eq("organization_id", ctx.organization.id);
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "SUBMIT",
+    entity: "cash_daily_closes",
+    entity_id: closeId,
+  });
+
+  revalidateTreasuryPaths();
+  return { ok: true, id: closeId };
+}
+
+/** Guarda borrador y lo envía a revisión en un paso. */
+export async function saveAndSubmitCashDailyCloseAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const draft = await upsertCashDailyCloseDraftAction(formData);
+  if (!draft.ok || !draft.id) return draft;
+  return submitCashDailyCloseAction(draft.id);
+}
+
+export async function approveCashDailyCloseAction(
+  closeId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "tesoreria.caja.avalar")) {
+    return { ok: false, error: "Sin permiso para avalar cierre de caja" };
+  }
+
+  const parsed = cashDailyCloseApproveSchema.safeParse({
+    pos_cash_amount: formData.get("pos_cash_amount"),
+    pos_card_amount: formData.get("pos_card_amount"),
+    pos_transfer_amount: formData.get("pos_transfer_amount"),
+    bank_card_amount: formData.get("bank_card_amount"),
+    cash_credited: formData.get("cash_credited"),
+    card_credited: formData.get("card_credited"),
+    transfer_credited: formData.get("transfer_credited"),
+    comments: formData.get("comments"),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+    };
+  }
+
+  const supabase = await createClient();
+  const orgId = ctx.organization.id;
+  let close;
+  try {
+    close = await loadCashClose(supabase, orgId, closeId);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Error" };
+  }
+  if (!close) return { ok: false, error: "Cierre no encontrado" };
+  if (close.status !== "EN_REVISION") {
+    return { ok: false, error: "Solo se pueden avalar cierres en revisión" };
+  }
+  if (!close.cash_account_id || !close.card_account_id) {
+    return { ok: false, error: "Faltan cuentas destino" };
+  }
+
+  const transferAccountId =
+    close.transfer_account_id ?? close.card_account_id;
+
+  const cashCredited =
+    parseMoney(parsed.data.cash_credited ?? "") ?? Number(close.cash_sales);
+  const cardCredited =
+    parseMoney(parsed.data.card_credited ?? "") ?? Number(close.card_sales);
+  const transferCredited =
+    parseMoney(parsed.data.transfer_credited ?? "") ??
+    Number(close.transfer_sales ?? 0);
+
+  const posCash = parseMoney(parsed.data.pos_cash_amount ?? "");
+  const posCard = parseMoney(parsed.data.pos_card_amount ?? "");
+  const posTransfer = parseMoney(parsed.data.pos_transfer_amount ?? "");
+  const bankCard = parseMoney(parsed.data.bank_card_amount ?? "");
+
+  const { data: existingTxs } = await supabase
+    .from("bank_transactions")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("linked_entity_type", "cash_daily_close")
+    .eq("linked_entity_id", closeId)
+    .is("deleted_at", null)
+    .limit(1);
+
+  if (!existingTxs?.length) {
+    const txRows: Array<Record<string, unknown>> = [];
+    if (cashCredited > 0) {
+      txRows.push({
+        organization_id: orgId,
+        bank_account_id: close.cash_account_id,
+        transaction_date: close.business_date,
+        description: `Cierre caja efectivo ${close.business_date}`,
+        reference: `caja-${close.business_date}`,
+        debit: 0,
+        credit: cashCredited,
+        origin: "tesoreria.caja",
+        category: "INGRESO_CAJA",
+        linked_entity_type: "cash_daily_close",
+        linked_entity_id: closeId,
+        created_by: ctx.userId,
+        updated_by: ctx.userId,
+      });
+    }
+    if (cardCredited > 0) {
+      txRows.push({
+        organization_id: orgId,
+        bank_account_id: close.card_account_id,
+        transaction_date: close.business_date,
+        description: `Cierre caja adquirencia ${close.business_date}`,
+        reference: `adquirencia-${close.business_date}`,
+        debit: 0,
+        credit: cardCredited,
+        origin: "tesoreria.caja",
+        category: "INGRESO_ADQUIRENCIA",
+        linked_entity_type: "cash_daily_close",
+        linked_entity_id: closeId,
+        created_by: ctx.userId,
+        updated_by: ctx.userId,
+      });
+    }
+    if (transferCredited > 0) {
+      txRows.push({
+        organization_id: orgId,
+        bank_account_id: transferAccountId,
+        transaction_date: close.business_date,
+        description: `Cierre caja transferencias/QR ${close.business_date}`,
+        reference: `transfer-${close.business_date}`,
+        debit: 0,
+        credit: transferCredited,
+        origin: "tesoreria.caja",
+        category: "INGRESO_TRANSFERENCIA",
+        linked_entity_type: "cash_daily_close",
+        linked_entity_id: closeId,
+        created_by: ctx.userId,
+        updated_by: ctx.userId,
+      });
+    }
+    if (txRows.length > 0) {
+      const { error: txError } = await supabase
+        .from("bank_transactions")
+        .insert(txRows);
+      if (txError) return { ok: false, error: txError.message };
+    }
+  }
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("cash_daily_closes")
+    .update({
+      status: "AVALADO",
+      pos_cash_amount: posCash,
+      pos_card_amount: posCard,
+      pos_transfer_amount: posTransfer,
+      bank_card_amount: bankCard,
+      cash_credited: cashCredited,
+      card_credited: cardCredited,
+      transfer_credited: transferCredited,
+      comments: emptyToNull(parsed.data.comments) ?? undefined,
+      reviewed_by: ctx.userId,
+      reviewed_at: now,
+      updated_by: ctx.userId,
+    })
+    .eq("id", closeId)
+    .eq("organization_id", orgId);
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: orgId,
+    user_id: ctx.userId,
+    action: "APPROVE",
+    entity: "cash_daily_closes",
+    entity_id: closeId,
+    new_values: {
+      cash_credited: cashCredited,
+      card_credited: cardCredited,
+      transfer_credited: transferCredited,
+      pos_cash_amount: posCash,
+      pos_card_amount: posCard,
+      pos_transfer_amount: posTransfer,
+      bank_card_amount: bankCard,
+    },
+  });
+
+  revalidateTreasuryPaths();
+  return { ok: true, id: closeId };
+}
+
+export async function rejectCashDailyCloseAction(
+  closeId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "tesoreria.caja.avalar")) {
+    return { ok: false, error: "Sin permiso para rechazar cierre de caja" };
+  }
+
+  const parsed = cashDailyCloseRejectSchema.safeParse({
+    rejection_reason: formData.get("rejection_reason"),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+    };
+  }
+
+  const supabase = await createClient();
+  let close;
+  try {
+    close = await loadCashClose(supabase, ctx.organization.id, closeId);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Error" };
+  }
+  if (!close) return { ok: false, error: "Cierre no encontrado" };
+  if (close.status !== "EN_REVISION") {
+    return { ok: false, error: "Solo se pueden rechazar cierres en revisión" };
+  }
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("cash_daily_closes")
+    .update({
+      status: "RECHAZADO",
+      rejection_reason: parsed.data.rejection_reason.trim(),
+      reviewed_by: ctx.userId,
+      reviewed_at: now,
+      updated_by: ctx.userId,
+    })
+    .eq("id", closeId)
+    .eq("organization_id", ctx.organization.id);
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "REJECT",
+    entity: "cash_daily_closes",
+    entity_id: closeId,
+    new_values: { rejection_reason: parsed.data.rejection_reason },
+  });
+
+  revalidateTreasuryPaths();
+  return { ok: true, id: closeId };
 }

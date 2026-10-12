@@ -14,6 +14,7 @@ import {
   normalizePhysicalCategoryId,
   PHYSICAL_COUNT_NONE_CATEGORY,
 } from "@/lib/inventory/physical-count";
+import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
 import { Badge } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
@@ -40,10 +41,39 @@ export type ReviewItem = {
   created_by_name: string | null;
 };
 
-type ViewMode = "novedades" | "all";
+type ViewMode = "novedades" | "followup" | "all";
 
 const inputClass =
   "w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2.5 text-sm outline-none ring-[var(--accent)] focus:ring-2";
+
+function followUpStorageKey(countId: string) {
+  return `candela:inv-review-followup:${countId}`;
+}
+
+function readFollowUpIds(countId: string): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(followUpStorageKey(countId));
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((id): id is string => typeof id === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function writeFollowUpIds(countId: string, ids: Set<string>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      followUpStorageKey(countId),
+      JSON.stringify([...ids]),
+    );
+  } catch {
+    // Silencioso: el seguimiento es auxiliar.
+  }
+}
 
 function formatQty(value: number | string | null | undefined) {
   const n = Number(value ?? 0);
@@ -55,6 +85,15 @@ function formatQty(value: number | string | null | undefined) {
 
 function catKey(categoryId: string | null | undefined) {
   return normalizePhysicalCategoryId(categoryId);
+}
+
+function sortReviewItems(items: ReviewItem[]) {
+  return [...items].sort((a, b) => {
+    const da = Math.abs(Number(a.difference_qty ?? 0));
+    const db = Math.abs(Number(b.difference_qty ?? 0));
+    if (da !== db) return db - da;
+    return a.product_name.localeCompare(b.product_name, "es");
+  });
 }
 
 export function PhysicalReviewDetailClient({
@@ -76,6 +115,18 @@ export function PhysicalReviewDetailClient({
   const [draftQty, setDraftQty] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [followUpIds, setFollowUpIds] = useState<Set<string>>(new Set());
+  const [followUpReady, setFollowUpReady] = useState(false);
+
+  useEffect(() => {
+    const stored = readFollowUpIds(count.id);
+    const valid = new Set(items.map((i) => i.id));
+    const next = new Set<string>();
+    for (const id of stored) if (valid.has(id)) next.add(id);
+    setFollowUpIds(next);
+    writeFollowUpIds(count.id, next);
+    setFollowUpReady(true);
+  }, [count.id, items]);
 
   useEffect(() => {
     setLocalItems(items);
@@ -86,6 +137,11 @@ export function PhysicalReviewDetailClient({
       return next;
     });
   }, [items]);
+
+  function persistFollowUp(next: Set<string>) {
+    setFollowUpIds(next);
+    writeFollowUpIds(count.id, next);
+  }
 
   function toggleSelected(itemId: string) {
     setSelectedIds((prev) => {
@@ -107,7 +163,27 @@ export function PhysicalReviewDetailClient({
     });
   }
 
-  function applyItems(itemIds: string[], label: string) {
+  function toggleFollowUp(itemId: string) {
+    const next = new Set(followUpIds);
+    if (next.has(itemId)) next.delete(itemId);
+    else next.add(itemId);
+    persistFollowUp(next);
+  }
+
+  function clearFollowUp(ids: Iterable<string>) {
+    const next = new Set(followUpIds);
+    let changed = false;
+    for (const id of ids) {
+      if (next.delete(id)) changed = true;
+    }
+    if (changed) persistFollowUp(next);
+  }
+
+  function applyItems(
+    itemIds: string[],
+    label: string,
+    options?: { markRemainingFrom?: string[] },
+  ) {
     if (!itemIds.length) {
       setError("Seleccione al menos un producto");
       return;
@@ -127,6 +203,9 @@ export function PhysicalReviewDetailClient({
         return;
       }
       const applied = new Set(itemIds);
+      const remainingVisible = (options?.markRemainingFrom ?? []).filter(
+        (id) => !applied.has(id),
+      );
       setLocalItems((prev) => prev.filter((row) => !applied.has(row.id)));
       setSelectedIds((prev) => {
         const next = new Set(prev);
@@ -138,6 +217,16 @@ export function PhysicalReviewDetailClient({
         for (const id of itemIds) delete next[id];
         return next;
       });
+      if (remainingVisible.length > 0) {
+        const next = new Set(followUpIds);
+        for (const id of applied) next.delete(id);
+        for (const id of remainingVisible) next.add(id);
+        persistFollowUp(next);
+        setView("followup");
+      } else {
+        clearFollowUp(applied);
+      }
+      notifyPendingActionsChanged();
       router.refresh();
     });
   }
@@ -156,12 +245,15 @@ export function PhysicalReviewDetailClient({
         label: string;
         items: ReviewItem[];
         novedades: number;
+        followUp: number;
       }
     >();
 
     for (const item of localItems) {
       const diff = Number(item.difference_qty ?? 0);
+      const isFollowUp = followUpIds.has(item.id);
       if (view === "novedades" && diff === 0) continue;
+      if (view === "followup" && !isFollowUp) continue;
       if (
         q &&
         !item.product_name
@@ -182,9 +274,11 @@ export function PhysicalReviewDetailClient({
             : item.category_name,
         items: [],
         novedades: 0,
+        followUp: 0,
       };
       group.items.push(item);
       if (diff !== 0) group.novedades += 1;
+      if (isFollowUp) group.followUp += 1;
       byCat.set(categoryId, group);
     }
 
@@ -208,32 +302,76 @@ export function PhysicalReviewDetailClient({
               : catItems[0]!.category_name,
           items: [],
           novedades: 0,
+          followUp: catItems.filter((i) => followUpIds.has(i.id)).length,
         });
       }
     }
 
     return [...byCat.values()]
-      .map((g) => ({
-        ...g,
-        items: [...g.items].sort((a, b) => {
-          const da = Math.abs(Number(a.difference_qty ?? 0));
-          const db = Math.abs(Number(b.difference_qty ?? 0));
-          if (da !== db) return db - da;
-          return a.product_name.localeCompare(b.product_name, "es");
-        }),
-        totalInCategory: localItems.filter(
+      .map((g) => {
+        const categoryItems = localItems.filter(
           (i) => catKey(i.category_id) === g.categoryId,
-        ).length,
-      }))
+        );
+        const followUpItems = sortReviewItems(
+          g.items.filter((i) => followUpIds.has(i.id)),
+        );
+        const novedadItems = sortReviewItems(
+          g.items.filter(
+            (i) =>
+              !followUpIds.has(i.id) && Number(i.difference_qty ?? 0) !== 0,
+          ),
+        );
+        const equalItems = sortReviewItems(
+          g.items.filter(
+            (i) =>
+              !followUpIds.has(i.id) && Number(i.difference_qty ?? 0) === 0,
+          ),
+        );
+        return {
+          ...g,
+          items:
+            view === "all"
+              ? [...followUpItems, ...novedadItems, ...equalItems]
+              : sortReviewItems(g.items),
+          sections:
+            view === "all"
+              ? [
+                  {
+                    key: "followup",
+                    label: "Para seguimiento",
+                    items: followUpItems,
+                  },
+                  {
+                    key: "novedades",
+                    label: "Con novedades",
+                    items: novedadItems,
+                  },
+                  {
+                    key: "iguales",
+                    label: "Sin diferencia",
+                    items: equalItems,
+                  },
+                ].filter((s) => s.items.length > 0)
+              : [{ key: "all", label: null as string | null, items: sortReviewItems(g.items) }],
+          totalInCategory: categoryItems.length,
+          followUpInCategory: categoryItems.filter((i) =>
+            followUpIds.has(i.id),
+          ).length,
+        };
+      })
       .sort((a, b) => {
+        if (a.followUpInCategory !== b.followUpInCategory) {
+          return b.followUpInCategory - a.followUpInCategory;
+        }
         if (a.novedades !== b.novedades) return b.novedades - a.novedades;
         return a.label.localeCompare(b.label, "es");
       });
-  }, [localItems, query, view]);
+  }, [followUpIds, localItems, query, view]);
 
   const totalNovedades = localItems.filter(
     (i) => Number(i.difference_qty ?? 0) !== 0,
   ).length;
+  const totalFollowUp = localItems.filter((i) => followUpIds.has(i.id)).length;
 
   function qtyValue(item: ReviewItem) {
     return draftQty[item.id] ?? String(item.counted_qty);
@@ -374,7 +512,11 @@ export function PhysicalReviewDetailClient({
                   setError(null);
                   const r = await applyPhysicalCountAdjustmentsAction(count.id);
                   if (!r.ok) setError(r.error ?? "Error");
-                  else router.refresh();
+                  else {
+                    persistFollowUp(new Set());
+                    notifyPendingActionsChanged();
+                    router.refresh();
+                  }
                 });
               }}
             >
@@ -394,10 +536,11 @@ export function PhysicalReviewDetailClient({
             autoComplete="off"
             enterKeyHint="search"
           />
-          <div className="grid grid-cols-2 rounded-xl border border-[var(--line)] bg-white p-1 text-sm md:inline-flex md:w-auto">
+          <div className="grid grid-cols-3 rounded-xl border border-[var(--line)] bg-white p-1 text-sm md:inline-flex md:w-auto">
             {(
               [
-                ["novedades", "Solo novedades"],
+                ["novedades", "Novedades"],
+                ["followup", `Seguimiento${totalFollowUp > 0 ? ` (${totalFollowUp})` : ""}`],
                 ["all", "Todos"],
               ] as const
             ).map(([value, label]) => (
@@ -424,12 +567,25 @@ export function PhysicalReviewDetailClient({
       ) : null}
 
       <div className="space-y-3">
+        {view === "followup" && followUpReady && totalFollowUp === 0 ? (
+          <div className="rounded-2xl border border-dashed border-[var(--line)] bg-white px-5 py-8 text-center">
+            <p className="font-medium">Nada en seguimiento</p>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Marque productos con “Revisar luego”, o aplique una selección
+              parcial: los no autorizados de esa vista quedan marcados solos.
+            </p>
+            <button
+              type="button"
+              onClick={() => setView("all")}
+              className="mt-4 inline-flex min-h-10 items-center justify-center rounded-xl border border-[var(--line)] px-4 text-sm font-medium hover:bg-[var(--surface)]"
+            >
+              Ir a Todos
+            </button>
+          </div>
+        ) : null}
         {groups.map((group) => {
           const open = openCategoryId === group.categoryId;
-          const visibleCount =
-            view === "novedades" && !query
-              ? group.novedades
-              : group.items.length;
+          const visibleCount = group.items.length;
 
           return (
             <div
@@ -449,6 +605,11 @@ export function PhysicalReviewDetailClient({
                     <Badge tone="warn">
                       {group.totalInCategory} en revisión
                     </Badge>
+                    {group.followUpInCategory > 0 ? (
+                      <Badge tone="accent">
+                        {group.followUpInCategory} seguimiento
+                      </Badge>
+                    ) : null}
                     {group.novedades > 0 ? (
                       <Badge tone="accent">
                         {group.novedades} novedad
@@ -462,7 +623,9 @@ export function PhysicalReviewDetailClient({
                     {visibleCount} en vista
                     {view === "novedades" && group.novedades === 0
                       ? " · puede aplicar aunque todo coincida"
-                      : ""}
+                      : view === "followup" && visibleCount === 0
+                        ? " · marque productos con “Revisar luego”"
+                        : ""}
                   </p>
                 </div>
                 <span
@@ -551,6 +714,11 @@ export function PhysicalReviewDetailClient({
                                     .filter((i) => selectedIds.has(i.id))
                                     .map((i) => i.id),
                                   `selección · ${group.label}`,
+                                  {
+                                    markRemainingFrom: group.items.map(
+                                      (i) => i.id,
+                                    ),
+                                  },
                                 )
                               }
                             >
@@ -559,158 +727,220 @@ export function PhysicalReviewDetailClient({
                           );
                         })()}
                       </div>
-                      <ul className="divide-y divide-[var(--line)]">
-                        {group.items.map((item) => {
-                          const diff = Number(item.difference_qty ?? 0);
-                          const isNovedad = diff !== 0;
-                          const draft = qtyValue(item);
-                          const dirty =
-                            draft.trim() !== "" &&
-                            Number(draft.replace(/,/g, "")) !==
-                              Number(item.counted_qty);
-                          const checked = selectedIds.has(item.id);
-                          return (
-                            <li
-                              key={item.id}
-                              className={cn(
-                                "space-y-3 px-4 py-3.5 sm:grid sm:grid-cols-[auto_1fr_auto] sm:items-center sm:gap-3 sm:space-y-0",
-                                isNovedad ? "bg-amber-50/40" : "",
-                              )}
-                            >
-                              <label className="flex items-center gap-2 sm:block">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() => toggleSelected(item.id)}
-                                  className="size-4 rounded border-[var(--line)]"
-                                  aria-label={`Seleccionar ${item.product_name}`}
-                                />
-                                <span className="text-xs text-[var(--muted)] sm:hidden">
-                                  Seleccionar
-                                </span>
-                              </label>
-                              <div className="min-w-0">
-                                <p className="font-medium leading-snug">
-                                  {item.product_name}
-                                </p>
-                                <p className="mt-0.5 text-xs text-[var(--muted)]">
-                                  {item.item_kind_label ? (
-                                    <span className="mr-2 font-medium text-[var(--ink)]">
-                                      {item.item_kind_label}
-                                    </span>
-                                  ) : null}
-                                  <span className="font-semibold text-[var(--ink)]">
-                                    {item.unit}
-                                  </span>
-                                  {item.created_by_name ? (
-                                    <span className="ml-2">
-                                      · {item.created_by_name}
-                                    </span>
-                                  ) : null}
-                                  {isNovedad ? (
-                                    <span className="ml-2 font-medium text-amber-800">
-                                      Novedad
-                                    </span>
-                                  ) : (
-                                    <span className="ml-2 font-medium text-emerald-800">
-                                      Igual
-                                    </span>
+                      {group.sections.map((section) => (
+                        <div key={section.key}>
+                          {section.label ? (
+                            <p className="border-b border-[var(--line)] bg-[var(--surface)]/70 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                              {section.label}
+                              <span className="ml-1.5 font-normal normal-case tracking-normal">
+                                ({section.items.length})
+                              </span>
+                            </p>
+                          ) : null}
+                          <ul className="divide-y divide-[var(--line)]">
+                            {section.items.map((item) => {
+                              const diff = Number(item.difference_qty ?? 0);
+                              const isNovedad = diff !== 0;
+                              const isFollowUp = followUpIds.has(item.id);
+                              const draft = qtyValue(item);
+                              const dirty =
+                                draft.trim() !== "" &&
+                                Number(draft.replace(/,/g, "")) !==
+                                  Number(item.counted_qty);
+                              const checked = selectedIds.has(item.id);
+                              return (
+                                <li
+                                  key={item.id}
+                                  className={cn(
+                                    "space-y-3 px-4 py-3.5 sm:grid sm:grid-cols-[auto_1fr_auto] sm:items-center sm:gap-3 sm:space-y-0",
+                                    isFollowUp
+                                      ? "bg-[var(--accent)]/8"
+                                      : isNovedad
+                                        ? "bg-amber-50/40"
+                                        : "",
                                   )}
-                                </p>
-                                <p className="mt-1 text-xs text-[var(--muted)]">
-                                  Sistema {formatQty(item.system_qty)} →
-                                  Contado {formatQty(item.counted_qty)} · Dif.{" "}
-                                  <span
-                                    className={cn(
-                                      "font-medium",
-                                      diff < 0
-                                        ? "text-red-700"
-                                        : diff > 0
-                                          ? "text-emerald-700"
-                                          : "",
-                                    )}
-                                  >
-                                    {diff > 0
-                                      ? `+${formatQty(diff)}`
-                                      : formatQty(diff)}
-                                  </span>
-                                </p>
-                              </div>
-                              <div className="flex flex-wrap items-stretch gap-2 sm:justify-end">
-                                <div className="min-w-0 flex-1 sm:w-32 sm:flex-none">
-                                  <div className="flex items-center gap-1.5">
+                                >
+                                  <label className="flex items-center gap-2 sm:block">
                                     <input
-                                      inputMode="decimal"
-                                      value={draft}
-                                      onChange={(e) =>
-                                        setDraftQty((prev) => ({
-                                          ...prev,
-                                          [item.id]: e.target.value,
-                                        }))
-                                      }
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") {
-                                          e.preventDefault();
-                                          saveCorrection(item);
-                                        }
-                                      }}
-                                      aria-label={`Cantidad contada de ${item.product_name} en ${item.unit}`}
-                                      className={cn(
-                                        inputClass,
-                                        "min-h-11 font-display text-lg font-semibold tabular-nums",
-                                      )}
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleSelected(item.id)}
+                                      className="size-4 rounded border-[var(--line)]"
+                                      aria-label={`Seleccionar ${item.product_name}`}
                                     />
-                                    <span className="shrink-0 text-xs font-semibold text-[var(--muted)]">
-                                      {item.unit}
+                                    <span className="text-xs text-[var(--muted)] sm:hidden">
+                                      Seleccionar
                                     </span>
+                                  </label>
+                                  <div className="min-w-0">
+                                    <p className="font-medium leading-snug">
+                                      {item.product_name}
+                                    </p>
+                                    <p className="mt-0.5 text-xs text-[var(--muted)]">
+                                      {item.item_kind_label ? (
+                                        <span className="mr-2 font-medium text-[var(--ink)]">
+                                          {item.item_kind_label}
+                                        </span>
+                                      ) : null}
+                                      <span className="font-semibold text-[var(--ink)]">
+                                        {item.unit}
+                                      </span>
+                                      {item.created_by_name ? (
+                                        <span className="ml-2">
+                                          · {item.created_by_name}
+                                        </span>
+                                      ) : null}
+                                      {isFollowUp ? (
+                                        <span className="ml-2 font-medium text-[var(--accent)]">
+                                          Seguimiento
+                                        </span>
+                                      ) : null}
+                                      {isNovedad ? (
+                                        <span className="ml-2 font-medium text-amber-800">
+                                          Novedad
+                                        </span>
+                                      ) : (
+                                        <span className="ml-2 font-medium text-emerald-800">
+                                          Igual
+                                        </span>
+                                      )}
+                                    </p>
+                                    <p className="mt-1 text-xs text-[var(--muted)]">
+                                      Sistema {formatQty(item.system_qty)} →
+                                      Contado {formatQty(item.counted_qty)} · Dif.{" "}
+                                      <span
+                                        className={cn(
+                                          "font-medium",
+                                          diff < 0
+                                            ? "text-red-700"
+                                            : diff > 0
+                                              ? "text-emerald-700"
+                                              : "",
+                                        )}
+                                      >
+                                        {diff > 0
+                                          ? `+${formatQty(diff)}`
+                                          : formatQty(diff)}
+                                      </span>
+                                    </p>
                                   </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  disabled={
-                                    savingId === item.id ||
-                                    pending ||
-                                    draft.trim() === "" ||
-                                    !dirty
-                                  }
-                                  className="min-h-11 shrink-0 rounded-xl border border-[var(--line)] px-3 text-sm font-medium disabled:opacity-40"
-                                  onClick={() => saveCorrection(item)}
-                                >
-                                  {savingId === item.id
-                                    ? "…"
-                                    : dirty
-                                      ? "Guardar"
-                                      : "Ok"}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={pending || dirty}
-                                  title={
-                                    dirty
-                                      ? "Guarde la corrección antes de aplicar"
-                                      : undefined
-                                  }
-                                  className="min-h-11 shrink-0 rounded-xl bg-[var(--ink)] px-3 text-sm font-medium text-white disabled:opacity-40"
-                                  onClick={() =>
-                                    applyItems(
-                                      [item.id],
-                                      item.product_name,
-                                    )
-                                  }
-                                >
-                                  Aplicar
-                                </button>
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
+                                  <div className="flex flex-wrap items-stretch gap-2 sm:justify-end">
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleFollowUp(item.id)}
+                                      className={cn(
+                                        "min-h-11 shrink-0 rounded-xl border px-3 text-sm font-medium",
+                                        isFollowUp
+                                          ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]"
+                                          : "border-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)]",
+                                      )}
+                                    >
+                                      {isFollowUp ? "En seguimiento" : "Revisar luego"}
+                                    </button>
+                                    <div className="min-w-0 flex-1 sm:w-32 sm:flex-none">
+                                      <div className="flex items-center gap-1.5">
+                                        <input
+                                          inputMode="decimal"
+                                          value={draft}
+                                          onChange={(e) =>
+                                            setDraftQty((prev) => ({
+                                              ...prev,
+                                              [item.id]: e.target.value,
+                                            }))
+                                          }
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") {
+                                              e.preventDefault();
+                                              saveCorrection(item);
+                                            }
+                                          }}
+                                          aria-label={`Cantidad contada de ${item.product_name} en ${item.unit}`}
+                                          className={cn(
+                                            inputClass,
+                                            "min-h-11 font-display text-lg font-semibold tabular-nums",
+                                          )}
+                                        />
+                                        <span className="shrink-0 text-xs font-semibold text-[var(--muted)]">
+                                          {item.unit}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        savingId === item.id ||
+                                        pending ||
+                                        draft.trim() === "" ||
+                                        !dirty
+                                      }
+                                      className="min-h-11 shrink-0 rounded-xl border border-[var(--line)] px-3 text-sm font-medium disabled:opacity-40"
+                                      onClick={() => saveCorrection(item)}
+                                    >
+                                      {savingId === item.id
+                                        ? "…"
+                                        : dirty
+                                          ? "Guardar"
+                                          : "Ok"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={pending || dirty}
+                                      title={
+                                        dirty
+                                          ? "Guarde la corrección antes de aplicar"
+                                          : undefined
+                                      }
+                                      className="min-h-11 shrink-0 rounded-xl bg-[var(--ink)] px-3 text-sm font-medium text-white disabled:opacity-40"
+                                      onClick={() =>
+                                        applyItems(
+                                          [item.id],
+                                          item.product_name,
+                                        )
+                                      }
+                                    >
+                                      Aplicar
+                                    </button>
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      ))}
                     </>
                   ) : (
-                    <p className="px-4 py-6 text-center text-sm text-[var(--muted)]">
-                      Sin novedades en esta categoría. Puede aplicar o rechazar
-                      igual.
-                    </p>
+                    <div className="space-y-3 px-4 py-6 text-center">
+                      <p className="text-sm text-[var(--muted)]">
+                        {view === "novedades" && group.totalInCategory > 0
+                          ? `Los ${group.totalInCategory} producto${group.totalInCategory === 1 ? "" : "s"} en revisión coinciden con el sistema, por eso no aparecen en “Novedades”.`
+                          : view === "followup"
+                            ? followUpReady
+                              ? "No hay productos marcados para seguimiento en esta categoría."
+                              : "Cargando seguimiento…"
+                            : "Sin productos visibles en esta categoría."}
+                      </p>
+                      {view === "novedades" && group.totalInCategory > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setView("all")}
+                          className="inline-flex min-h-10 items-center justify-center rounded-xl border border-[var(--line)] bg-white px-4 text-sm font-medium hover:bg-[var(--surface)]"
+                        >
+                          Ver los {group.totalInCategory} en Todos
+                        </button>
+                      ) : null}
+                      {view === "followup" ? (
+                        <button
+                          type="button"
+                          onClick={() => setView("all")}
+                          className="inline-flex min-h-10 items-center justify-center rounded-xl border border-[var(--line)] bg-white px-4 text-sm font-medium hover:bg-[var(--surface)]"
+                        >
+                          Ir a Todos y marcar “Revisar luego”
+                        </button>
+                      ) : null}
+                      <p className="text-xs text-[var(--muted)]">
+                        Puede aplicar o rechazar la categoría igual.
+                      </p>
+                    </div>
                   )}
 
                   <div className="space-y-3 border-t border-[var(--line)] bg-amber-50/50 p-3 sm:p-4">
@@ -785,6 +1015,8 @@ export function PhysicalReviewDetailClient({
                                 for (const id of cleared) next.delete(id);
                                 return next;
                               });
+                              clearFollowUp(cleared);
+                              notifyPendingActionsChanged();
                               router.refresh();
                             }
                           });
@@ -814,11 +1046,19 @@ export function PhysicalReviewDetailClient({
                           );
                           if (!r.ok) setError(r.error ?? "Error");
                           else {
+                            const cleared = localItems
+                              .filter(
+                                (i) =>
+                                  catKey(i.category_id) === group.categoryId,
+                              )
+                              .map((i) => i.id);
                             setRejectReason((prev) => {
                               const next = { ...prev };
                               delete next[group.categoryId];
                               return next;
                             });
+                            clearFollowUp(cleared);
+                            notifyPendingActionsChanged();
                             router.refresh();
                           }
                         });

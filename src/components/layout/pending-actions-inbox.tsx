@@ -6,8 +6,10 @@ import { usePathname } from "next/navigation";
 import {
   Bell,
   CreditCard,
+  Package,
   ShoppingCart,
   UserCog,
+  Wallet,
   X,
 } from "lucide-react";
 import { getPendingActionsAction } from "@/app/(app)/notifications/actions";
@@ -23,6 +25,8 @@ const EMPTY_COUNTS: PendingActionCounts = {
   compras: 0,
   personal: 0,
   pagos: 0,
+  inventario: 0,
+  caja: 0,
 };
 
 const KIND_META: Record<
@@ -39,6 +43,11 @@ const KIND_META: Record<
     tone: "bg-[var(--info)]/15 text-[var(--info)]",
     short: "Personal",
   },
+  caja_avalar: {
+    icon: Wallet,
+    tone: "bg-[var(--accent)]/15 text-[var(--accent)]",
+    short: "Caja",
+  },
   pago_aprobar: {
     icon: CreditCard,
     tone: "bg-[var(--warn)]/20 text-[var(--warn)]",
@@ -48,6 +57,11 @@ const KIND_META: Record<
     icon: CreditCard,
     tone: "bg-[var(--ok)]/15 text-[var(--ok)]",
     short: "Tesorería",
+  },
+  inventario_revisar: {
+    icon: Package,
+    tone: "bg-[var(--warn)]/20 text-[var(--warn)]",
+    short: "Inventario",
   },
 };
 

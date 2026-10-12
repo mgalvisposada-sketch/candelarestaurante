@@ -12,6 +12,7 @@ import {
   draftCategoryOccupants,
   normalizePhysicalCategoryId,
 } from "@/lib/inventory/physical-count";
+import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
 import { Badge } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
@@ -551,6 +552,7 @@ export function PhysicalCountDetailClient({
         group.categoryId,
       );
       if (!r.ok) setError(r.error ?? "Error");
+      else notifyPendingActionsChanged();
     });
   }
 

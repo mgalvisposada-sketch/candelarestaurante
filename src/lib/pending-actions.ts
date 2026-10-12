@@ -8,7 +8,9 @@ export type PendingActionKind =
   | "compra_autorizar"
   | "novedad_aprobar"
   | "pago_aprobar"
-  | "pago_ejecutar";
+  | "pago_ejecutar"
+  | "inventario_revisar"
+  | "caja_avalar";
 
 export type PendingAction = {
   id: string;
@@ -25,6 +27,8 @@ export type PendingActionCounts = {
   compras: number;
   personal: number;
   pagos: number;
+  inventario: number;
+  caja: number;
 };
 
 export type PendingActionsResult = {
@@ -48,8 +52,10 @@ const NOVELTY_TYPE_LABELS: Record<string, string> = {
 const KIND_ORDER: Record<PendingActionKind, number> = {
   compra_autorizar: 0,
   novedad_aprobar: 1,
-  pago_aprobar: 2,
-  pago_ejecutar: 3,
+  caja_avalar: 2,
+  pago_aprobar: 3,
+  pago_ejecutar: 4,
+  inventario_revisar: 5,
 };
 
 /**
@@ -61,7 +67,14 @@ export async function fetchPendingActions(
 ): Promise<PendingActionsResult> {
   const empty: PendingActionsResult = {
     items: [],
-    counts: { total: 0, compras: 0, personal: 0, pagos: 0 },
+    counts: {
+      total: 0,
+      compras: 0,
+      personal: 0,
+      pagos: 0,
+      inventario: 0,
+      caja: 0,
+    },
   };
 
   if (!ctx.organization?.id) return empty;
@@ -71,16 +84,31 @@ export async function fetchPendingActions(
   const canApproveNovelty = ctxCanAccess(ctx, "personal.novedades.aprobar");
   const canApprovePayment = ctxCanAccess(ctx, "solicitudes-pago.aprobar");
   const canPay = ctxCanAccess(ctx, "solicitudes-pago.pagar");
+  const canReviewInventory = ctxCanAccess(ctx, "inventario.fisico.ajustar");
+  const canAvalarCaja = ctxCanAccess(ctx, "tesoreria.caja.avalar");
 
-  if (!canApprovePurchase && !canApproveNovelty && !canApprovePayment && !canPay) {
+  if (
+    !canApprovePurchase &&
+    !canApproveNovelty &&
+    !canApprovePayment &&
+    !canPay &&
+    !canReviewInventory &&
+    !canAvalarCaja
+  ) {
     return empty;
   }
 
   const supabase = await createClient();
   const items: PendingAction[] = [];
 
-  const [purchasesRes, noveltiesRes, paymentsReviewRes, paymentsPayRes] =
-    await Promise.all([
+  const [
+    purchasesRes,
+    noveltiesRes,
+    paymentsReviewRes,
+    paymentsPayRes,
+    inventoryRes,
+    cashClosesRes,
+  ] = await Promise.all([
       canApprovePurchase
         ? supabase
             .from("purchase_requests")
@@ -125,6 +153,28 @@ export async function fetchPendingActions(
             .in("status", ["EN_COLA_PAGO", "APROBADA"])
             .is("deleted_at", null)
             .order("requested_at", { ascending: true })
+            .limit(50)
+        : Promise.resolve({ data: null as null }),
+      canReviewInventory
+        ? supabase
+            .from("physical_inventory_counts")
+            .select("id, title, status, location_label, submitted_at, counted_at")
+            .eq("organization_id", orgId)
+            .eq("status", "ENVIADO")
+            .is("deleted_at", null)
+            .order("submitted_at", { ascending: true })
+            .limit(50)
+        : Promise.resolve({ data: null as null }),
+      canAvalarCaja
+        ? supabase
+            .from("cash_daily_closes")
+            .select(
+              "id, business_date, cash_sales, card_sales, transfer_sales, status, submitted_at, created_at",
+            )
+            .eq("organization_id", orgId)
+            .eq("status", "EN_REVISION")
+            .is("deleted_at", null)
+            .order("business_date", { ascending: true })
             .limit(50)
         : Promise.resolve({ data: null as null }),
     ]);
@@ -202,6 +252,36 @@ export async function fetchPendingActions(
     });
   }
 
+  for (const row of inventoryRes.data ?? []) {
+    const where = row.location_label ? ` · ${row.location_label}` : "";
+    items.push({
+      id: `inventario:${row.id}`,
+      kind: "inventario_revisar",
+      title: "Revisar inventario físico",
+      body: `${row.title || "Conteo"}${where}`,
+      href: `/inventario/revision/${row.id}`,
+      createdAt:
+        (row.submitted_at as string | null) ?? (row.counted_at as string),
+    });
+  }
+
+  for (const row of cashClosesRes.data ?? []) {
+    const cash = formatCOP(row.cash_sales);
+    const card = formatCOP(row.card_sales);
+    const transfer = formatCOP(row.transfer_sales ?? 0);
+    items.push({
+      id: `caja:${row.id}`,
+      kind: "caja_avalar",
+      title: "Avalar cierre de caja",
+      body: `${formatDateCO(row.business_date as string)} · Efectivo ${cash} · Datáfono ${card} · QR ${transfer}`,
+      href: "/tesoreria#caja",
+      createdAt:
+        (row.submitted_at as string | null) ??
+        (row.created_at as string) ??
+        (row.business_date as string),
+    });
+  }
+
   items.sort((a, b) => {
     if (a.urgent !== b.urgent) return a.urgent ? -1 : 1;
     const kindDiff = KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
@@ -216,6 +296,8 @@ export async function fetchPendingActions(
     pagos: items.filter(
       (i) => i.kind === "pago_aprobar" || i.kind === "pago_ejecutar",
     ).length,
+    inventario: items.filter((i) => i.kind === "inventario_revisar").length,
+    caja: items.filter((i) => i.kind === "caja_avalar").length,
   };
 
   return { items, counts };

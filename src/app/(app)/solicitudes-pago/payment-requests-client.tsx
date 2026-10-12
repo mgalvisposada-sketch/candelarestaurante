@@ -19,6 +19,7 @@ export type BankAccountOption = {
   id: string;
   bank_name: string;
   masked_number: string | null;
+  available_balance?: number | string;
 };
 export type PaymentRequestRow = {
   id: string;
@@ -130,6 +131,9 @@ function PayForm({
             <option key={a.id} value={a.id}>
               {a.bank_name}
               {a.masked_number ? ` · ${a.masked_number}` : ""}
+              {a.available_balance !== undefined
+                ? ` · disp. ${formatCOP(a.available_balance)}`
+                : ""}
             </option>
           ))}
         </select>

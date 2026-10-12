@@ -70,6 +70,23 @@ export const APP_MODULES: AppModuleDef[] = [
     submodules: [
       { key: "tesoreria.cuentas", label: "Cuentas bancarias / caja" },
       { key: "tesoreria.saldos", label: "Saldos iniciales" },
+      {
+        key: "tesoreria.caja",
+        label: "Cierre diario de caja",
+        description: "Ver cierres, liquidez viva y contrastes POS/banco.",
+      },
+      {
+        key: "tesoreria.caja.declarar",
+        label: "Declarar cierre de caja",
+        description:
+          "Admin del local: base, efectivo del día y adquirencia (datáfono).",
+      },
+      {
+        key: "tesoreria.caja.avalar",
+        label: "Avalar cierre de caja",
+        description:
+          "Gerencia: contrastar vs POS/banco y acreditar saldos a tesorería.",
+      },
     ],
   },
   {
@@ -385,6 +402,9 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "compras.solicitudes.pedir",
     "compras.solicitudes.recibir",
     "compras.solicitudes.recibir.extras",
+    "tesoreria",
+    "tesoreria.caja",
+    "tesoreria.caja.declarar",
   ],
   /**
    * Tesorería / compras (Juliana): factura, cola de pago, bancos y CxP.
@@ -396,6 +416,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "tesoreria",
     "tesoreria.cuentas",
     "tesoreria.saldos",
+    "tesoreria.caja",
     "proveedores",
     "proveedores.maestro",
     "proveedores.cxp",
@@ -435,6 +456,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "tesoreria",
     "tesoreria.cuentas",
     "tesoreria.saldos",
+    "tesoreria.caja",
     "proveedores",
     "proveedores.maestro",
     "proveedores.cxp",

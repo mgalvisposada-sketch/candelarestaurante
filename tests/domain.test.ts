@@ -134,4 +134,104 @@ describe("treasury", () => {
     expect(sumOpeningBalances(["1000.50", "2000.25"])).toBe("3000.75");
     expect(bankKindLabel("CAJA")).toBe("Caja");
   });
+
+  it("resuelve destinos del cierre por tipo de cuenta", async () => {
+    const { resolveCashCloseDestinations } = await import(
+      "../src/lib/treasury"
+    );
+    const dest = resolveCashCloseDestinations([
+      { id: "caja-1", account_kind: "CAJA", is_active: true },
+      { id: "banco-1", account_kind: "BANCO", is_active: true },
+      { id: "pasarela-1", account_kind: "PASARELA", is_active: true },
+    ]);
+    expect(dest.cashAccountId).toBe("caja-1");
+    expect(dest.cardAccountId).toBe("banco-1");
+    expect(dest.transferAccountId).toBe("banco-1");
+  });
+
+  it("calcula saldo disponible con créditos y débitos posteriores al corte", async () => {
+    const {
+      computeAvailableBalance,
+      availableBalanceForAccount,
+      contrastDelta,
+      pickOpeningSnapshot,
+    } = await import("../src/lib/treasury-balance");
+
+    expect(
+      computeAvailableBalance({
+        openingBalance: "1000000",
+        credits: ["500000"],
+        debits: ["200000"],
+      }).toFixed(2),
+    ).toBe("1300000.00");
+
+    const snapshots = [
+      {
+        bank_account_id: "acc-1",
+        cutoff_date: "2026-01-01",
+        opening_balance: "1000000",
+        verification_status: "CONFIRMADO",
+      },
+      {
+        bank_account_id: "acc-1",
+        cutoff_date: "2025-12-01",
+        opening_balance: "500000",
+        verification_status: "DECLARADO",
+      },
+    ];
+    expect(pickOpeningSnapshot(snapshots, "acc-1", "2026-01-01")?.opening_balance).toBe(
+      "1000000",
+    );
+
+    const available = availableBalanceForAccount({
+      accountId: "acc-1",
+      orgCutoff: "2026-01-01",
+      snapshots,
+      transactions: [
+        {
+          bank_account_id: "acc-1",
+          transaction_date: "2026-01-01",
+          debit: 0,
+          credit: "999",
+        },
+        {
+          bank_account_id: "acc-1",
+          transaction_date: "2026-01-10",
+          debit: 0,
+          credit: "300000",
+        },
+        {
+          bank_account_id: "acc-1",
+          transaction_date: "2026-01-12",
+          debit: "50000",
+          credit: 0,
+        },
+        {
+          bank_account_id: "acc-2",
+          transaction_date: "2026-01-10",
+          debit: 0,
+          credit: "1000000",
+        },
+      ],
+    });
+    // opening 1_000_000 + crédito 300_000 − débito 50_000 (mismo día del corte no cuenta)
+    expect(available.toFixed(2)).toBe("1250000.00");
+
+    expect(contrastDelta("100", "90")?.toFixed(2)).toBe("10.00");
+    expect(contrastDelta("100", null)).toBeNull();
+  });
+
+  it("bloquea pago cuando el disponible es menor al monto", async () => {
+    const { computeAvailableBalance } = await import(
+      "../src/lib/treasury-balance"
+    );
+    const available = computeAvailableBalance({
+      openingBalance: "100000",
+      credits: ["20000"],
+      debits: ["10000"],
+    });
+    const payAmount = 150000;
+    expect(available.lt(payAmount)).toBe(true);
+    expect(available.toFixed(2)).toBe("110000.00");
+  });
 });

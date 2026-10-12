@@ -34,6 +34,32 @@ export type BalanceSnapshotRow = {
   source: string | null;
 };
 
+export type BankTransactionRow = {
+  id: string;
+  bank_account_id: string;
+  transaction_date: string;
+  description: string | null;
+  reference: string | null;
+  debit: number | string;
+  credit: number | string;
+  origin: string | null;
+  category: string | null;
+  linked_entity_type: string | null;
+};
+
+function movementLabel(tx: BankTransactionRow): string {
+  if (tx.description?.trim()) return tx.description.trim();
+  if (tx.category === "INGRESO_CAJA") return "Ingreso cierre caja (efectivo)";
+  if (tx.category === "INGRESO_ADQUIRENCIA")
+    return "Ingreso cierre caja (adquirencia)";
+  if (tx.category === "INGRESO_TRANSFERENCIA")
+    return "Ingreso cierre caja (transferencia / QR)";
+  if (tx.category === "PAGO") return "Pago de solicitud";
+  if (tx.origin === "tesoreria.caja") return "Cierre de caja";
+  if (tx.origin === "solicitudes-pago") return "Solicitud de pago";
+  return tx.category || tx.origin || "Movimiento";
+}
+
 const inputClass =
   "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
 
@@ -219,12 +245,19 @@ export function BankAccountCard({
   account,
   snapshot,
   defaultCutoff,
+  availableBalance,
+  movements = [],
+  canManage = true,
 }: {
   account: BankAccountRow;
   snapshot: BalanceSnapshotRow | null;
   defaultCutoff: string | null;
+  availableBalance?: number | string;
+  movements?: BankTransactionRow[];
+  canManage?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const [showMovements, setShowMovements] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -257,7 +290,17 @@ export function BankAccountCard({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm md:col-span-1">
+          <div className="text-xs text-[var(--muted)]">Disponible</div>
+          <div className="mt-1 font-medium">
+            {availableBalance !== undefined
+              ? formatCOP(availableBalance)
+              : snapshot
+                ? formatCOP(snapshot.opening_balance)
+                : "—"}
+          </div>
+        </div>
         <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
           <div className="text-xs text-[var(--muted)]">Saldo a corte</div>
           <div className="mt-1 font-medium">
@@ -279,28 +322,45 @@ export function BankAccountCard({
       <div className="mt-4 flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => setEditing((v) => !v)}
+          onClick={() => setShowMovements((v) => !v)}
           className="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-medium"
         >
-          {editing ? "Cerrar edición" : "Editar cuenta / saldo"}
+          {showMovements
+            ? "Ocultar movimientos"
+            : `Movimientos (${movements.length})`}
         </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => {
-            if (!confirm("¿Desactivar esta cuenta?")) return;
-            startTransition(async () => {
-              const result = await softDeleteBankAccountAction(account.id);
-              if (!result.ok) setError(result.error ?? "Error");
-            });
-          }}
-          className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700"
-        >
-          Desactivar
-        </button>
+        {canManage ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setEditing((v) => !v)}
+              className="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-medium"
+            >
+              {editing ? "Cerrar edición" : "Editar cuenta / saldo"}
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                if (!confirm("¿Desactivar esta cuenta?")) return;
+                startTransition(async () => {
+                  const result = await softDeleteBankAccountAction(account.id);
+                  if (!result.ok) setError(result.error ?? "Error");
+                });
+              }}
+              className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700"
+            >
+              Desactivar
+            </button>
+          </>
+        ) : null}
       </div>
 
-      {editing ? (
+      {showMovements ? (
+        <AccountMovementsList movements={movements} />
+      ) : null}
+
+      {canManage && editing ? (
         <div className="mt-4 space-y-5 border-t border-[var(--line)] pt-4">
           <form
             className="space-y-3"
@@ -416,6 +476,74 @@ export function BankAccountCard({
       {error ? (
         <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+export function AccountMovementsList({
+  movements,
+  limit = 20,
+}: {
+  movements: BankTransactionRow[];
+  limit?: number;
+}) {
+  const rows = movements.slice(0, limit);
+  if (rows.length === 0) {
+    return (
+      <div className="mt-4 rounded-lg border border-dashed border-[var(--line)] px-3 py-4 text-sm text-[var(--muted)]">
+        Sin movimientos posteriores al saldo de corte.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 overflow-x-auto rounded-lg border border-[var(--line)]">
+      <table className="min-w-full text-left text-sm">
+        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-[var(--muted)]">
+          <tr>
+            <th className="px-3 py-2 font-medium">Fecha</th>
+            <th className="px-3 py-2 font-medium">Concepto</th>
+            <th className="px-3 py-2 font-medium">Ref.</th>
+            <th className="px-3 py-2 text-right font-medium">Ingreso</th>
+            <th className="px-3 py-2 text-right font-medium">Egreso</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--line)]">
+          {rows.map((tx) => {
+            const credit = Number(tx.credit || 0);
+            const debit = Number(tx.debit || 0);
+            return (
+              <tr key={tx.id}>
+                <td className="whitespace-nowrap px-3 py-2 text-[var(--muted)]">
+                  {formatDateCO(tx.transaction_date)}
+                </td>
+                <td className="px-3 py-2">
+                  <div className="font-medium text-[var(--ink)]">
+                    {movementLabel(tx)}
+                  </div>
+                  {tx.origin ? (
+                    <div className="text-xs text-[var(--muted)]">{tx.origin}</div>
+                  ) : null}
+                </td>
+                <td className="px-3 py-2 text-[var(--muted)]">
+                  {tx.reference || "—"}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right text-teal-700">
+                  {credit > 0 ? formatCOP(credit) : "—"}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right text-red-700">
+                  {debit > 0 ? formatCOP(debit) : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {movements.length > limit ? (
+        <p className="border-t border-[var(--line)] px-3 py-2 text-xs text-[var(--muted)]">
+          Mostrando los {limit} más recientes de {movements.length}.
         </p>
       ) : null}
     </div>

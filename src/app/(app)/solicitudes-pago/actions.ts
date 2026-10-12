@@ -5,6 +5,12 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess } from "@/lib/permissions";
 import { todayInBogota } from "@/lib/dates";
+import { formatCOP } from "@/lib/money";
+import {
+  availableBalanceForAccount,
+  type BalanceSnapshotInput,
+  type BankTransactionInput,
+} from "@/lib/treasury-balance";
 import {
   payPaymentRequestSchema,
   rejectPaymentRequestSchema,
@@ -306,6 +312,69 @@ export async function payPaymentRequestAction(
   const payAmount =
     parseMoney(parsed.data.amount, Number(req.amount)) ?? Number(req.amount);
   if (payAmount <= 0) return { ok: false, error: "Monto de pago inválido" };
+
+  const orgId = ctx.organization.id;
+  const accountId = parsed.data.bank_account_id;
+
+  const { data: accountRow } = await supabase
+    .from("bank_accounts")
+    .select("id, is_active")
+    .eq("id", accountId)
+    .eq("organization_id", orgId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!accountRow?.is_active) {
+    return { ok: false, error: "La cuenta seleccionada no está activa" };
+  }
+
+  const orgCutoff = ctx.organization.administrative_cutoff_date;
+  let snapQuery = supabase
+    .from("bank_balance_snapshots")
+    .select(
+      "bank_account_id, cutoff_date, opening_balance, verification_status",
+    )
+    .eq("organization_id", orgId)
+    .eq("bank_account_id", accountId)
+    .is("deleted_at", null);
+  if (orgCutoff) {
+    snapQuery = snapQuery.eq("cutoff_date", orgCutoff);
+  }
+  const { data: snapRows } = await snapQuery;
+  let snapshots = (snapRows ?? []) as BalanceSnapshotInput[];
+  if (snapshots.length === 0) {
+    const { data: latestSnaps } = await supabase
+      .from("bank_balance_snapshots")
+      .select(
+        "bank_account_id, cutoff_date, opening_balance, verification_status",
+      )
+      .eq("organization_id", orgId)
+      .eq("bank_account_id", accountId)
+      .is("deleted_at", null)
+      .order("cutoff_date", { ascending: false })
+      .limit(1);
+    snapshots = (latestSnaps ?? []) as BalanceSnapshotInput[];
+  }
+
+  const { data: txRows } = await supabase
+    .from("bank_transactions")
+    .select("bank_account_id, transaction_date, debit, credit")
+    .eq("organization_id", orgId)
+    .eq("bank_account_id", accountId)
+    .is("deleted_at", null);
+
+  const available = availableBalanceForAccount({
+    accountId,
+    snapshots,
+    transactions: (txRows ?? []) as BankTransactionInput[],
+    orgCutoff,
+  });
+
+  if (available.lt(payAmount)) {
+    return {
+      ok: false,
+      error: `Fondos insuficientes en la cuenta. Disponible ${formatCOP(available)}; pago ${formatCOP(payAmount)}.`,
+    };
+  }
 
   const { data: bankTx, error: bankError } = await supabase
     .from("bank_transactions")

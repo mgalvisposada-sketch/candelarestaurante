@@ -6,7 +6,11 @@ import { getOrgContext } from "@/lib/org-context";
 import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { summarizeHandoverQuality } from "@/lib/handover";
-import { sumOpeningBalances } from "@/lib/treasury";
+import {
+  sumAvailableBalances,
+  type BalanceSnapshotInput,
+  type BankTransactionInput,
+} from "@/lib/treasury-balance";
 import { computeLoanKpis, computeFundingBag } from "@/lib/loans";
 import { redirect } from "next/navigation";
 import Link from "next/link";
@@ -59,19 +63,64 @@ export default async function InicioPage() {
     }
 
     const cutoff = ctx.organization.administrative_cutoff_date;
-    let snapQuery = supabase
-      .from("bank_balance_snapshots")
-      .select("opening_balance, bank_account_id, cutoff_date")
+
+    const { data: activeAccounts } = await supabase
+      .from("bank_accounts")
+      .select("id")
       .eq("organization_id", orgId)
-      .is("deleted_at", null);
+      .is("deleted_at", null)
+      .eq("is_active", true);
 
-    if (cutoff) {
-      snapQuery = snapQuery.eq("cutoff_date", cutoff);
-    }
+    const activeIds = (activeAccounts ?? []).map((a) => a.id as string);
+    if (activeIds.length > 0) {
+      let snapQuery = supabase
+        .from("bank_balance_snapshots")
+        .select(
+          "opening_balance, bank_account_id, cutoff_date, verification_status",
+        )
+        .eq("organization_id", orgId)
+        .is("deleted_at", null)
+        .in("bank_account_id", activeIds);
 
-    const { data: snaps } = await snapQuery;
-    if (snaps && snaps.length > 0) {
-      liquidity = sumOpeningBalances(snaps.map((s) => s.opening_balance));
+      if (cutoff) {
+        snapQuery = snapQuery.eq("cutoff_date", cutoff);
+      }
+
+      const { data: snaps } = await snapQuery;
+      let snapshots = (snaps ?? []) as BalanceSnapshotInput[];
+
+      if (snapshots.length === 0) {
+        const { data: allSnaps } = await supabase
+          .from("bank_balance_snapshots")
+          .select(
+            "opening_balance, bank_account_id, cutoff_date, verification_status",
+          )
+          .eq("organization_id", orgId)
+          .is("deleted_at", null)
+          .in("bank_account_id", activeIds)
+          .order("cutoff_date", { ascending: false });
+
+        const latest = new Map<string, BalanceSnapshotInput>();
+        for (const row of (allSnaps ?? []) as BalanceSnapshotInput[]) {
+          if (!latest.has(row.bank_account_id)) {
+            latest.set(row.bank_account_id, row);
+          }
+        }
+        snapshots = [...latest.values()];
+      }
+
+      const { data: txRows } = await supabase
+        .from("bank_transactions")
+        .select("bank_account_id, transaction_date, debit, credit")
+        .eq("organization_id", orgId)
+        .is("deleted_at", null)
+        .in("bank_account_id", activeIds);
+
+      liquidity = sumAvailableBalances(activeIds, {
+        snapshots,
+        transactions: (txRows ?? []) as BankTransactionInput[],
+        orgCutoff: cutoff,
+      }).toFixed(2);
     }
 
     const { data: apDocs } = await supabase
@@ -196,7 +245,7 @@ export default async function InicioPage() {
           <StatCard
             label="Liquidez"
             value={formatCOP(liquidity)}
-            hint="Bancos + caja + pasarelas"
+            hint="Disponible: corte + ingresos − egresos"
           />
           <StatCard label="CxP" value={formatCOP(cxpTotal)} hint="Saldo proveedores" />
           <StatCard

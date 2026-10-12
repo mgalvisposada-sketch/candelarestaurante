@@ -38,7 +38,7 @@ export const NAV_ITEMS = [
     href: "/tesoreria",
     label: "Tesorería",
     mvp: 1,
-    hint: "Cuentas, caja y saldos",
+    hint: "Caja diaria, bancos y liquidez",
   },
   {
     href: "/proveedores",

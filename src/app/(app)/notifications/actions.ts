@@ -11,7 +11,14 @@ export async function getPendingActionsAction(): Promise<PendingActionsResult> {
   if (!ctx?.organization) {
     return {
       items: [],
-      counts: { total: 0, compras: 0, personal: 0, pagos: 0 },
+      counts: {
+        total: 0,
+        compras: 0,
+        personal: 0,
+        pagos: 0,
+        inventario: 0,
+        caja: 0,
+      },
     };
   }
   return fetchPendingActions(ctx);

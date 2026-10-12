@@ -4,6 +4,11 @@ import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { formatCOP, money } from "@/lib/money";
+import {
+  availableBalanceForAccount,
+  type BalanceSnapshotInput,
+  type BankTransactionInput,
+} from "@/lib/treasury-balance";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
@@ -66,7 +71,62 @@ export default async function SolicitudesPagoPage() {
 
   const requests = (requestRows ?? []) as PaymentRequestRow[];
   const suppliers = (supplierRows ?? []) as SupplierOption[];
-  const bankAccounts = (bankRows ?? []) as BankAccountOption[];
+  const bankBase = (bankRows ?? []) as BankAccountOption[];
+  const bankIds = bankBase.map((b) => b.id);
+  const orgCutoff = ctx.organization.administrative_cutoff_date;
+
+  let bankAccounts = bankBase;
+  if (bankIds.length > 0) {
+    let snapQuery = supabase
+      .from("bank_balance_snapshots")
+      .select(
+        "bank_account_id, cutoff_date, opening_balance, verification_status",
+      )
+      .eq("organization_id", ctx.organization.id)
+      .is("deleted_at", null)
+      .in("bank_account_id", bankIds);
+    if (orgCutoff) {
+      snapQuery = snapQuery.eq("cutoff_date", orgCutoff);
+    }
+    const { data: snapRows } = await snapQuery;
+    let snapshots = (snapRows ?? []) as BalanceSnapshotInput[];
+    if (snapshots.length === 0) {
+      const { data: allSnaps } = await supabase
+        .from("bank_balance_snapshots")
+        .select(
+          "bank_account_id, cutoff_date, opening_balance, verification_status",
+        )
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null)
+        .in("bank_account_id", bankIds)
+        .order("cutoff_date", { ascending: false });
+      const latest = new Map<string, BalanceSnapshotInput>();
+      for (const row of (allSnaps ?? []) as BalanceSnapshotInput[]) {
+        if (!latest.has(row.bank_account_id)) {
+          latest.set(row.bank_account_id, row);
+        }
+      }
+      snapshots = [...latest.values()];
+    }
+
+    const { data: txRows } = await supabase
+      .from("bank_transactions")
+      .select("bank_account_id, transaction_date, debit, credit")
+      .eq("organization_id", ctx.organization.id)
+      .is("deleted_at", null)
+      .in("bank_account_id", bankIds);
+
+    const transactions = (txRows ?? []) as BankTransactionInput[];
+    bankAccounts = bankBase.map((b) => ({
+      ...b,
+      available_balance: availableBalanceForAccount({
+        accountId: b.id,
+        snapshots,
+        transactions,
+        orgCutoff,
+      }).toFixed(2),
+    }));
+  }
 
   const review = requests.filter(
     (r) => r.status === "EN_REVISION" || r.status === "BORRADOR",
