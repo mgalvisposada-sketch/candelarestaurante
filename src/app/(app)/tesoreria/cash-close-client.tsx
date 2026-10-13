@@ -63,10 +63,10 @@ function daySalesTotal(close: Pick<
 }
 
 const inputClass =
-  "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2.5 text-base tabular-nums outline-none ring-[var(--accent)] focus:ring-2";
+  "w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2.5 text-base tabular-nums text-[var(--ink)] outline-none ring-[var(--accent)] focus:ring-2";
 
 const inputLgClass =
-  "w-full rounded-xl border border-[var(--line)] bg-white px-4 py-3.5 text-xl font-semibold tabular-nums tracking-tight outline-none ring-[var(--accent)] focus:ring-2";
+  "w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3.5 text-xl font-semibold tabular-nums tracking-tight text-[var(--ink)] outline-none ring-[var(--accent)] focus:ring-2";
 
 function statusLabel(status: CashDailyCloseRow["status"]) {
   const map = {
@@ -114,7 +114,7 @@ function MatchChip({
   const n = delta.toNumber();
   if (n === 0) {
     return (
-      <span className="inline-flex rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800">
+      <span className="inline-flex rounded-md bg-[var(--surface-muted)] px-2 py-0.5 text-xs font-medium text-[var(--ok)]">
         Cuadra
       </span>
     );
@@ -124,8 +124,8 @@ function MatchChip({
       className={cn(
         "inline-flex rounded-md px-2 py-0.5 text-xs font-medium",
         Math.abs(n) > 5000
-          ? "bg-red-50 text-red-800"
-          : "bg-amber-50 text-amber-900",
+          ? "bg-[var(--accent-soft)] text-[var(--danger)]"
+          : "bg-[var(--gold-soft)] text-[var(--warn)]",
       )}
     >
       {n > 0 ? "Sobra en local" : "Falta en local"} {formatCOP(Math.abs(n))}
@@ -153,20 +153,25 @@ export function CashCloseSection({
   /** Saldo vivo de la cuenta Base (después de gastos/traspasos). */
   cashFloatCurrent?: number | string;
 }) {
+  const isSales = (a: BankAccountRow) =>
+    (a.fund_purpose ?? "VENTAS") === "VENTAS";
   const cajaAccounts = accounts.filter(
     (a) =>
       a.is_active &&
+      isSales(a) &&
       !a.is_cash_float &&
       (a.account_kind === "CAJA" || a.account_kind === "OTRO"),
   );
   const bankAccounts = accounts.filter(
     (a) =>
       a.is_active &&
+      isSales(a) &&
+      !a.is_cash_float &&
       (a.account_kind === "BANCO" ||
         a.account_kind === "PASARELA" ||
         a.account_kind === "OTRO"),
   );
-  const allActive = accounts.filter((a) => a.is_active);
+  const allActive = accounts.filter((a) => a.is_active && isSales(a));
 
   const editable =
     canDeclare &&
@@ -288,7 +293,7 @@ function FlowSteps() {
     <ol className="flex flex-wrap items-center gap-2 text-xs">
       {steps.map((s, i) => (
         <li key={s.n} className="flex items-center gap-2">
-          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--ink)] text-[10px] font-semibold text-white">
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--solid)] text-[10px] font-semibold text-[var(--on-solid)]">
             {s.n}
           </span>
           <span className="text-[var(--muted)]">{s.label}</span>
@@ -314,8 +319,8 @@ function TodayStatusCard({
 }) {
   const total = daySalesTotal(close);
   return (
-    <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] bg-slate-50/80 px-5 py-4">
+    <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--surface-muted)] px-5 py-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
             Turno / día
@@ -358,7 +363,7 @@ function TodayStatusCard({
           </p>
         </div>
         {close.status === "AVALADO" ? (
-          <p className="text-sm text-emerald-800">
+          <p className="text-sm text-[var(--ok)]">
             Acreditado: efectivo {formatCOP(close.cash_credited ?? 0)} ·
             datáfono {formatCOP(close.card_credited ?? 0)} · QR{" "}
             {formatCOP(close.transfer_credited ?? 0)}
@@ -369,7 +374,7 @@ function TodayStatusCard({
         ) : null}
       </div>
       {close.rejection_reason ? (
-        <div className="border-t border-red-100 bg-red-50 px-5 py-3 text-sm text-red-800">
+        <div className="border-t border-[var(--line)] bg-[var(--accent-soft)] px-5 py-3 text-sm text-[var(--danger)]">
           <strong>Devuelto:</strong> {close.rejection_reason}
         </div>
       ) : null}
@@ -486,7 +491,7 @@ function DeclareForm({
 
   if (!cashDest || !cardBank) {
     return (
-      <div className="rounded-xl border border-dashed border-[var(--line)] bg-white p-6 text-sm text-[var(--muted)]">
+      <div className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-6 text-sm text-[var(--muted)]">
         Para cerrar el día necesita en Tesorería una cuenta{" "}
         <strong>Caja</strong> (efectivo físico) y al menos una{" "}
         <strong>Banco</strong> (donde aterriza adquirencia y transferencias).
@@ -496,7 +501,7 @@ function DeclareForm({
 
   return (
     <form
-      className="overflow-hidden rounded-xl border border-[var(--line)] bg-white shadow-[0_1px_0_rgba(18,18,18,0.04)]"
+      className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] shadow-[var(--shadow-soft)]"
       action={(fd) => {
         setError(null);
         startTransition(async () => {
@@ -506,12 +511,12 @@ function DeclareForm({
         });
       }}
     >
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] bg-[linear-gradient(180deg,#fff,color-mix(in_srgb,var(--accent)_4%,white))] px-5 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] bg-[linear-gradient(180deg,var(--surface),color-mix(in_srgb,var(--accent)_10%,var(--surface)))] px-5 py-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
             Flujo de caja del día
           </p>
-          <h3 className="font-display text-xl font-semibold">
+          <h3 className="font-display text-xl font-semibold text-[var(--ink)]">
             ¿Cómo quedó la caja hoy?
           </h3>
         </div>
@@ -525,14 +530,14 @@ function DeclareForm({
       </div>
 
       {todayClose?.rejection_reason ? (
-        <div className="border-b border-red-100 bg-red-50 px-5 py-3 text-sm text-red-800">
+        <div className="border-b border-[var(--line)] bg-[var(--accent-soft)] px-5 py-3 text-sm text-[var(--danger)]">
           Gerencia devolvió el cierre: {todayClose.rejection_reason}. Corrija y
           vuelva a enviar.
         </div>
       ) : null}
 
       <div className="space-y-3 p-4 md:p-5">
-        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-[var(--line)] bg-slate-50/50 px-4 py-3">
+        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3">
           <label className="block min-w-[180px] flex-1 text-sm">
             <span className="mb-1 block text-xs font-medium text-[var(--muted)]">
               Día del cierre
@@ -563,7 +568,7 @@ function DeclareForm({
               : `Meta ${formatCOP(targetAmt)} · En sistema ${formatCOP(systemFloat)}`
           }
         >
-          <div className="mb-4 rounded-xl border border-[var(--line)] bg-slate-50/70 px-4 py-3 text-sm">
+          <div className="mb-4 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm">
             <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
               Referencia Tesorería
             </p>
@@ -573,7 +578,7 @@ function DeclareForm({
                 {formatCOP(systemFloat)}
               </strong>
               {systemFloat + 0.009 < targetAmt ? (
-                <span className="text-amber-800">
+                <span className="text-[var(--warn)]">
                   {" "}
                   (faltan {formatCOP(targetAmt - systemFloat)} por recargar)
                 </span>
@@ -581,8 +586,8 @@ function DeclareForm({
             </p>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <label className="block rounded-xl border border-[var(--line)] bg-white p-4 text-sm">
-              <span className="mb-1 block font-medium">
+            <label className="block rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-sm text-[var(--ink)]">
+              <span className="mb-1 block font-medium text-[var(--ink)]">
                 Restante de base (contado)
               </span>
               <span className="mb-3 block text-xs text-[var(--muted)]">
@@ -603,7 +608,7 @@ function DeclareForm({
               {floatDelta !== null ? (
                 <span className="mt-2 block">
                   {Math.abs(floatDelta) < 0.01 ? (
-                    <span className="inline-flex rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                    <span className="inline-flex rounded-md bg-[var(--surface-muted)] px-2 py-0.5 text-xs font-medium text-[var(--ok)]">
                       Cuadra con Tesorería
                     </span>
                   ) : (
@@ -611,8 +616,8 @@ function DeclareForm({
                       className={cn(
                         "inline-flex rounded-md px-2 py-0.5 text-xs font-medium",
                         Math.abs(floatDelta) > 5000
-                          ? "bg-red-50 text-red-800"
-                          : "bg-amber-50 text-amber-900",
+                          ? "bg-[var(--accent-soft)] text-[var(--danger)]"
+                          : "bg-[var(--gold-soft)] text-[var(--warn)]",
                       )}
                     >
                       {floatDelta > 0 ? "Sobra vs sistema" : "Falta vs sistema"}{" "}
@@ -622,8 +627,8 @@ function DeclareForm({
                 </span>
               ) : null}
             </label>
-            <label className="block rounded-xl border border-[var(--line)] bg-white p-4 text-sm">
-              <span className="mb-1 block font-medium">Ventas en efectivo</span>
+            <label className="block rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-sm text-[var(--ink)]">
+              <span className="mb-1 block font-medium text-[var(--ink)]">Ventas en efectivo</span>
               <span className="mb-3 block text-xs text-[var(--muted)]">
                 Contado del cajón menos el restante de base
               </span>
@@ -652,7 +657,7 @@ function DeclareForm({
             <button
               type="button"
               onClick={() => setOpenStep(2)}
-              className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm font-medium text-white"
+              className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm font-medium text-[var(--on-solid)]"
             >
               Siguiente: banco →
             </button>
@@ -813,7 +818,7 @@ function DeclareForm({
             <button
               type="button"
               onClick={() => setOpenStep(3)}
-              className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm font-medium text-white"
+              className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm font-medium text-[var(--on-solid)]"
             >
               Siguiente: revisar →
             </button>
@@ -829,7 +834,7 @@ function DeclareForm({
           done={dayTotal > 0}
           summary={`Total día ${formatCOP(dayTotal)} · Caja ${cashDest.bank_name}`}
         >
-          <div className="grid gap-3 rounded-xl bg-[var(--ink)] px-4 py-4 text-white sm:grid-cols-3">
+          <div className="grid gap-3 rounded-xl bg-[var(--solid)] px-4 py-4 text-[var(--on-solid)] sm:grid-cols-3">
             <div>
               <p className="text-xs text-white/60">En caja física</p>
               <p className="mt-1 font-display text-2xl font-semibold">
@@ -855,7 +860,7 @@ function DeclareForm({
             </div>
           </div>
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
-            <div className="rounded-xl border border-[var(--line)] bg-slate-50 px-4 py-3">
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3">
               <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
                 Bolsa 1 · Efectivo
               </p>
@@ -870,7 +875,7 @@ function DeclareForm({
                 vive en la cuenta Base.
               </p>
             </div>
-            <div className="rounded-xl border border-[var(--line)] bg-slate-50 px-4 py-3">
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3">
               <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
                 Bolsa 2 · Banco
               </p>
@@ -932,12 +937,12 @@ function DeclareForm({
         </div>
 
         {error ? (
-          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+          <p className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-sm text-[var(--danger)]">
             {error}
           </p>
         ) : null}
 
-        <div className="sticky bottom-3 z-10 flex flex-col-reverse gap-2 rounded-xl border border-[var(--line)] bg-white/95 p-3 shadow-lg backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+        <div className="sticky bottom-3 z-10 flex flex-col-reverse gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface)]/95 p-3 shadow-lg backdrop-blur sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 px-1 text-sm text-[var(--muted)]">
             Total a reportar{" "}
             <strong className="text-[var(--ink)]">{formatCOP(dayTotal)}</strong>
@@ -963,14 +968,14 @@ function DeclareForm({
             <button
               type="submit"
               disabled={pending}
-              className="rounded-lg bg-[var(--accent)] px-6 py-3 text-sm font-semibold text-white disabled:opacity-60"
+              className="rounded-lg bg-[var(--accent)] px-6 py-3 text-sm font-semibold text-[var(--on-solid)] disabled:opacity-60"
             >
               {pending ? "Enviando…" : "Enviar a gerencia para aval"}
             </button>
           </div>
         </div>
         {dayTotal <= 0 ? (
-          <p className="text-xs text-amber-800">
+          <p className="text-xs text-[var(--warn)]">
             Día en $0 de ventas: solo si el local no operó.
           </p>
         ) : null}
@@ -987,7 +992,7 @@ function SubmitDraftButton({ closeId }: { closeId: string }) {
       <button
         type="button"
         disabled={pending}
-        className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--on-solid)] disabled:opacity-60"
         onClick={() => {
           setError(null);
           startTransition(async () => {
@@ -999,7 +1004,7 @@ function SubmitDraftButton({ closeId }: { closeId: string }) {
       >
         {pending ? "Enviando…" : "Enviar a gerencia"}
       </button>
-      {error ? <p className="mt-2 text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="mt-2 text-sm text-[var(--danger)]">{error}</p> : null}
     </div>
   );
 }
@@ -1034,10 +1039,10 @@ function ReviewCard({
     parseAmount(transferCredited);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-amber-200/80 bg-white shadow-[0_1px_0_rgba(18,18,18,0.04)]">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-100 bg-amber-50/70 px-5 py-4">
+    <div className="overflow-hidden rounded-xl border border-[var(--warn)]/40 bg-[var(--surface)] shadow-[0_1px_0_rgba(18,18,18,0.04)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--gold-soft)] px-5 py-4">
         <div>
-          <p className="text-xs font-medium uppercase tracking-[0.14em] text-amber-900/70">
+          <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--warn)]">
             Pendiente de su aval
           </p>
           <h4 className="font-display text-xl font-semibold">
@@ -1056,7 +1061,7 @@ function ReviewCard({
           type="button"
           aria-expanded={reportOpen}
           onClick={() => setReportOpen((v) => !v)}
-          className="flex w-full items-center justify-between gap-3 px-5 py-3 text-left text-sm hover:bg-slate-50/60"
+          className="flex w-full items-center justify-between gap-3 px-5 py-3 text-left text-sm hover:bg-[var(--surface-muted)]/60"
         >
           <span className="text-[var(--muted)]">
             {reportOpen
@@ -1112,7 +1117,7 @@ function ReviewCard({
 
         <div className="overflow-x-auto rounded-xl border border-[var(--line)]">
           <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-[var(--muted)]">
+            <thead className="bg-[var(--surface-muted)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
               <tr>
                 <th className="px-3 py-2.5 font-medium">Medio</th>
                 <th className="px-3 py-2.5 font-medium">Local</th>
@@ -1199,7 +1204,7 @@ function ReviewCard({
             type="button"
             aria-expanded={creditsOpen}
             onClick={() => setCreditsOpen((v) => !v)}
-            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50/60"
+            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[var(--surface-muted)]/60"
           >
             <div>
               <p className="text-sm font-medium">2. Montos a acreditar</p>
@@ -1286,7 +1291,7 @@ function ReviewCard({
           <button
             type="submit"
             disabled={pending}
-            className="rounded-lg bg-[var(--ink)] px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
+            className="rounded-lg bg-[var(--solid)] px-5 py-3 text-sm font-semibold text-[var(--on-solid)] disabled:opacity-60"
           >
             {pending
               ? "Acreditando…"
@@ -1296,7 +1301,7 @@ function ReviewCard({
             type="button"
             disabled={pending}
             onClick={() => setShowReject((v) => !v)}
-            className="rounded-lg border border-red-200 px-4 py-3 text-sm font-medium text-red-700"
+            className="rounded-lg border border-red-200 px-4 py-3 text-sm font-medium text-[var(--danger)]"
           >
             Devolver al local
           </button>
@@ -1305,7 +1310,7 @@ function ReviewCard({
 
       {showReject ? (
         <form
-          className="space-y-3 border-t border-red-100 bg-red-50/50 px-5 py-4"
+          className="space-y-3 border-t border-[var(--line)] bg-[var(--accent-soft)] px-5 py-4"
           action={(fd) => {
             setError(null);
             startTransition(async () => {
@@ -1316,7 +1321,7 @@ function ReviewCard({
           }}
         >
           <label className="block text-sm">
-            <span className="mb-1.5 block font-medium text-red-900">
+            <span className="mb-1.5 block font-medium text-[var(--danger)]">
               Motivo para el local
             </span>
             <input
@@ -1330,7 +1335,7 @@ function ReviewCard({
           <button
             type="submit"
             disabled={pending}
-            className="rounded-lg bg-red-700 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+            className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)] disabled:opacity-60"
           >
             Confirmar devolución
           </button>
@@ -1338,7 +1343,7 @@ function ReviewCard({
       ) : null}
 
       {error ? (
-        <p className="border-t border-red-100 bg-red-50 px-5 py-3 text-sm text-red-800">
+        <p className="border-t border-[var(--line)] bg-[var(--accent-soft)] px-5 py-3 text-sm text-[var(--danger)]">
           {error}
         </p>
       ) : null}

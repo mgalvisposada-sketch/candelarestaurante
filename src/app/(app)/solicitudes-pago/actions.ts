@@ -49,6 +49,7 @@ function revalidatePaymentPaths() {
   revalidatePath("/proveedores/maestro");
   revalidatePath("/gastos");
   revalidatePath("/tesoreria");
+  revalidatePath("/tesoreria/pagos");
   revalidatePath("/inicio");
 }
 
@@ -343,7 +344,11 @@ export async function payPaymentRequestAction(
     notes: formData.get("notes"),
   });
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+    const issue = parsed.error.issues[0];
+    return {
+      ok: false,
+      error: issue?.message ?? "Datos inválidos",
+    };
   }
 
   const supabase = await createClient();

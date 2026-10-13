@@ -67,7 +67,7 @@ export default async function CocinaProduccionesPage() {
               </Link>
               <Link
                 href="/cocina/producciones/nueva-preparacion"
-                className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm text-white"
+                className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm text-[var(--on-solid)]"
               >
                 Crear más · Preparación
               </Link>

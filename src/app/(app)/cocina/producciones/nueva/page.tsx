@@ -92,7 +92,7 @@ export default async function NuevaProduccionPage({
             </p>
             <Link
               href="/inventario/maestro"
-              className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+              className="mt-4 inline-flex rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
             >
               Ir a Inventario
             </Link>
@@ -106,7 +106,7 @@ export default async function NuevaProduccionPage({
             </p>
             <Link
               href="/cocina/insumos"
-              className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+              className="mt-4 inline-flex rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
             >
               Ir a insumos
             </Link>

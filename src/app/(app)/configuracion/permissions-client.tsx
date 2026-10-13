@@ -229,7 +229,7 @@ export function PermissionsManager({
             <button
               type="button"
               disabled={pending || !selected}
-              className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+              className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)] disabled:opacity-60"
               onClick={() => {
                 if (!selected) return;
                 setError(null);

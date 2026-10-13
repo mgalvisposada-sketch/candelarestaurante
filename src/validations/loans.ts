@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+/** Alta simple: socio prestó X el día Y a una cuenta. Sin tasa ni plazo. */
+export const partnerLoanSchema = z.object({
+  lender_shareholder_id: z.string().uuid().optional().nullable().or(z.literal("")),
+  lender_name: z.string().optional().nullable(),
+  loan_date: z.string().min(1, "Fecha del préstamo obligatoria"),
+  amount: z.string().min(1, "Monto obligatorio"),
+  bank_account_id: z
+    .string()
+    .uuid({ message: "Elija la cuenta donde ingresó el dinero" }),
+  notes: z.string().optional().nullable(),
+});
+
 export const loanSchema = z.object({
   lender_shareholder_id: z.string().uuid().optional().nullable().or(z.literal("")),
   lender_name: z.string().min(2, "Prestamista obligatorio"),
@@ -26,10 +38,11 @@ export const loanSchema = z.object({
 
 export const loanDisbursementSchema = z.object({
   loan_id: z.string().uuid(),
-  disbursement_date: z.string().min(1, "Fecha obligatoria"),
+  disbursement_date: z.string().min(1, "Fecha en que prestó obligatoria"),
   amount: z.string().min(1, "Monto obligatorio"),
-  bank_account_id: z.string().uuid().optional().nullable().or(z.literal("")),
+  bank_account_id: z.string().uuid({ message: "Elija la cuenta de tesorería donde ingresó el dinero" }),
   notes: z.string().optional().nullable(),
+  post_to_treasury: z.enum(["1", "0", ""]).optional().nullable(),
 });
 
 export const loanPaymentSchema = z.object({

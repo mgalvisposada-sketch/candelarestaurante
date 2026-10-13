@@ -20,6 +20,7 @@ import {
   type BalanceSnapshotInput,
   type BankTransactionInput,
 } from "@/lib/treasury-balance";
+import { isSuperAdmin } from "@/types/domain";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
@@ -34,11 +35,24 @@ import {
   CashCloseSection,
   type CashDailyCloseRow,
 } from "./cash-close-client";
+import { TesoreriaNav } from "./tesoreria-nav";
 
 export default async function TesoreriaPage() {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
   requireModuleAccess(ctx, "tesoreria");
+
+  const canManageLiquidity =
+    ctxCanAccess(ctx, "tesoreria.cuentas") ||
+    ctxCanAccess(ctx, "tesoreria.saldos") ||
+    ctxCanAccess(ctx, "tesoreria.caja") ||
+    ctxCanAccess(ctx, "tesoreria.caja.avalar");
+  const canSeePayments =
+    ctxCanAccess(ctx, "tesoreria.pagos") ||
+    ctxCanAccess(ctx, "solicitudes-pago.pagar");
+  if (!canManageLiquidity && canSeePayments) {
+    redirect("/tesoreria/pagos");
+  }
 
   if (!ctx.organization) {
     return (
@@ -52,7 +66,7 @@ export default async function TesoreriaPage() {
             <p className="font-medium">Primero configura la empresa</p>
             <Link
               href="/empresa"
-              className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+              className="mt-4 inline-flex rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
             >
               Ir a Empresa
             </Link>
@@ -81,7 +95,7 @@ export default async function TesoreriaPage() {
   const { data: accountRows } = await supabase
     .from("bank_accounts")
     .select(
-      "id, bank_name, account_kind, account_type, masked_number, holder_name, is_active, notes, is_cash_float",
+      "id, bank_name, account_kind, fund_purpose, account_type, masked_number, holder_name, is_active, notes, is_cash_float",
     )
     .eq("organization_id", orgId)
     .is("deleted_at", null)
@@ -235,6 +249,11 @@ export default async function TesoreriaPage() {
         subtitle="Bancos, liquidez y aval de cierres"
       />
       <main className="space-y-6 p-8">
+        <TesoreriaNav
+          permissions={ctx.permissions}
+          isSuperAdmin={isSuperAdmin(ctx.role)}
+        />
+
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Liquidez y cuentas"
@@ -253,6 +272,12 @@ export default async function TesoreriaPage() {
                 Definir inicio operativo en Empresa →
               </Link>
             )}
+            <Link
+              href="/tesoreria/pagos"
+              className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm font-medium text-[var(--ink)] hover:bg-neutral-50"
+            >
+              Historial de pagos
+            </Link>
           </div>
         </div>
 

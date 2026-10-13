@@ -10,6 +10,12 @@ import {
 } from "./actions";
 import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
 import { Badge } from "@/components/ui/primitives";
+import {
+  QuickCreateField,
+  QuickCreateSelect,
+  QuickCreateSelectField,
+} from "@/components/ui/quick-create";
+import { quickCreateBankAccountAction } from "../tesoreria/actions";
 import { formatCOP, money } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
 import { cn } from "@/lib/utils";
@@ -22,6 +28,7 @@ export type BankAccountOption = {
   masked_number: string | null;
   available_balance?: number | string;
   is_cash_float?: boolean | null;
+  fund_purpose?: "VENTAS" | "EMPRESA" | null;
 };
 export type PaymentRequestRow = {
   id: string;
@@ -42,7 +49,7 @@ export type PaymentRequestRow = {
 };
 
 const inputClass =
-  "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
+  "w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] outline-none ring-[var(--accent)] focus:ring-2";
 
 type QueueKey = "review" | "pay" | "history";
 
@@ -102,13 +109,15 @@ function accountOptionLabel(a: BankAccountOption) {
   const kind = a.is_cash_float
     ? "Base / flotante"
     : a.account_kind === "CAJA"
-      ? "Caja (ventas)"
+      ? "Caja"
       : a.account_kind === "BANCO"
         ? "Banco"
         : a.account_kind === "PASARELA"
           ? "Pasarela"
           : a.account_kind || "Cuenta";
-  return `${kind} · ${a.bank_name}${a.masked_number ? ` · ${a.masked_number}` : ""}${
+  const purpose =
+    (a.fund_purpose ?? "VENTAS") === "EMPRESA" ? "Empresa" : "Ventas";
+  return `${purpose} · ${kind} · ${a.bank_name}${a.masked_number ? ` · ${a.masked_number}` : ""}${
     a.available_balance !== undefined
       ? ` · disp. ${formatCOP(a.available_balance)}`
       : ""
@@ -118,7 +127,7 @@ function accountOptionLabel(a: BankAccountOption) {
 function PayForm({
   requestId,
   defaultAmount,
-  bankAccounts,
+  bankAccounts: initialBankAccounts,
 }: {
   requestId: string;
   defaultAmount: number | string;
@@ -126,6 +135,7 @@ function PayForm({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [bankAccounts, setBankAccounts] = useState(initialBankAccounts);
   const total = Number(defaultAmount) || 0;
   const floatAcc = bankAccounts.find((a) => a.is_cash_float);
   const otherAccounts = bankAccounts.filter((a) => !a.is_cash_float);
@@ -147,7 +157,7 @@ function PayForm({
 
   return (
     <form
-      className="mt-4 grid gap-3 rounded-lg border border-[var(--line)] bg-neutral-50/80 p-4 md:grid-cols-12"
+      className="mt-4 grid gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 text-[var(--ink)] md:grid-cols-12"
       action={(fd) => {
         setError(null);
         startTransition(async () => {
@@ -162,7 +172,7 @@ function PayForm({
       </p>
 
       {floatAcc ? (
-        <label className="md:col-span-12 flex cursor-pointer items-center gap-2 text-sm">
+        <label className="md:col-span-12 flex cursor-pointer items-center gap-2 text-sm text-[var(--ink)]">
           <input
             type="checkbox"
             checked={split}
@@ -189,7 +199,7 @@ function PayForm({
           </span>
         </label>
       ) : (
-        <p className="md:col-span-12 text-xs text-amber-800">
+        <p className="md:col-span-12 text-xs text-[var(--danger)]">
           Aún no hay cuenta Base. Defínala en{" "}
           <Link href="/tesoreria" className="underline">
             Tesorería
@@ -198,25 +208,64 @@ function PayForm({
         </p>
       )}
 
-      <label className="block text-sm md:col-span-5">
-        <span className="mb-1 block text-[var(--muted)]">
-          {split ? "Cuenta principal (caja/banco) *" : "Cuenta *"}
-        </span>
-        <select
-          name="bank_account_id"
+      <QuickCreateSelect
+        className="md:col-span-5"
+        name="bank_account_id"
+        label={split ? "Cuenta principal (caja/banco)" : "Cuenta"}
+        required
+        value={primaryId}
+        onChange={setPrimaryId}
+        options={(split ? otherAccounts : bankAccounts).map((a) => ({
+          id: a.id,
+          label: accountOptionLabel(a),
+        }))}
+        placeholder="Seleccione…"
+        createLabel="Nueva cuenta"
+        createTitle="Alta rápida de cuenta"
+        onCreate={async (fd) => {
+          const r = await quickCreateBankAccountAction(fd);
+          if (!r.ok || !r.id) {
+            return { ok: false, error: r.error ?? "No se pudo crear" };
+          }
+          const label = r.name ?? String(fd.get("bank_name") ?? "Cuenta");
+          const kind = String(fd.get("account_kind") ?? "BANCO") as
+            | "BANCO"
+            | "CAJA"
+            | "PASARELA"
+            | "OTRO";
+          const row: BankAccountOption = {
+            id: r.id,
+            bank_name: label,
+            account_kind: kind,
+            masked_number: null,
+            available_balance: 0,
+            is_cash_float: false,
+            fund_purpose: "EMPRESA",
+          };
+          setBankAccounts((prev) =>
+            prev.some((a) => a.id === r.id) ? prev : [...prev, row],
+          );
+          return { ok: true, id: r.id, label: accountOptionLabel(row) };
+        }}
+      >
+        <QuickCreateField
+          name="bank_name"
+          label="Nombre"
           required
-          value={primaryId}
-          onChange={(e) => setPrimaryId(e.target.value)}
-          className={inputClass}
+          placeholder="Ej. Caja principal"
+        />
+        <QuickCreateSelectField
+          name="account_kind"
+          label="Tipo"
+          required
+          defaultValue="BANCO"
         >
-          <option value="">Seleccione…</option>
-          {(split ? otherAccounts : bankAccounts).map((a) => (
-            <option key={a.id} value={a.id}>
-              {accountOptionLabel(a)}
-            </option>
-          ))}
-        </select>
-      </label>
+          <option value="BANCO">Banco</option>
+          <option value="CAJA">Caja</option>
+          <option value="PASARELA">Pasarela</option>
+          <option value="OTRO">Otro</option>
+        </QuickCreateSelectField>
+      </QuickCreateSelect>
       <label className="block text-sm md:col-span-3">
         <span className="mb-1 block text-[var(--muted)]">Fecha</span>
         <input
@@ -267,9 +316,9 @@ function PayForm({
           <div className="md:col-span-4 flex items-end pb-2 text-sm text-[var(--muted)]">
             Suma {formatCOP(partsSum)}
             {!partsOk ? (
-              <span className="ml-2 text-red-700">≠ {formatCOP(total)}</span>
+              <span className="ml-2 text-[var(--danger)]">≠ {formatCOP(total)}</span>
             ) : (
-              <span className="ml-2 text-emerald-700">= total</span>
+              <span className="ml-2 text-[var(--ok)]">= total</span>
             )}
           </div>
         </>
@@ -287,13 +336,13 @@ function PayForm({
         <button
           type="submit"
           disabled={pending || bankAccounts.length === 0 || (split && !partsOk)}
-          className="w-full rounded-lg bg-[var(--ink)] px-3 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+          className="w-full rounded-lg bg-[var(--solid)] px-3 py-2.5 text-sm font-medium text-[var(--on-solid)] disabled:opacity-60"
         >
           {pending ? "Pagando…" : "Confirmar pago"}
         </button>
       </div>
       {error ? (
-        <p className="md:col-span-12 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+        <p className="md:col-span-12 rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-sm text-[var(--danger)]">
           {error}
         </p>
       ) : null}
@@ -307,7 +356,7 @@ function PayForm({
         </p>
       ) : null}
       {floatAcc && Number(floatAcc.available_balance ?? 0) <= 0 ? (
-        <p className="md:col-span-12 text-xs text-amber-800">
+        <p className="md:col-span-12 text-xs text-[var(--danger)]">
           La Base tiene disponible $0. Registre o traspase saldo en Tesorería
           antes de usarla.
         </p>
@@ -325,7 +374,7 @@ function RejectForm({ requestId }: { requestId: string }) {
     return (
       <button
         type="button"
-        className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
+        className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--danger)] hover:bg-[var(--accent-soft)]"
         onClick={() => setOpen(true)}
       >
         Rechazar
@@ -335,7 +384,7 @@ function RejectForm({ requestId }: { requestId: string }) {
 
   return (
     <form
-      className="mt-3 flex w-full flex-wrap items-end gap-2 rounded-lg border border-red-100 bg-red-50/50 p-3"
+      className="mt-3 flex w-full flex-wrap items-end gap-2 rounded-lg border border-[var(--line)] bg-[var(--accent-soft)] p-3 text-[var(--ink)]"
       action={(fd) => {
         setError(null);
         startTransition(async () => {
@@ -360,7 +409,7 @@ function RejectForm({ requestId }: { requestId: string }) {
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-red-700 px-3 py-2 text-sm text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--solid)] px-3 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
       >
         Confirmar rechazo
       </button>
@@ -371,7 +420,7 @@ function RejectForm({ requestId }: { requestId: string }) {
       >
         Cancelar
       </button>
-      {error ? <p className="w-full text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="w-full text-sm text-[var(--danger)]">{error}</p> : null}
     </form>
   );
 }
@@ -402,8 +451,8 @@ function RequestCard({
   return (
     <article
       className={cn(
-        "rounded-xl border bg-white p-4 shadow-[0_1px_0_rgba(18,18,18,0.03)] transition",
-        overdue ? "border-red-200" : "border-[var(--line)]",
+        "rounded-xl border bg-[var(--surface)] p-4 text-[var(--ink)] shadow-[0_1px_0_rgba(18,18,18,0.03)] transition",
+        overdue ? "border-[var(--danger)]" : "border-[var(--line)]",
       )}
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -441,7 +490,11 @@ function RequestCard({
               <dd>Solicitada {formatDateCO(request.requested_at)}</dd>
             </div>
             {request.due_date ? (
-              <div className={overdue ? "font-medium text-red-700" : undefined}>
+              <div
+                className={
+                  overdue ? "font-medium text-[var(--danger)]" : undefined
+                }
+              >
                 <dt className="sr-only">Vence</dt>
                 <dd>Vence {formatDateCO(request.due_date)}</dd>
               </div>
@@ -451,7 +504,7 @@ function RequestCard({
             <p className="text-sm text-[var(--muted)]">{request.notes}</p>
           ) : null}
           {request.rejection_reason ? (
-            <p className="rounded-md bg-red-50 px-2.5 py-1.5 text-sm text-red-800">
+            <p className="rounded-md bg-[var(--accent-soft)] px-2.5 py-1.5 text-sm text-[var(--danger)]">
               Rechazo: {request.rejection_reason}
             </p>
           ) : null}
@@ -471,7 +524,7 @@ function RequestCard({
           {source.href ? (
             <Link
               href={source.href}
-              className="mt-1 inline-block text-xs text-[var(--muted)] underline"
+              className="mt-1 inline-block text-xs text-[var(--accent)] underline"
             >
               Ver origen
             </Link>
@@ -484,7 +537,7 @@ function RequestCard({
           <button
             type="button"
             disabled={pending}
-            className="rounded-lg bg-[var(--ink)] px-3.5 py-2 text-sm font-medium text-white disabled:opacity-60"
+            className="rounded-lg bg-[var(--solid)] px-3.5 py-2 text-sm font-medium text-[var(--on-solid)] disabled:opacity-60"
             onClick={() => {
               setActionError(null);
               startTransition(async () => {
@@ -500,7 +553,7 @@ function RequestCard({
           <button
             type="button"
             disabled={pending}
-            className="rounded-lg px-3 py-2 text-sm text-[var(--muted)] hover:text-red-700 disabled:opacity-60"
+            className="rounded-lg px-3 py-2 text-sm text-[var(--muted)] hover:text-[var(--danger)] disabled:opacity-60"
             onClick={() => {
               if (!confirm("¿Anular esta solicitud?")) return;
               setActionError(null);
@@ -514,7 +567,7 @@ function RequestCard({
             Anular
           </button>
           {actionError ? (
-            <p className="w-full text-sm text-red-700">{actionError}</p>
+            <p className="w-full text-sm text-[var(--danger)]">{actionError}</p>
           ) : null}
         </div>
       ) : null}
@@ -524,7 +577,7 @@ function RequestCard({
           {!payOpen ? (
             <button
               type="button"
-              className="rounded-lg bg-[var(--accent)] px-3.5 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)]"
+              className="rounded-lg bg-[var(--accent)] px-3.5 py-2 text-sm font-medium text-[var(--on-solid)] hover:bg-[var(--accent-hover)]"
               onClick={() => setPayOpen(true)}
             >
               Pagar
@@ -609,7 +662,7 @@ export function PaymentRequestQueues({
       <div
         role="tablist"
         aria-label="Colas de solicitudes"
-        className="flex flex-wrap gap-1 rounded-xl border border-[var(--line)] bg-neutral-50 p-1"
+        className="flex flex-wrap gap-1 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-1"
       >
         {sections.map((section) => {
           const selected = section.key === tab;
@@ -623,7 +676,7 @@ export function PaymentRequestQueues({
               className={cn(
                 "flex min-w-[9rem] flex-1 items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition",
                 selected
-                  ? "bg-white font-medium text-[var(--ink)] shadow-sm"
+                  ? "bg-[var(--surface)] font-medium text-[var(--ink)] shadow-sm"
                   : "text-[var(--muted)] hover:text-[var(--ink)]",
               )}
             >
@@ -631,7 +684,9 @@ export function PaymentRequestQueues({
               <span
                 className={cn(
                   "rounded-md px-1.5 py-0.5 text-xs tabular-nums",
-                  selected ? "bg-neutral-100" : "bg-transparent",
+                  selected
+                    ? "bg-[var(--surface-muted)] text-[var(--ink)]"
+                    : "bg-transparent",
                 )}
               >
                 {section.items.length}
@@ -659,7 +714,7 @@ export function PaymentRequestQueues({
         </div>
 
         {active.items.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-[var(--line)] bg-white/60 px-4 py-10 text-center text-sm text-[var(--muted)]">
+          <p className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface-muted)] px-4 py-10 text-center text-sm text-[var(--muted)]">
             Sin solicitudes en esta cola.
           </p>
         ) : (

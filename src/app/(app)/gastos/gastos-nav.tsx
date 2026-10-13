@@ -53,7 +53,7 @@ export function GastosNav({
               "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
               l.primary
                 ? active
-                  ? "bg-[var(--ink)] text-white"
+                  ? "bg-[var(--solid)] text-[var(--on-solid)]"
                   : "border border-[var(--ink)] text-[var(--ink)] hover:bg-neutral-50"
                 : active
                   ? "bg-neutral-100 text-[var(--ink)]"

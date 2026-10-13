@@ -170,7 +170,7 @@ export function PreparacionesByCategoryList({
           placeholder="Nombre, categoría, receta o componente…"
           autoComplete="off"
           enterKeyHint="search"
-          className="w-full max-w-xl rounded-xl border border-[var(--line)] bg-white px-4 py-2.5 text-sm outline-none ring-[var(--accent)] focus:ring-2"
+          className="w-full max-w-xl rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-2.5 text-sm outline-none ring-[var(--accent)] focus:ring-2"
         />
       </label>
 
@@ -213,7 +213,7 @@ export function PreparacionesByCategoryList({
       </div>
 
       {q && filteredGroups.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-8 text-center text-sm text-[var(--muted)]">
+        <p className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface)] px-4 py-8 text-center text-sm text-[var(--muted)]">
           Nada coincide con «{query.trim()}».
         </p>
       ) : (
@@ -224,7 +224,7 @@ export function PreparacionesByCategoryList({
             return (
               <section
                 key={group.categoryId}
-                className="overflow-hidden rounded-xl border border-[var(--line)] bg-white"
+                className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]"
               >
                 <button
                   type="button"
@@ -328,7 +328,7 @@ export function PreparacionesByCategoryList({
                                 ) : p.canProduceBatch ? (
                                   <Link
                                     href={`/cocina/producciones/nueva-preparacion?producto=${p.id}`}
-                                    className="rounded-md bg-[var(--ink)] px-2.5 py-1 text-xs text-white"
+                                    className="rounded-md bg-[var(--solid)] px-2.5 py-1 text-xs text-[var(--on-solid)]"
                                   >
                                     Crear más
                                   </Link>

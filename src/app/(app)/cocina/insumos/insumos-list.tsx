@@ -12,10 +12,10 @@ import {
 } from "../kitchen-actions";
 
 const inputClass =
-  "w-full rounded-lg border border-[var(--line)] bg-white px-2.5 py-1.5 text-sm outline-none ring-[var(--accent)] focus:ring-2";
+  "w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1.5 text-sm text-[var(--ink)] outline-none ring-[var(--accent)] focus:ring-2";
 
 const iconBtn =
-  "inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--line)] text-[var(--ink)] transition-colors hover:bg-[var(--surface)] disabled:opacity-50";
+  "inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] transition-colors hover:bg-[var(--surface-muted)] disabled:opacity-50";
 
 function formatUnitCost(value: number | string) {
   const n = money(value).toDecimalPlaces(4).toNumber();
@@ -87,7 +87,8 @@ function InsumoRow({
         id={productAnchorId(product.id)}
         className={cn(
           "border-b border-[var(--line)] scroll-mt-24",
-          focused && "bg-amber-50 ring-2 ring-inset ring-amber-400",
+          focused &&
+            "bg-[var(--gold-soft)] ring-2 ring-inset ring-[var(--gold)]",
         )}
       >
         <td colSpan={5} className="px-3 py-3">
@@ -108,7 +109,7 @@ function InsumoRow({
                 <button
                   type="submit"
                   disabled={pending}
-                  className={cn(iconBtn, "border-transparent bg-[var(--ink)] text-white hover:bg-[var(--ink)]")}
+                  className={cn(iconBtn, "border-transparent bg-[var(--solid)] text-[var(--on-solid)] hover:bg-[var(--solid)]")}
                   title="Guardar"
                   aria-label="Guardar"
                 >
@@ -221,7 +222,8 @@ function InsumoRow({
       id={productAnchorId(product.id)}
       className={cn(
         "border-b border-[var(--line)] last:border-0 scroll-mt-24",
-        focused && "bg-amber-50 ring-2 ring-inset ring-amber-400",
+        focused &&
+          "bg-[var(--gold-soft)] ring-2 ring-inset ring-[var(--gold)]",
       )}
     >
       <td className="px-3 py-2">
@@ -245,7 +247,7 @@ function InsumoRow({
           {canProduce ? (
             <Link
               href={`/cocina/producciones/nueva?producto=${product.id}`}
-              className={cn(iconBtn, "border-transparent bg-[var(--ink)] text-white hover:bg-[var(--ink)]")}
+              className={cn(iconBtn, "border-transparent bg-[var(--solid)] text-[var(--on-solid)] hover:bg-[var(--solid)]")}
               title="Crear más"
               aria-label={`Crear más ${product.name}`}
             >
@@ -269,7 +271,10 @@ function InsumoRow({
               <button
                 type="button"
                 disabled={pending}
-                className={cn(iconBtn, "text-red-700 hover:bg-red-50")}
+                className={cn(
+                  iconBtn,
+                  "text-[var(--danger)] hover:bg-[var(--accent-soft)]",
+                )}
                 title="Desactivar"
                 aria-label={`Desactivar ${product.name}`}
                 onClick={() => {
@@ -386,7 +391,7 @@ export function InsumosCatalogList({
           return (
             <section
               key={group.categoryId}
-              className="overflow-hidden rounded-xl border border-[var(--line)] bg-white"
+              className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]"
             >
               <button
                 type="button"

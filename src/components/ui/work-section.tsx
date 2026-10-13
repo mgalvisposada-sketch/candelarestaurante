@@ -24,7 +24,7 @@ const KIND_META: Record<
   list: {
     eyebrow: "Listado",
     Icon: List,
-    rail: "border-l-[var(--ink)]/35",
+    rail: "border-l-[var(--solid)]/45",
     head: "bg-[var(--surface-muted)]/80",
   },
   tools: {

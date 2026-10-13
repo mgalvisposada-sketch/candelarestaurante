@@ -10,9 +10,17 @@ import {
   bulkImportKitchenProductsAction,
   createKitchenProductAction,
 } from "./kitchen-actions";
+import {
+  createProductCategoryAction,
+  createProductUnitAction,
+} from "../compras/inventory-actions";
+import {
+  QuickCreateField,
+  QuickCreateSelect,
+} from "@/components/ui/quick-create";
 
 const inputClass =
-  "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
+  "w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] outline-none ring-[var(--accent)] focus:ring-2";
 
 export type CategoryOption = { id: string; code: string; name: string };
 export type UnitOption = { id: string; code: string; name: string };
@@ -31,8 +39,8 @@ const ITEM_KIND_LABEL: Record<KitchenBulkItemKind, string> = {
 export function CreateKitchenProductForm({
   itemKind,
   label,
-  categories,
-  units,
+  categories: initialCategories,
+  units: initialUnits,
 }: {
   itemKind: KitchenBulkItemKind;
   label: string;
@@ -42,13 +50,17 @@ export function CreateKitchenProductForm({
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [categories, setCategories] = useState(initialCategories);
+  const [units, setUnits] = useState(initialUnits);
+  const [categoryId, setCategoryId] = useState("");
+  const [unitId, setUnitId] = useState("");
 
   if (!open) {
     return (
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm text-white"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm text-[var(--on-solid)]"
       >
         {label}
       </button>
@@ -57,7 +69,7 @@ export function CreateKitchenProductForm({
 
   return (
     <form
-      className="w-full max-w-md space-y-3 rounded-xl border border-[var(--line)] bg-white p-4"
+      className="w-full max-w-md space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4"
       action={(fd) => {
         setError(null);
         startTransition(async () => {
@@ -74,26 +86,68 @@ export function CreateKitchenProductForm({
         de uno que ya existe, use <strong>Crear más</strong> en la fila.
       </p>
       <input name="name" required placeholder="Nombre" className={inputClass} />
-      <select name="category_id" required className={inputClass} defaultValue="">
-        <option value="" disabled>
-          Categoría
-        </option>
-        {categories.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.code} — {c.name}
-          </option>
-        ))}
-      </select>
-      <select name="unit_id" required className={inputClass} defaultValue="">
-        <option value="" disabled>
-          Unidad
-        </option>
-        {units.map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.code} — {u.name}
-          </option>
-        ))}
-      </select>
+      <QuickCreateSelect
+        name="category_id"
+        label="Categoría"
+        required
+        value={categoryId}
+        onChange={setCategoryId}
+        options={categories.map((c) => ({
+          id: c.id,
+          label: `${c.code} — ${c.name}`,
+        }))}
+        createLabel="Nueva categoría"
+        createTitle="Alta rápida de categoría"
+        onCreate={async (fd) => {
+          const r = await createProductCategoryAction(fd);
+          if (!r.ok || !r.id) {
+            return { ok: false, error: r.error ?? "No se pudo crear" };
+          }
+          const code = String(fd.get("code") ?? "").trim().toUpperCase();
+          const name = String(fd.get("name") ?? "").trim();
+          const labelText = `${code} — ${name}`;
+          setCategories((prev) =>
+            prev.some((c) => c.id === r.id)
+              ? prev
+              : [...prev, { id: r.id!, code, name }],
+          );
+          return { ok: true, id: r.id, label: labelText };
+        }}
+      >
+        <QuickCreateField name="code" label="Código" required />
+        <QuickCreateField name="name" label="Nombre" required />
+      </QuickCreateSelect>
+      <QuickCreateSelect
+        name="unit_id"
+        label="Unidad"
+        required
+        value={unitId}
+        onChange={setUnitId}
+        options={units.map((u) => ({
+          id: u.id,
+          label: `${u.code} — ${u.name}`,
+        }))}
+        createLabel="Nueva unidad"
+        createTitle="Alta rápida de unidad"
+        onCreate={async (fd) => {
+          const r = await createProductUnitAction(fd);
+          if (!r.ok || !r.id) {
+            return { ok: false, error: r.error ?? "No se pudo crear" };
+          }
+          const code = String(fd.get("code") ?? "").trim().toUpperCase();
+          const name = String(fd.get("name") ?? "").trim();
+          const labelText = `${code} — ${name}`;
+          setUnits((prev) =>
+            prev.some((u) => u.id === r.id)
+              ? prev
+              : [...prev, { id: r.id!, code, name }],
+          );
+          return { ok: true, id: r.id, label: labelText };
+        }}
+      >
+        <QuickCreateField name="code" label="Código" required />
+        <QuickCreateField name="name" label="Nombre" required />
+      </QuickCreateSelect>
       <input name="sku" placeholder="SKU (opcional)" className={inputClass} />
       <div className="grid grid-cols-2 gap-2">
         <input
@@ -139,7 +193,7 @@ export function CreateKitchenProductForm({
         <button
           type="submit"
           disabled={pending || categories.length === 0 || units.length === 0}
-          className="rounded-lg bg-[var(--ink)] px-3 py-2 text-sm text-white disabled:opacity-60"
+          className="rounded-lg bg-[var(--solid)] px-3 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
         >
           Guardar
         </button>
@@ -157,7 +211,7 @@ export function CreateKitchenProductForm({
 
 export function BulkImportKitchenProductsForm({
   itemKind,
-  categories,
+  categories: initialCategories,
   units,
 }: {
   itemKind: KitchenBulkItemKind;
@@ -171,6 +225,8 @@ export function BulkImportKitchenProductsForm({
   );
   const [success, setSuccess] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [categories, setCategories] = useState(initialCategories);
+  const [categoryId, setCategoryId] = useState("");
   const example = buildBulkKitchenProductExample(units);
   const sampleRow = example.rows[0];
   const textareaId = `kitchen-bulk-paste-${itemKind}`;
@@ -201,7 +257,7 @@ export function BulkImportKitchenProductsForm({
 
   return (
     <form
-      className="basis-full space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
+      className="basis-full space-y-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
       action={(fd) => {
         setError(null);
         setRowErrors([]);
@@ -257,7 +313,7 @@ export function BulkImportKitchenProductsForm({
           </div>
           <button
             type="button"
-            className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm"
+            className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-sm"
             disabled={example.rows.length === 0}
             onClick={() => {
               const el = document.getElementById(
@@ -272,7 +328,7 @@ export function BulkImportKitchenProductsForm({
           </button>
         </div>
 
-        <div className="rounded-lg border border-[var(--line)] bg-white px-3 py-3">
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-3">
           <p className="text-xs font-medium text-[var(--ink)]">
             En la columna unidad use el código, no el nombre
           </p>
@@ -289,7 +345,7 @@ export function BulkImportKitchenProductsForm({
           </ul>
         </div>
 
-        <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white">
+        <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-[var(--surface)]">
           <table className="min-w-full border-collapse text-left text-xs">
             <thead>
               <tr className="border-b border-[var(--line)] bg-neutral-50">
@@ -356,7 +412,7 @@ export function BulkImportKitchenProductsForm({
         {sampleRow ? (
           <p className="text-xs text-[var(--muted)]">
             Formato con stock (apertura):
-            <code className="mt-1 block overflow-x-auto rounded-md border border-[var(--line)] bg-white px-3 py-2 font-mono text-[11px] leading-relaxed text-[var(--ink)]">
+            <code className="mt-1 block overflow-x-auto rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 font-mono text-[11px] leading-relaxed text-[var(--ink)]">
               {BULK_PRODUCT_HEADER_REQUIRED};stock_actual
               <br />
               {sampleRow.join(";")}
@@ -365,17 +421,38 @@ export function BulkImportKitchenProductsForm({
         ) : null}
       </div>
 
-      <label className="block text-sm">
-        <span className="mb-1.5 block text-[var(--muted)]">Categoría destino *</span>
-        <select name="category_id" required defaultValue="" className={inputClass}>
-          <option value="">Seleccione…</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.code} — {c.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <QuickCreateSelect
+        name="category_id"
+        label="Categoría destino"
+        required
+        value={categoryId}
+        onChange={setCategoryId}
+        options={categories.map((c) => ({
+          id: c.id,
+          label: `${c.code} — ${c.name}`,
+        }))}
+        placeholder="Seleccione…"
+        createLabel="Nueva categoría"
+        createTitle="Alta rápida de categoría"
+        onCreate={async (fd) => {
+          const r = await createProductCategoryAction(fd);
+          if (!r.ok || !r.id) {
+            return { ok: false, error: r.error ?? "No se pudo crear" };
+          }
+          const code = String(fd.get("code") ?? "").trim().toUpperCase();
+          const name = String(fd.get("name") ?? "").trim();
+          const labelText = `${code} — ${name}`;
+          setCategories((prev) =>
+            prev.some((c) => c.id === r.id)
+              ? prev
+              : [...prev, { id: r.id!, code, name }],
+          );
+          return { ok: true, id: r.id, label: labelText };
+        }}
+      >
+        <QuickCreateField name="code" label="Código" required />
+        <QuickCreateField name="name" label="Nombre" required />
+      </QuickCreateSelect>
 
       <label className="block text-sm">
         <span className="mb-1.5 block text-[var(--muted)]">
@@ -419,7 +496,7 @@ export function BulkImportKitchenProductsForm({
         <button
           type="submit"
           disabled={pending}
-          className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
+          className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
         >
           {pending ? "Importando…" : `Importar ${kindLabel}`}
         </button>

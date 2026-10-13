@@ -603,7 +603,7 @@ export function PhysicalCountDetailClient({
             </div>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--line)]">
               <div
-                className="h-full rounded-full bg-[var(--ink)] transition-all"
+                className="h-full rounded-full bg-[var(--solid)] transition-all"
                 style={{ width: `${progressPct}%` }}
               />
             </div>
@@ -680,7 +680,7 @@ export function PhysicalCountDetailClient({
                     className={cn(
                       "min-h-10 rounded-lg px-2 py-2 transition md:min-h-0 md:px-3 md:py-1.5",
                       filter === value
-                        ? "bg-[var(--ink)] text-white"
+                        ? "bg-[var(--solid)] text-[var(--on-solid)]"
                         : "text-[var(--muted)] hover:text-[var(--ink)]",
                     )}
                   >
@@ -972,7 +972,7 @@ export function PhysicalCountDetailClient({
                                         qtyValue(product.id).trim() === "" ||
                                         (!dirty && counted)
                                       }
-                                      className="min-h-12 min-w-[5.5rem] rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-40 sm:min-w-0"
+                                      className="min-h-12 min-w-[5.5rem] rounded-xl bg-[var(--solid)] px-4 text-sm font-medium text-[var(--on-solid)] disabled:opacity-40 sm:min-w-0"
                                       onClick={() => saveProduct(product)}
                                     >
                                       {savingId === product.id
@@ -1059,7 +1059,7 @@ export function PhysicalCountDetailClient({
                                 <button
                                   type="button"
                                   disabled
-                                  className="min-h-12 w-full rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-40"
+                                  className="min-h-12 w-full rounded-xl bg-[var(--solid)] px-4 text-sm font-medium text-[var(--on-solid)] disabled:opacity-40"
                                 >
                                   Enviar “{group.label}” a revisión
                                 </button>
@@ -1081,7 +1081,7 @@ export function PhysicalCountDetailClient({
                                 <button
                                   type="button"
                                   disabled={pending}
-                                  className="min-h-12 w-full rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-50"
+                                  className="min-h-12 w-full rounded-xl bg-[var(--solid)] px-4 text-sm font-medium text-[var(--on-solid)] disabled:opacity-50"
                                   onClick={() => submitCategory(group)}
                                 >
                                   Enviar “{group.label}” a revisión (

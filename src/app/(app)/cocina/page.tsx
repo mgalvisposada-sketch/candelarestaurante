@@ -173,7 +173,7 @@ export default async function CocinaPage() {
         <CocinaSearch hits={searchHits} />
 
         {/* Cascada visual */}
-        <section className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[linear-gradient(160deg,#faf8f5_0%,#f3efe8_45%,#efe8df_100%)]">
+        <section className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[linear-gradient(160deg,var(--panel-warm)_0%,var(--panel-warm-mid)_45%,var(--panel-warm-deep)_100%)]">
           <div className="border-b border-[var(--line)] px-5 py-4 sm:px-6">
             <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
               Cascada Candela
@@ -359,7 +359,7 @@ export default async function CocinaPage() {
               <div className="mt-5 flex flex-wrap gap-2">
                 <Link
                   href="/cocina/insumos"
-                  className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+                  className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
                 >
                   Desde insumos
                 </Link>
@@ -409,14 +409,15 @@ function CascadeLevel({
 }) {
   const toneClass =
     tone === "base"
-      ? "bg-white/70"
+      ? "bg-[var(--surface)]/80"
       : tone === "menu"
-        ? "bg-[var(--ink)] text-white"
-        : "bg-white";
+        ? "bg-[var(--solid)] text-[var(--on-solid)]"
+        : "bg-[var(--surface)]";
 
   const muted =
-    tone === "menu" ? "text-white/70" : "text-[var(--muted)]";
-  const strong = tone === "menu" ? "text-white" : "text-[var(--ink)]";
+    tone === "menu" ? "text-[var(--on-solid)]/70" : "text-[var(--muted)]";
+  const strong =
+    tone === "menu" ? "text-[var(--on-solid)]" : "text-[var(--ink)]";
 
   const body = (
     <div className={`flex h-full flex-col px-5 py-5 sm:px-6 ${toneClass}`}>
@@ -438,7 +439,7 @@ function CascadeLevel({
       {cta ? (
         <span
           className={`mt-4 inline-flex text-sm font-medium ${
-            tone === "menu" ? "text-white underline-offset-2" : "text-[var(--ink)]"
+            tone === "menu" ? "text-[var(--on-solid)] underline-offset-2" : "text-[var(--ink)]"
           }`}
         >
           {cta} →

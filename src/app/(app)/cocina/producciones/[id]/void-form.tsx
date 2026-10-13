@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { voidKitchenProductionAction } from "../../kitchen-actions";
 
 const inputClass =
-  "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
+  "w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
 
 export function VoidProductionForm({ productionId }: { productionId: string }) {
   const router = useRouter();

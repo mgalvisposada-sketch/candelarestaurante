@@ -7,13 +7,15 @@ export function sumOpeningBalances(balances: MoneyInput[]): string {
     .toFixed(2);
 }
 
+export type BankAccountFundPurpose = "VENTAS" | "EMPRESA";
+
 export function bankKindLabel(kind: string, opts?: { isCashFloat?: boolean }) {
   if (opts?.isCashFloat) return "Base / flotante";
   switch (kind) {
     case "BANCO":
       return "Banco";
     case "CAJA":
-      return "Caja (ventas)";
+      return "Caja";
     case "PASARELA":
       return "Pasarela";
     case "OTRO":
@@ -21,6 +23,11 @@ export function bankKindLabel(kind: string, opts?: { isCashFloat?: boolean }) {
     default:
       return kind;
   }
+}
+
+export function fundPurposeLabel(purpose: string | null | undefined) {
+  if (purpose === "EMPRESA") return "Empresa";
+  return "Ventas";
 }
 
 export function findCashFloatAccount<
@@ -38,10 +45,16 @@ type AccountForClose = {
   account_kind: string;
   is_active: boolean;
   is_cash_float?: boolean | null;
+  /** Solo VENTAS entran al cierre. Si falta, se trata como VENTAS. */
+  fund_purpose?: string | null;
 };
 
+function isSalesAccount(a: AccountForClose) {
+  return (a.fund_purpose ?? "VENTAS") === "VENTAS";
+}
+
 /**
- * Destinos del cierre:
+ * Destinos del cierre (solo cuentas de ventas):
  * - efectivo (ventas) → cuenta CAJA que NO es la base/flotante
  * - adquirencia (débito+crédito) → banco/pasarela donde liquida el datáfono
  * - transferencia/QR → banco donde caen esos abonos (puede ser otro)
@@ -57,7 +70,7 @@ export function resolveCashCloseDestinations(
   cardAccountId: string | null;
   transferAccountId: string | null;
 } {
-  const active = accounts.filter((a) => a.is_active);
+  const active = accounts.filter((a) => a.is_active && isSalesAccount(a));
   const cash =
     active.find((a) => a.account_kind === "CAJA" && !a.is_cash_float) ??
     active.find((a) => a.account_kind === "CAJA") ??

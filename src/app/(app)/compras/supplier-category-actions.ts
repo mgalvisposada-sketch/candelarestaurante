@@ -115,6 +115,99 @@ export async function linkSupplierCategoryAction(
   return { ok: true, id: data.id };
 }
 
+/** Alta rápida de proveedor de insumos ligado a una categoría (desde solicitud). */
+export async function quickCreatePurchaseSupplierAction(
+  formData: FormData,
+): Promise<ActionResult & { name?: string }> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  const can =
+    ctxCanAccess(ctx, "compras.proveedores") ||
+    ctxCanAccess(ctx, "proveedores.crear") ||
+    ctxCanAccess(ctx, "proveedores") ||
+    ctxCanAccess(ctx, "compras.solicitudes.crear");
+  if (!can) return { ok: false, error: "Sin permiso para crear proveedor" };
+
+  const name = String(formData.get("name") ?? "").trim();
+  const categoryId = String(formData.get("category_id") ?? "").trim();
+  const terms = String(formData.get("purchase_payment_terms") ?? "PREPAGO").trim();
+  if (name.length < 2) {
+    return { ok: false, error: "El nombre del proveedor es obligatorio" };
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(categoryId)) {
+    return { ok: false, error: "Seleccione una categoría antes de crear el proveedor" };
+  }
+
+  const supabase = await createClient();
+  const { data: cat, error: catError } = await supabase
+    .from("product_categories")
+    .select("id, name")
+    .eq("id", categoryId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (catError) return { ok: false, error: catError.message };
+  if (!cat) return { ok: false, error: "Categoría no válida" };
+
+  const { data, error } = await supabase
+    .from("suppliers")
+    .insert({
+      organization_id: ctx.organization.id,
+      name,
+      tax_id: emptyToNull(String(formData.get("tax_id") ?? "")),
+      is_active: true,
+      is_purchase_supplier: true,
+      is_expense_supplier: false,
+      purchase_payment_terms: terms === "CREDITO" ? "CREDITO" : "PREPAGO",
+      category: cat.name,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id, name")
+    .single();
+  if (error) return { ok: false, error: error.message };
+
+  const { error: linkError } = await supabase
+    .from("supplier_product_categories")
+    .upsert(
+      {
+        organization_id: ctx.organization.id,
+        supplier_id: data.id,
+        category_id: categoryId,
+        is_active: true,
+        deleted_at: null,
+        created_by: ctx.userId,
+        updated_by: ctx.userId,
+      },
+      { onConflict: "organization_id,supplier_id,category_id" },
+    );
+  if (linkError) return { ok: false, error: linkError.message };
+
+  // CxP cabecera mínima
+  const { data: existingAp } = await supabase
+    .from("accounts_payable")
+    .select("id")
+    .eq("organization_id", ctx.organization.id)
+    .eq("supplier_id", data.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!existingAp) {
+    await supabase.from("accounts_payable").insert({
+      organization_id: ctx.organization.id,
+      supplier_id: data.id,
+      priority: "POR_VALIDAR",
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    });
+  }
+
+  revalidatePath("/compras/proveedores");
+  revalidatePath("/compras/solicitudes");
+  revalidatePath("/proveedores");
+  revalidatePath("/proveedores/maestro");
+  return { ok: true, id: data.id, name: data.name as string };
+}
+
 export async function unlinkSupplierCategoryAction(
   linkId: string,
 ): Promise<ActionResult> {

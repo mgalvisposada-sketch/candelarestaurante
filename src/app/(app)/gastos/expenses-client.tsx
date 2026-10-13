@@ -4,11 +4,17 @@ import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import {
   createExpenseAction,
+  createExpenseCategoryAction,
   createShiftLiquidationExpenseAction,
+  quickCreateExpenseSupplierAction,
   softDeleteExpenseAction,
 } from "./actions";
 import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
 import { Badge } from "@/components/ui/primitives";
+import {
+  QuickCreateField,
+  QuickCreateSelect,
+} from "@/components/ui/quick-create";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
 import {
@@ -49,7 +55,7 @@ export type ExpenseRow = {
 };
 
 const inputClass =
-  "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
+  "w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] outline-none ring-[var(--accent)] focus:ring-2";
 
 function statusTone(s: string) {
   if (s === "PAGADO" || s === "APROBADO") return "ok" as const;
@@ -58,8 +64,8 @@ function statusTone(s: string) {
 }
 
 export function CreateExpenseForm({
-  categories,
-  suppliers,
+  categories: initialCategories,
+  suppliers: initialSuppliers,
   embedded = false,
 }: {
   categories: CategoryRow[];
@@ -69,12 +75,17 @@ export function CreateExpenseForm({
   const [open, setOpen] = useState(embedded);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [categories, setCategories] = useState(initialCategories);
+  const [suppliers, setSuppliers] = useState(initialSuppliers);
+  const [supplierId, setSupplierId] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+
   if (!open) {
     return (
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)]"
       >
         Nueva factura / cuenta de cobro
       </button>
@@ -123,23 +134,37 @@ export function CreateExpenseForm({
         </p>
       )}
       <div className="grid gap-3 md:grid-cols-2">
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Proveedor</span>
-          <select name="supplier_id" className={inputClass}>
-            <option value="">—</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-          {suppliers.length === 0 ? (
-            <span className="mt-1 block text-xs text-[var(--muted)]">
-              No hay proveedores de gastos. Márquelos en Proveedores → maestro
-              (“Proveedor de gastos”).
-            </span>
-          ) : null}
-        </label>
+        <QuickCreateSelect
+          name="supplier_id"
+          label="Proveedor"
+          value={supplierId}
+          onChange={setSupplierId}
+          options={suppliers.map((s) => ({ id: s.id, label: s.name }))}
+          createLabel="Nuevo proveedor"
+          createTitle="Alta rápida de proveedor de gastos"
+          hint={
+            suppliers.length === 0
+              ? "Crea uno aquí o márcalo en Proveedores → maestro."
+              : undefined
+          }
+          onCreate={async (fd) => {
+            const r = await quickCreateExpenseSupplierAction(fd);
+            if (!r.ok || !r.id) {
+              return { ok: false, error: r.error ?? "No se pudo crear" };
+            }
+            const label = r.name ?? String(fd.get("name") ?? "Proveedor");
+            setSuppliers((prev) =>
+              prev.some((s) => s.id === r.id)
+                ? prev
+                : [...prev, { id: r.id!, name: label }],
+            );
+            return { ok: true, id: r.id, label };
+          }}
+        >
+          <QuickCreateField name="name" label="Nombre" required placeholder="Ej. Seguridad Nacional" />
+          <QuickCreateField name="tax_id" label="NIT / documento" placeholder="Opcional" />
+        </QuickCreateSelect>
+
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">Tipo documento</span>
           <select name="document_type" defaultValue="FACTURA" className={inputClass}>
@@ -175,17 +200,38 @@ export function CreateExpenseForm({
           <span className="mb-1.5 block text-[var(--muted)]">Concepto *</span>
           <input name="concept" required className={inputClass} />
         </label>
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Categoría</span>
-          <select name="category_id" className={inputClass}>
-            <option value="">—</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.code} — {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
+
+        <QuickCreateSelect
+          name="category_id"
+          label="Categoría"
+          value={categoryId}
+          onChange={setCategoryId}
+          options={categories.map((c) => ({
+            id: c.id,
+            label: `${c.code} — ${c.name}`,
+          }))}
+          createLabel="Nueva categoría"
+          createTitle="Alta rápida de categoría de gasto"
+          onCreate={async (fd) => {
+            const r = await createExpenseCategoryAction(fd);
+            if (!r.ok || !r.id) {
+              return { ok: false, error: r.error ?? "No se pudo crear" };
+            }
+            const code = String(fd.get("code") ?? "").trim().toUpperCase();
+            const name = String(fd.get("name") ?? "").trim();
+            const label = `${code} — ${name}`;
+            setCategories((prev) =>
+              prev.some((c) => c.id === r.id)
+                ? prev
+                : [...prev, { id: r.id!, code, name }],
+            );
+            return { ok: true, id: r.id, label };
+          }}
+        >
+          <QuickCreateField name="code" label="Código" required placeholder="SEG" />
+          <QuickCreateField name="name" label="Nombre" required placeholder="Seguridad" />
+        </QuickCreateSelect>
+
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">Prioridad pago</span>
           <select name="priority" defaultValue="NORMAL" className={inputClass}>
@@ -200,8 +246,16 @@ export function CreateExpenseForm({
           <textarea name="notes" rows={2} className={inputClass} />
         </label>
       </div>
-      {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
-      <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white">
+      {error ? (
+        <p className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-sm text-[var(--danger)]">
+          {error}
+        </p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)]"
+      >
         {pending ? "Guardando…" : "Guardar y enviar a solicitudes"}
       </button>
     </form>
@@ -209,7 +263,7 @@ export function CreateExpenseForm({
 }
 
 export function CreateShiftLiquidationForm({
-  categories,
+  categories: initialCategories,
   employees,
   embedded = false,
 }: {
@@ -221,6 +275,8 @@ export function CreateShiftLiquidationForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const current = useMemo(() => quincenaFromDate(todayInBogota()), []);
+  const [categories, setCategories] = useState(initialCategories);
+  const [categoryId, setCategoryId] = useState("");
   const [employeeId, setEmployeeId] = useState(employees[0]?.id ?? "");
   const [quincenaKey, setQuincenaKey] = useState(current.key);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -243,7 +299,7 @@ export function CreateShiftLiquidationForm({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg border border-[var(--ink)] px-4 py-2.5 text-sm font-medium"
+        className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-4 py-2.5 text-sm font-medium text-[var(--ink)]"
       >
         Liquidación por turno
       </button>
@@ -302,7 +358,7 @@ export function CreateShiftLiquidationForm({
       ))}
 
       {employees.length === 0 ? (
-        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+        <p className="rounded-lg bg-[var(--gold-soft)] px-3 py-2 text-sm text-[var(--warn)]">
           No hay empleados activos con contrato por turno.
         </p>
       ) : (
@@ -356,17 +412,36 @@ export function CreateShiftLiquidationForm({
                 className={inputClass}
               />
             </label>
-            <label className="block text-sm">
-              <span className="mb-1.5 block text-[var(--muted)]">Categoría</span>
-              <select name="category_id" className={inputClass}>
-                <option value="">—</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.code} — {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <QuickCreateSelect
+              name="category_id"
+              label="Categoría"
+              value={categoryId}
+              onChange={setCategoryId}
+              options={categories.map((c) => ({
+                id: c.id,
+                label: `${c.code} — ${c.name}`,
+              }))}
+              createLabel="Nueva categoría"
+              createTitle="Alta rápida de categoría de gasto"
+              onCreate={async (fd) => {
+                const r = await createExpenseCategoryAction(fd);
+                if (!r.ok || !r.id) {
+                  return { ok: false, error: r.error ?? "No se pudo crear" };
+                }
+                const code = String(fd.get("code") ?? "").trim().toUpperCase();
+                const name = String(fd.get("name") ?? "").trim();
+                const label = `${code} — ${name}`;
+                setCategories((prev) =>
+                  prev.some((c) => c.id === r.id)
+                    ? prev
+                    : [...prev, { id: r.id!, code, name }],
+                );
+                return { ok: true, id: r.id, label };
+              }}
+            >
+              <QuickCreateField name="code" label="Código" required placeholder="PERS" />
+              <QuickCreateField name="name" label="Nombre" required placeholder="Personal turno" />
+            </QuickCreateSelect>
             <label className="block text-sm">
               <span className="mb-1.5 block text-[var(--muted)]">Prioridad</span>
               <select name="priority" defaultValue="NORMAL" className={inputClass}>
@@ -442,12 +517,14 @@ export function CreateShiftLiquidationForm({
       )}
 
       {error ? (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>
+        <p className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-sm text-[var(--danger)]">
+          {error}
+        </p>
       ) : null}
       <button
         type="submit"
         disabled={pending || employees.length === 0 || selected.size === 0}
-        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-50"
+        className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-50"
       >
         {pending ? "Guardando…" : "Crear gasto y enviar a aval"}
       </button>
@@ -472,7 +549,9 @@ export function ExpenseList({
   return (
     <div className="space-y-3">
       {error ? (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>
+        <p className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-sm text-[var(--danger)]">
+          {error}
+        </p>
       ) : null}
       {expenses.map((e) => (
         <article

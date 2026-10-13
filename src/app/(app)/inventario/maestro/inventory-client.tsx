@@ -28,6 +28,10 @@ import {
   BULK_PRODUCT_HEADER_REQUIRED,
   buildBulkProductExample,
 } from "@/lib/inventory/bulk-paste";
+import {
+  QuickCreateField,
+  QuickCreateSelect,
+} from "@/components/ui/quick-create";
 
 function formatUnitCost(value: number | string) {
   const n = money(value).toDecimalPlaces(4).toNumber();
@@ -132,7 +136,7 @@ export function CreateCategoryForm() {
       <input name="description" placeholder="Descripción" className={inputClass} />
       {error ? <p className="text-sm text-red-700">{error}</p> : null}
       <div className="flex gap-2">
-        <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-3 py-2 text-sm text-white">
+        <button type="submit" disabled={pending} className="rounded-lg bg-[var(--solid)] px-3 py-2 text-sm text-[var(--on-solid)]">
           Guardar
         </button>
         <button type="button" className="text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
@@ -177,7 +181,7 @@ export function CreateUnitForm() {
       <input name="name" placeholder="Nombre (ej. Mililitro)" required className={inputClass} />
       {error ? <p className="text-sm text-red-700">{error}</p> : null}
       <div className="flex gap-2">
-        <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-3 py-2 text-sm text-white">
+        <button type="submit" disabled={pending} className="rounded-lg bg-[var(--solid)] px-3 py-2 text-sm text-[var(--on-solid)]">
           Guardar unidad
         </button>
         <button type="button" className="text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
@@ -226,7 +230,7 @@ function UnitRowItem({ unit }: { unit: UnitRow }) {
             <button
               type="submit"
               disabled={pending}
-              className="rounded-md bg-[var(--ink)] px-2.5 py-1 text-xs text-white disabled:opacity-60"
+              className="rounded-md bg-[var(--solid)] px-2.5 py-1 text-xs text-[var(--on-solid)] disabled:opacity-60"
             >
               Guardar
             </button>
@@ -301,7 +305,7 @@ export function CreateProductForm({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)]"
       >
         Nuevo producto
       </button>
@@ -330,7 +334,7 @@ export function CreateProductForm({
         El costo unitario se recalcula con promedio ponderado al recibir compras nuevas.
       </p>
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
-      <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white">
+      <button type="submit" disabled={pending} className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)]">
         {pending ? "Guardando…" : "Guardar producto"}
       </button>
     </form>
@@ -597,7 +601,7 @@ export function BulkImportProductsForm({
         <button
           type="submit"
           disabled={pending}
-          className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
+          className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
         >
           {pending ? "Importando…" : "Importar productos"}
         </button>
@@ -614,32 +618,54 @@ export function BulkImportProductsForm({
 }
 
 function ProductFields({
-  categories,
-  units,
+  categories: initialCategories,
+  units: initialUnits,
   product,
 }: {
   categories: CategoryRow[];
   units: UnitRow[];
   product?: ProductRow;
 }) {
+  const [categories, setCategories] = useState(initialCategories);
+  const [units, setUnits] = useState(initialUnits);
+  const [categoryId, setCategoryId] = useState(product?.category_id ?? "");
+  const [unitId, setUnitId] = useState(product?.unit_id ?? "");
+
   return (
     <div className="grid gap-3 md:grid-cols-2">
-      <label className="block text-sm md:col-span-2">
-        <span className="mb-1.5 block text-[var(--muted)]">Categoría *</span>
-        <select
-          name="category_id"
-          required
-          defaultValue={product?.category_id ?? ""}
-          className={inputClass}
-        >
-          <option value="">Seleccione…</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.code} — {c.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <QuickCreateSelect
+        className="md:col-span-2"
+        name="category_id"
+        label="Categoría"
+        required
+        value={categoryId}
+        onChange={setCategoryId}
+        options={categories.map((c) => ({
+          id: c.id,
+          label: `${c.code} — ${c.name}`,
+        }))}
+        placeholder="Seleccione…"
+        createLabel="Nueva categoría"
+        createTitle="Alta rápida de categoría"
+        onCreate={async (fd) => {
+          const r = await createProductCategoryAction(fd);
+          if (!r.ok || !r.id) {
+            return { ok: false, error: r.error ?? "No se pudo crear" };
+          }
+          const code = String(fd.get("code") ?? "").trim().toUpperCase();
+          const name = String(fd.get("name") ?? "").trim();
+          const label = `${code} — ${name}`;
+          setCategories((prev) =>
+            prev.some((c) => c.id === r.id)
+              ? prev
+              : [...prev, { id: r.id!, code, name, description: null }],
+          );
+          return { ok: true, id: r.id, label };
+        }}
+      >
+        <QuickCreateField name="code" label="Código" required placeholder="VERD" />
+        <QuickCreateField name="name" label="Nombre" required placeholder="Verduras" />
+      </QuickCreateSelect>
       <label className="block text-sm md:col-span-2">
         <span className="mb-1.5 block text-[var(--muted)]">Nombre *</span>
         <input
@@ -653,22 +679,38 @@ function ProductFields({
         <span className="mb-1.5 block text-[var(--muted)]">SKU</span>
         <input name="sku" defaultValue={product?.sku ?? ""} className={inputClass} />
       </label>
-      <label className="block text-sm">
-        <span className="mb-1.5 block text-[var(--muted)]">Unidad *</span>
-        <select
-          name="unit_id"
-          required
-          defaultValue={product?.unit_id ?? ""}
-          className={inputClass}
-        >
-          <option value="">Seleccione…</option>
-          {units.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.code} — {u.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <QuickCreateSelect
+        name="unit_id"
+        label="Unidad"
+        required
+        value={unitId}
+        onChange={setUnitId}
+        options={units.map((u) => ({
+          id: u.id,
+          label: `${u.code} — ${u.name}`,
+        }))}
+        placeholder="Seleccione…"
+        createLabel="Nueva unidad"
+        createTitle="Alta rápida de unidad"
+        onCreate={async (fd) => {
+          const r = await createProductUnitAction(fd);
+          if (!r.ok || !r.id) {
+            return { ok: false, error: r.error ?? "No se pudo crear" };
+          }
+          const code = String(fd.get("code") ?? "").trim().toUpperCase();
+          const name = String(fd.get("name") ?? "").trim();
+          const label = `${code} — ${name}`;
+          setUnits((prev) =>
+            prev.some((u) => u.id === r.id)
+              ? prev
+              : [...prev, { id: r.id!, code, name }],
+          );
+          return { ok: true, id: r.id, label };
+        }}
+      >
+        <QuickCreateField name="code" label="Código" required placeholder="KG" />
+        <QuickCreateField name="name" label="Nombre" required placeholder="Kilogramo" />
+      </QuickCreateSelect>
       <label className="block text-sm">
         <span className="mb-1.5 block text-[var(--muted)]">Stock actual</span>
         <input
@@ -875,7 +917,7 @@ function ProductCard({
           <button
             type="submit"
             disabled={pending}
-            className="rounded-lg bg-[var(--ink)] px-3 py-2 text-sm text-white disabled:opacity-60"
+            className="rounded-lg bg-[var(--solid)] px-3 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
           >
             {pending ? "Guardando…" : "Guardar"}
           </button>
@@ -908,7 +950,7 @@ function ProductCard({
           <button
             type="submit"
             disabled={pending}
-            className="rounded-lg bg-[var(--ink)] px-3 py-2 text-sm text-white disabled:opacity-60"
+            className="rounded-lg bg-[var(--solid)] px-3 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
           >
             {pending ? "Guardando…" : "Guardar"}
           </button>
@@ -935,7 +977,7 @@ function ProductCard({
           <button
             type="submit"
             disabled={pending}
-            className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
+            className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
           >
             {pending ? "Guardando…" : "Guardar cambios"}
           </button>
@@ -1040,7 +1082,7 @@ function CategoryGroup({
               <button
                 type="submit"
                 disabled={pending}
-                className="rounded-md bg-[var(--ink)] px-2.5 py-1 text-xs text-white disabled:opacity-60"
+                className="rounded-md bg-[var(--solid)] px-2.5 py-1 text-xs text-[var(--on-solid)] disabled:opacity-60"
               >
                 {pending ? "Guardando…" : "Guardar"}
               </button>
@@ -1308,7 +1350,7 @@ function IndexCostsPanel({
       <button
         type="button"
         disabled={pending || !pctValid || targetProducts.length === 0}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
         onClick={() => {
           setError(null);
           setMessage(null);

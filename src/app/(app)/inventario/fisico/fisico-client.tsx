@@ -46,7 +46,7 @@ export function CreatePhysicalCountForm() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-xl bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white"
+        className="rounded-xl bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)]"
       >
         Nuevo conteo
       </button>
@@ -114,7 +114,7 @@ export function CreatePhysicalCountForm() {
       <button
         type="submit"
         disabled={pending}
-        className="rounded-xl bg-[var(--ink)] px-5 py-2.5 text-sm text-white"
+        className="rounded-xl bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)]"
       >
         {pending ? "Creando…" : "Crear y contar"}
       </button>
@@ -207,7 +207,7 @@ export function PhysicalCountList({
                 className={cn(
                   "rounded-lg px-3 py-1.5 transition",
                   filter === value
-                    ? "bg-[var(--ink)] text-white"
+                    ? "bg-[var(--solid)] text-[var(--on-solid)]"
                     : "text-[var(--muted)] hover:text-[var(--ink)]",
                 )}
               >

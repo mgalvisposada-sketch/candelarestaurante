@@ -120,7 +120,7 @@ async function loadCashClose(
 
 export async function createBankAccountAction(
   formData: FormData,
-): Promise<ActionResult> {
+): Promise<ActionResult & { name?: string }> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) {
     return { ok: false, error: "Primero configura la empresa" };
@@ -129,6 +129,7 @@ export async function createBankAccountAction(
   const parsed = bankAccountSchema.safeParse({
     bank_name: formData.get("bank_name"),
     account_kind: formData.get("account_kind"),
+    fund_purpose: formData.get("fund_purpose") || "VENTAS",
     account_type: formData.get("account_type"),
     masked_number: formData.get("masked_number"),
     holder_name: formData.get("holder_name"),
@@ -149,6 +150,7 @@ export async function createBankAccountAction(
       organization_id: ctx.organization.id,
       bank_name: parsed.data.bank_name.trim(),
       account_kind: parsed.data.account_kind,
+      fund_purpose: parsed.data.fund_purpose,
       account_type: emptyToNull(parsed.data.account_type),
       masked_number: emptyToNull(parsed.data.masked_number),
       holder_name: emptyToNull(parsed.data.holder_name),
@@ -211,7 +213,22 @@ export async function createBankAccountAction(
   revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   revalidatePath("/inicio");
-  return { ok: true, id: data.id };
+  revalidatePath("/prestamos");
+  revalidatePath("/solicitudes-pago");
+  return { ok: true, id: data.id, name: parsed.data.bank_name.trim() };
+}
+
+/** Alta rápida desde formularios (préstamos, pagos): nombre + tipo. */
+export async function quickCreateBankAccountAction(
+  formData: FormData,
+): Promise<ActionResult & { name?: string }> {
+  if (!formData.get("fund_purpose")) {
+    formData.set("fund_purpose", "EMPRESA");
+  }
+  if (!formData.get("is_active")) {
+    formData.set("is_active", "true");
+  }
+  return createBankAccountAction(formData);
 }
 
 export async function updateBankAccountAction(
@@ -224,6 +241,7 @@ export async function updateBankAccountAction(
   const parsed = bankAccountSchema.safeParse({
     bank_name: formData.get("bank_name"),
     account_kind: formData.get("account_kind"),
+    fund_purpose: formData.get("fund_purpose") || "VENTAS",
     account_type: formData.get("account_type"),
     masked_number: formData.get("masked_number"),
     holder_name: formData.get("holder_name"),
@@ -238,11 +256,24 @@ export async function updateBankAccountAction(
   }
 
   const supabase = await createClient();
+  const { data: existingAcc } = await supabase
+    .from("bank_accounts")
+    .select("is_cash_float")
+    .eq("id", accountId)
+    .eq("organization_id", ctx.organization.id)
+    .maybeSingle();
+
+  /** La Base/flotante siempre es de ventas. */
+  const fundPurpose = existingAcc?.is_cash_float
+    ? "VENTAS"
+    : parsed.data.fund_purpose;
+
   const { error } = await supabase
     .from("bank_accounts")
     .update({
       bank_name: parsed.data.bank_name.trim(),
       account_kind: parsed.data.account_kind,
+      fund_purpose: fundPurpose,
       account_type: emptyToNull(parsed.data.account_type),
       masked_number: emptyToNull(parsed.data.masked_number),
       holder_name: emptyToNull(parsed.data.holder_name),
@@ -697,7 +728,7 @@ export async function upsertCashDailyCloseDraftAction(
 
   const { data: accounts, error: accError } = await supabase
     .from("bank_accounts")
-    .select("id, account_kind, is_active, is_cash_float")
+    .select("id, account_kind, is_active, is_cash_float, fund_purpose")
     .eq("organization_id", orgId)
     .is("deleted_at", null);
 

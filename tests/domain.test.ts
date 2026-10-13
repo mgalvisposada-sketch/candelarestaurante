@@ -4,7 +4,11 @@ import {
   addMoney,
   toMoneyString,
 } from "../src/lib/money";
-import { computeLoanKpis, computeFundingBag } from "../src/lib/loans";
+import {
+  computeLoanKpis,
+  computeFundingBag,
+  disbursementTreasuryStatus,
+} from "../src/lib/loans";
 import {
   canCloseHandover,
   parseHandoverBreakdownLines,
@@ -44,6 +48,27 @@ describe("loans", () => {
       paid: "50000000",
     });
     expect(bag.disponible.toFixed(2)).toBe("30000000.00");
+  });
+
+  it("marca si el desembolso ya ingresó a tesorería", () => {
+    expect(
+      disbursementTreasuryStatus({
+        bank_account_id: "a",
+        bank_transaction_id: "t",
+      }),
+    ).toBe("EN_TESORERIA");
+    expect(
+      disbursementTreasuryStatus({
+        bank_account_id: "a",
+        bank_transaction_id: null,
+      }),
+    ).toBe("PENDIENTE_INGRESO");
+    expect(
+      disbursementTreasuryStatus({
+        bank_account_id: null,
+        bank_transaction_id: null,
+      }),
+    ).toBe("SIN_CUENTA");
   });
 });
 
@@ -132,19 +157,20 @@ describe("treasury", () => {
       "../src/lib/treasury"
     );
     expect(sumOpeningBalances(["1000.50", "2000.25"])).toBe("3000.75");
-    expect(bankKindLabel("CAJA")).toBe("Caja (ventas)");
+    expect(bankKindLabel("CAJA")).toBe("Caja");
     expect(bankKindLabel("CAJA", { isCashFloat: true })).toBe("Base / flotante");
   });
 
-  it("resuelve destinos del cierre por tipo de cuenta", async () => {
+  it("resuelve destinos del cierre solo con cuentas de ventas", async () => {
     const { resolveCashCloseDestinations } = await import(
       "../src/lib/treasury"
     );
     const accounts = [
-      { id: "base-1", account_kind: "CAJA", is_active: true, is_cash_float: true },
-      { id: "caja-1", account_kind: "CAJA", is_active: true, is_cash_float: false },
-      { id: "banco-1", account_kind: "BANCO", is_active: true },
-      { id: "banco-2", account_kind: "BANCO", is_active: true },
+      { id: "base-1", account_kind: "CAJA", is_active: true, is_cash_float: true, fund_purpose: "VENTAS" },
+      { id: "caja-1", account_kind: "CAJA", is_active: true, is_cash_float: false, fund_purpose: "VENTAS" },
+      { id: "banco-1", account_kind: "BANCO", is_active: true, fund_purpose: "VENTAS" },
+      { id: "banco-2", account_kind: "BANCO", is_active: true, fund_purpose: "VENTAS" },
+      { id: "banco-prestamo", account_kind: "BANCO", is_active: true, fund_purpose: "EMPRESA" },
     ];
     const dest = resolveCashCloseDestinations(accounts);
     expect(dest.cashAccountId).toBe("caja-1");
@@ -157,6 +183,12 @@ describe("treasury", () => {
     });
     expect(split.cardAccountId).toBe("banco-1");
     expect(split.transferAccountId).toBe("banco-2");
+
+    const empresaOnly = resolveCashCloseDestinations(
+      accounts.filter((a) => a.fund_purpose === "EMPRESA"),
+    );
+    expect(empresaOnly.cashAccountId).toBeNull();
+    expect(empresaOnly.cardAccountId).toBeNull();
   });
 
   it("calcula saldo disponible con créditos y débitos posteriores al corte", async () => {
@@ -243,5 +275,87 @@ describe("treasury", () => {
     const payAmount = 150000;
     expect(available.lt(payAmount)).toBe(true);
     expect(available.toFixed(2)).toBe("110000.00");
+  });
+});
+
+describe("budget sales goal", () => {
+  it("aproxima meta de ventas y break-even con margen de contribución", async () => {
+    const {
+      computeSalesGoal,
+      contributionMarginFromVariableCost,
+    } = await import("../src/lib/budget");
+
+    expect(contributionMarginFromVariableCost(35).toFixed(2)).toBe("65.00");
+
+    const breakEven = computeSalesGoal({
+      fixedExpenses: "30000000",
+      contributionMarginPct: 65,
+    });
+    expect(breakEven.ok).toBe(true);
+    if (breakEven.ok) {
+      expect(breakEven.breakEven.toFixed(2)).toBe("46153846.15");
+      expect(breakEven.salesGoal.toFixed(2)).toBe("46153846.15");
+    }
+
+    const withProfit = computeSalesGoal({
+      fixedExpenses: "30000000",
+      contributionMarginPct: 65,
+      desiredProfit: "5000000",
+    });
+    expect(withProfit.ok).toBe(true);
+    if (withProfit.ok) {
+      expect(withProfit.salesGoal.toFixed(2)).toBe("53846153.85");
+      expect(withProfit.breakEven.toFixed(2)).toBe("46153846.15");
+    }
+  });
+
+  it("rechaza margen de contribución inválido", async () => {
+    const { computeSalesGoal } = await import("../src/lib/budget");
+    const zero = computeSalesGoal({
+      fixedExpenses: "1000000",
+      contributionMarginPct: 0,
+    });
+    expect(zero.ok).toBe(false);
+    if (!zero.ok) {
+      expect(zero.error).toMatch(/mayor a 0/);
+    }
+
+    const over = computeSalesGoal({
+      fixedExpenses: "1000000",
+      contributionMarginPct: 120,
+    });
+    expect(over.ok).toBe(false);
+  });
+
+  it("formatea períodos año / semestre / trimestre / mes", async () => {
+    const { formatBudgetPeriod } = await import("../src/lib/budget");
+    expect(
+      formatBudgetPeriod({
+        period_kind: "YEAR",
+        period_year: 2026,
+        period_month: null,
+      }),
+    ).toBe("Año 2026");
+    expect(
+      formatBudgetPeriod({
+        period_kind: "SEMESTER",
+        period_year: 2026,
+        period_month: 2,
+      }),
+    ).toBe("2.º semestre 2026");
+    expect(
+      formatBudgetPeriod({
+        period_kind: "QUARTER",
+        period_year: 2026,
+        period_month: 3,
+      }),
+    ).toBe("T3 2026");
+    expect(
+      formatBudgetPeriod({
+        period_kind: "MONTH",
+        period_year: 2026,
+        period_month: 10,
+      }),
+    ).toBe("Octubre 2026");
   });
 });

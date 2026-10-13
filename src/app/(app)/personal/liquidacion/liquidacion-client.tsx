@@ -99,7 +99,7 @@ export function CreatePeriodForm() {
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white"
+        className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)]"
       >
         {pending ? "Creando…" : "Crear quincena"}
       </button>
@@ -224,7 +224,7 @@ export function PeriodDetailClient({
           <button
             type="button"
             disabled={pending}
-            className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+            className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
             onClick={() => {
               setError(null);
               setOk(null);

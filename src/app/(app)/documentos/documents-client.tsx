@@ -53,7 +53,7 @@ export function UploadDocumentForm() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)]"
       >
         Subir documento
       </button>
@@ -110,7 +110,7 @@ export function UploadDocumentForm() {
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
       >
         {pending ? "Subiendo…" : "Subir"}
       </button>

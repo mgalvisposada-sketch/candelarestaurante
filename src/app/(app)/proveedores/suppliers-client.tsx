@@ -129,7 +129,7 @@ export function CreateCategoryMasterForm({
       <input name="description" placeholder="Descripción" className={inputClass} />
       {error ? <p className="text-sm text-red-700">{error}</p> : null}
       <div className="flex gap-2">
-        <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-3 py-2 text-sm text-white">
+        <button type="submit" disabled={pending} className="rounded-lg bg-[var(--solid)] px-3 py-2 text-sm text-[var(--on-solid)]">
           Guardar categoría
         </button>
         {!embedded ? (
@@ -225,7 +225,7 @@ export function CreateSupplierForm({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)]"
       >
         Agregar proveedor
       </button>
@@ -261,7 +261,7 @@ export function CreateSupplierForm({
       ) : null}
       <SupplierFields categories={categories} />
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
-      <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60">
+      <button type="submit" disabled={pending} className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-60">
         {pending ? "Guardando…" : "Guardar proveedor"}
       </button>
     </form>
@@ -717,7 +717,7 @@ export function SupplierMasterCard({
           <button
             type="submit"
             disabled={pending}
-            className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+            className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
           >
             Guardar
           </button>
@@ -876,7 +876,7 @@ function ApDocCard({
             }}
           >
             <ApDocFields suppliers={suppliers} doc={doc} />
-            <button type="submit" disabled={pending} className="rounded-md bg-[var(--ink)] px-3 py-1.5 text-xs text-white">Guardar documento</button>
+            <button type="submit" disabled={pending} className="rounded-md bg-[var(--solid)] px-3 py-1.5 text-xs text-[var(--on-solid)]">Guardar documento</button>
           </form>
           {error ? <p className="text-xs text-red-700">{error}</p> : null}
         </div>

@@ -88,7 +88,7 @@ export function CocinaSearch({ hits }: { hits: CocinaSearchHit[] }) {
   ];
 
   return (
-    <section className="rounded-2xl border border-[var(--line)] bg-white p-4 sm:p-5">
+    <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4 sm:p-5">
       <label className="block">
         <span className="mb-1.5 block text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
           Buscar en cocina
@@ -100,7 +100,7 @@ export function CocinaSearch({ hits }: { hits: CocinaSearchHit[] }) {
           placeholder="Materia prima, insumo, preparación, carta o batch…"
           autoComplete="off"
           enterKeyHint="search"
-          className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-base outline-none ring-[var(--accent)] focus:bg-white focus:ring-2 sm:text-sm"
+          className="w-full rounded-xl border border-[var(--line)] bg-[var(--bg)] px-4 py-3 text-base text-[var(--ink)] outline-none ring-[var(--accent)] placeholder:text-[var(--muted)] focus:bg-[var(--surface)] focus:ring-2 sm:text-sm"
         />
       </label>
       <p className="mt-2 text-xs text-[var(--muted)]">

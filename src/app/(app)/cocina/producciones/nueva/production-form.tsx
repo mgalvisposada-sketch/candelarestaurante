@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { completeInsumoProductionAction } from "../../kitchen-actions";
 
 const inputClass =
-  "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
+  "w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
 
 export type StockProduct = {
   id: string;
@@ -116,7 +116,7 @@ function InventoryProductPicker({
         className={cn(
           "flex min-w-[12rem] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-sm",
           ok
-            ? "border-[var(--line)] bg-white"
+            ? "border-[var(--line)] bg-[var(--surface)]"
             : "border-red-200 bg-red-50/50",
         )}
       >
@@ -185,7 +185,7 @@ function InventoryProductPicker({
         </p>
       ) : null}
       {open ? (
-        <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-[var(--line)] bg-white py-1 shadow-md">
+        <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-[var(--line)] bg-[var(--surface)] py-1 shadow-md">
           {filtered.length === 0 ? (
             <li className="px-3 py-2 text-sm text-[var(--muted)]">
               Sin coincidencias
@@ -407,7 +407,7 @@ export function InsumoProductionForm({
       }}
     >
       {/* Cabecera mínima */}
-      <section className="rounded-xl border border-[var(--line)] bg-white p-4">
+      <section className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
@@ -452,7 +452,7 @@ export function InsumoProductionForm({
       </section>
 
       {/* Consumo */}
-      <section className="space-y-3 rounded-xl border border-[var(--line)] bg-white p-4">
+      <section className="space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm font-medium">Usé de inventario</h3>
           {inputs.length < 3 ? (
@@ -561,7 +561,7 @@ export function InsumoProductionForm({
       </section>
 
       {/* Resultado útil */}
-      <section className="rounded-xl border border-[var(--line)] bg-white p-4">
+      <section className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
         <label className="space-y-1 text-sm">
           <span className="text-[var(--muted)]">
             Quedó usable ({outputProduct?.unit ?? "u"})
@@ -590,7 +590,7 @@ export function InsumoProductionForm({
       </section>
 
       {/* Aprovechamiento opcional */}
-      <section className="rounded-xl border border-[var(--line)] bg-white p-4">
+      <section className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
         {!showAprov && aprov.length === 0 ? (
           <button
             type="button"
@@ -733,7 +733,7 @@ export function InsumoProductionForm({
             !materiasPrimas.length ||
             !canSubmit
           }
-          className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
+          className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
         >
           {pending ? "Guardando…" : "Crear más"}
         </button>

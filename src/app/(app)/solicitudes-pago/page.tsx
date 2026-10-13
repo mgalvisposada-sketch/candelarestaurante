@@ -33,7 +33,7 @@ export default async function SolicitudesPagoPage() {
             <p className="font-medium">Primero configura la empresa</p>
             <Link
               href="/empresa"
-              className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+              className="mt-4 inline-flex rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
             >
               Ir a Empresa
             </Link>
@@ -73,7 +73,9 @@ export default async function SolicitudesPagoPage() {
         .order("name"),
       supabase
         .from("bank_accounts")
-        .select("id, bank_name, account_kind, masked_number, is_cash_float")
+        .select(
+          "id, bank_name, account_kind, masked_number, is_cash_float, fund_purpose",
+        )
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
         .eq("is_active", true)
@@ -198,6 +200,12 @@ export default async function SolicitudesPagoPage() {
             >
               Tesorería
             </Link>
+            <Link
+              href="/tesoreria/pagos"
+              className="rounded-lg border border-[var(--line)] px-4 py-2.5 text-sm font-medium hover:bg-neutral-50"
+            >
+              Historial de pagos
+            </Link>
           </div>
         </div>
 
@@ -215,7 +223,7 @@ export default async function SolicitudesPagoPage() {
           <StatCard
             label="Histórico"
             value={String(history.length)}
-            hint="Pagadas, rechazadas o anuladas"
+            hint="Cola local · auditoría en Tesorería → Pagos"
           />
         </div>
 

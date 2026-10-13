@@ -196,7 +196,7 @@ export function PedidoPorProveedorClient({
             <button
               type="button"
               onClick={() => window.print()}
-              className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+              className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
             >
               Imprimir / guardar PDF
             </button>

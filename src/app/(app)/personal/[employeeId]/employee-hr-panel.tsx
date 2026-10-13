@@ -214,7 +214,7 @@ export function EmployeeDocumentsSection({
         <button
           type="submit"
           disabled={pending}
-          className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white md:col-span-2"
+          className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)] md:col-span-2"
         >
           {pending ? "Subiendo…" : "Cargar documento"}
         </button>
@@ -543,7 +543,7 @@ export function EmployeeVacationsSection({
         <button
           type="submit"
           disabled={pending}
-          className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white md:col-span-2"
+          className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)] md:col-span-2"
         >
           Programar vacaciones
         </button>

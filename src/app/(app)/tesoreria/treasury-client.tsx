@@ -12,7 +12,11 @@ import {
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
-import { bankKindLabel, findCashFloatAccount } from "@/lib/treasury";
+import {
+  bankKindLabel,
+  findCashFloatAccount,
+  fundPurposeLabel,
+} from "@/lib/treasury";
 import type { VerificationStatus } from "@/types/domain";
 import { CollapsiblePanel } from "./treasury-panels";
 import { cn } from "@/lib/utils";
@@ -21,6 +25,7 @@ export type BankAccountRow = {
   id: string;
   bank_name: string;
   account_kind: "BANCO" | "CAJA" | "PASARELA" | "OTRO";
+  fund_purpose?: "VENTAS" | "EMPRESA" | null;
   account_type: string | null;
   masked_number: string | null;
   holder_name: string | null;
@@ -61,14 +66,16 @@ function movementLabel(tx: BankTransactionRow): string {
     return "Ingreso cierre caja (transferencia / QR)";
   if (tx.category === "TRASPASO") return "Traspaso entre cuentas";
   if (tx.category === "PAGO") return "Pago de solicitud";
+  if (tx.category === "PRESTAMO_SOCIO") return "Ingreso por préstamo de socio";
   if (tx.origin === "tesoreria.caja") return "Cierre de caja";
   if (tx.origin === "tesoreria.traspaso") return "Traspaso entre cuentas";
   if (tx.origin === "solicitudes-pago") return "Solicitud de pago";
+  if (tx.origin === "prestamos") return "Ingreso por préstamo de socio";
   return tx.category || tx.origin || "Movimiento";
 }
 
 const inputClass =
-  "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
+  "w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] outline-none ring-[var(--accent)] focus:ring-2";
 
 function verificationTone(status: VerificationStatus) {
   if (status === "CONFIRMADO") return "ok" as const;
@@ -122,18 +129,18 @@ export function CashFloatAndTransferPanel({
         }
       >
         <div className="mb-4 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+          <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
             <p className="text-xs text-[var(--muted)]">Meta</p>
             <p className="mt-1 font-medium">{formatCOP(target)}</p>
           </div>
-          <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+          <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
             <p className="text-xs text-[var(--muted)]">Saldo actual (cuenta Base)</p>
             <p className="mt-1 font-medium">{formatCOP(current)}</p>
           </div>
           <div
             className={cn(
               "rounded-lg px-3 py-2 text-sm",
-              short ? "bg-amber-50" : "bg-slate-50",
+              short ? "bg-[var(--gold-soft)]" : "bg-[var(--surface-muted)]",
             )}
           >
             <p className="text-xs text-[var(--muted)]">Para llegar a la meta</p>
@@ -219,7 +226,7 @@ function CashFloatTargetForm({ defaultValue }: { defaultValue: number }) {
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)] disabled:opacity-60"
       >
         {pending ? "Guardando…" : "Guardar meta"}
       </button>
@@ -251,7 +258,7 @@ function RegisterFloatOpeningForm({
 
   return (
     <form
-      className="rounded-xl border border-dashed border-[var(--line)] bg-slate-50/50 p-4"
+      className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface-muted)] p-4"
       action={(fd) => {
         setError(null);
         startTransition(async () => {
@@ -291,7 +298,7 @@ function RegisterFloatOpeningForm({
         <button
           type="submit"
           disabled={pending}
-          className="rounded-lg border border-[var(--line)] bg-white px-4 py-2.5 text-sm font-medium disabled:opacity-60"
+          className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-4 py-2.5 text-sm font-medium disabled:opacity-60"
         >
           {pending ? "Registrando…" : "Registrar saldo inicial"}
         </button>
@@ -444,7 +451,7 @@ export function CreateBankAccountForm({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)]"
       >
         Agregar cuenta
       </button>
@@ -525,7 +532,7 @@ export function CreateBankAccountForm({
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm font-medium text-[var(--on-solid)] disabled:opacity-60"
       >
         {pending ? "Guardando…" : "Guardar cuenta"}
       </button>
@@ -534,6 +541,7 @@ export function CreateBankAccountForm({
 }
 
 function BankAccountFields({ account }: { account?: BankAccountRow }) {
+  const isFloat = Boolean(account?.is_cash_float);
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <label className="block text-sm md:col-span-2">
@@ -545,6 +553,38 @@ function BankAccountFields({ account }: { account?: BankAccountRow }) {
           placeholder="Bancolombia, Caja general, Wompi…"
           className={inputClass}
         />
+      </label>
+      <label className="block text-sm md:col-span-2">
+        <span className="mb-1.5 block text-[var(--muted)]">
+          Uso de la cuenta *
+        </span>
+        {isFloat ? (
+          <>
+            <input type="hidden" name="fund_purpose" value="VENTAS" />
+            <p className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2 text-sm">
+              <strong>Ventas</strong> — la Base/flotante siempre es operativa
+              del local.
+            </p>
+          </>
+        ) : (
+          <select
+            name="fund_purpose"
+            required
+            defaultValue={account?.fund_purpose ?? "VENTAS"}
+            className={inputClass}
+          >
+            <option value="VENTAS">
+              Ventas — entra al cierre de caja (efectivo, datáfono, QR)
+            </option>
+            <option value="EMPRESA">
+              Empresa — préstamos, inyecciones y recursos ajenos a ventas
+            </option>
+          </select>
+        )}
+        <span className="mt-1.5 block text-xs text-[var(--muted)]">
+          Solo las de ventas reciben el aterrizaje del cierre. Las de empresa
+          manejan plata que no viene de la operación del día.
+        </span>
       </label>
       <label className="block text-sm">
         <span className="mb-1.5 block text-[var(--muted)]">Tipo *</span>
@@ -647,12 +687,12 @@ export function BankAccountCard({
     Number.isFinite(cashFloatAtLocal);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-white">
+    <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]">
       <button
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-slate-50/60"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-[var(--surface-muted)]"
       >
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -661,6 +701,15 @@ export function BankAccountCard({
             </h3>
             <Badge tone={account.is_active ? "ok" : "neutral"}>
               {account.is_active ? "Activa" : "Inactiva"}
+            </Badge>
+            <Badge
+              tone={
+                (account.fund_purpose ?? "VENTAS") === "EMPRESA"
+                  ? "neutral"
+                  : "info"
+              }
+            >
+              {fundPurposeLabel(account.fund_purpose)}
             </Badge>
             {snapshot ? (
               <Badge tone={verificationTone(snapshot.verification_status)}>
@@ -710,30 +759,30 @@ export function BankAccountCard({
                 : "grid gap-3 md:grid-cols-4"
             }
           >
-            <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+            <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
               <div className="text-xs text-[var(--muted)]">Disponible</div>
               <div className="mt-1 font-medium">{availableLabel}</div>
             </div>
             {showFloat ? (
-              <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm">
-                <div className="text-xs text-amber-900/70">Base en el local</div>
-                <div className="mt-1 font-medium text-amber-950">
+              <div className="rounded-lg bg-[var(--gold-soft)] px-3 py-2 text-sm">
+                <div className="text-xs text-[var(--warn)]">Base en el local</div>
+                <div className="mt-1 font-medium text-[var(--warn)]">
                   {formatCOP(cashFloatAtLocal)}
                 </div>
-                <div className="mt-0.5 text-[10px] text-amber-900/60">
+                <div className="mt-0.5 text-[10px] text-[var(--warn)]">
                   {cashFloatDate
                     ? `Cierre ${formatDateCO(cashFloatDate)}`
                     : "Oficial · se recompone con traspasos"}
                 </div>
               </div>
             ) : null}
-            <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+            <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
               <div className="text-xs text-[var(--muted)]">Saldo a corte</div>
               <div className="mt-1 font-medium">
                 {snapshot ? formatCOP(snapshot.opening_balance) : "—"}
               </div>
             </div>
-            <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+            <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
               <div className="text-xs text-[var(--muted)]">Fecha saldo inicial</div>
               <div className="mt-1 font-medium">
                 {snapshot
@@ -741,7 +790,7 @@ export function BankAccountCard({
                   : formatDateCO(defaultCutoff)}
               </div>
             </div>
-            <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+            <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
               <div className="text-xs text-[var(--muted)]">Fuente</div>
               <div className="mt-1 font-medium">{snapshot?.source || "—"}</div>
             </div>
@@ -812,14 +861,14 @@ export function BankAccountCard({
                 <button
                   type="submit"
                   disabled={pending}
-                  className="rounded-md bg-[var(--ink)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+                  className="rounded-md bg-[var(--solid)] px-3 py-1.5 text-xs font-medium text-[var(--on-solid)] disabled:opacity-60"
                 >
                   Guardar cuenta
                 </button>
               </form>
 
               <form
-                className="space-y-3 rounded-lg bg-slate-50 p-3"
+                className="space-y-3 rounded-lg bg-[var(--surface-muted)] p-3"
                 action={(fd) => {
                   setError(null);
                   setSaved(false);
@@ -948,7 +997,7 @@ export function AccountMovementsList({
   return (
     <div className="mt-4 overflow-x-auto rounded-lg border border-[var(--line)]">
       <table className="min-w-full text-left text-sm">
-        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-[var(--muted)]">
+        <thead className="bg-[var(--surface-muted)] text-xs uppercase tracking-wide text-[var(--muted)]">
           <tr>
             <th className="px-3 py-2 font-medium">Fecha</th>
             <th className="px-3 py-2 font-medium">Concepto</th>

@@ -59,6 +59,63 @@ function canCreateShiftLiquidation(
   );
 }
 
+/**
+ * Alta rápida de proveedor de gastos desde el formulario de Gastos
+ * (sin salir del flujo de captura).
+ */
+export async function quickCreateExpenseSupplierAction(
+  formData: FormData,
+): Promise<ActionResult & { name?: string }> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+
+  const can =
+    ctxCanAccess(ctx, "proveedores.crear") ||
+    ctxCanAccess(ctx, "proveedores") ||
+    ctxCanAccess(ctx, "gastos.registro") ||
+    ctxCanAccess(ctx, "gastos");
+  if (!can) {
+    return { ok: false, error: "Sin permiso para crear proveedor de gastos" };
+  }
+
+  const name = String(formData.get("name") ?? "").trim();
+  if (name.length < 2) {
+    return { ok: false, error: "El nombre del proveedor es obligatorio" };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("suppliers")
+    .insert({
+      organization_id: ctx.organization.id,
+      name,
+      tax_id: emptyToNull(String(formData.get("tax_id") ?? "")),
+      is_active: true,
+      is_purchase_supplier: false,
+      is_expense_supplier: true,
+      purchase_payment_terms: "PREPAGO",
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id, name")
+    .single();
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("accounts_payable").insert({
+    organization_id: ctx.organization.id,
+    supplier_id: data.id,
+    priority: "POR_VALIDAR",
+    created_by: ctx.userId,
+    updated_by: ctx.userId,
+  });
+
+  revalidateExpensePaths();
+  revalidatePath("/proveedores");
+  revalidatePath("/proveedores/maestro");
+  return { ok: true, id: data.id, name: data.name as string };
+}
+
 export async function createExpenseCategoryAction(
   formData: FormData,
 ): Promise<ActionResult> {

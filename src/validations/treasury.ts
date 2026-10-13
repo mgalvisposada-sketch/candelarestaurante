@@ -1,8 +1,11 @@
 import { z } from "zod";
 
+export const bankAccountFundPurposeSchema = z.enum(["VENTAS", "EMPRESA"]);
+
 export const bankAccountSchema = z.object({
   bank_name: z.string().min(2, "El nombre es obligatorio"),
   account_kind: z.enum(["BANCO", "CAJA", "PASARELA", "OTRO"]),
+  fund_purpose: bankAccountFundPurposeSchema.default("VENTAS"),
   account_type: z.string().optional().nullable(),
   masked_number: z.string().optional().nullable(),
   holder_name: z.string().optional().nullable(),

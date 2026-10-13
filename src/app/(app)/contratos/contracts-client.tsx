@@ -45,7 +45,7 @@ export function CreateContractForm({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)]"
       >
         Nuevo contrato
       </button>
@@ -118,7 +118,7 @@ export function CreateContractForm({
         </label>
       </div>
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
-      <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white">
+      <button type="submit" disabled={pending} className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)]">
         {pending ? "Guardando…" : "Guardar"}
       </button>
     </form>

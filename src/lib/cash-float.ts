@@ -23,6 +23,7 @@ export async function ensureCashFloatAccount(
       organization_id: orgId,
       bank_name: "Base / flotante",
       account_kind: "CAJA",
+      fund_purpose: "VENTAS",
       is_cash_float: true,
       is_active: true,
       notes:

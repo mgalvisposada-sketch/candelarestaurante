@@ -499,7 +499,7 @@ export function PhysicalReviewDetailClient({
             <button
               type="button"
               disabled={pending}
-              className="min-h-11 w-full rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-50"
+              className="min-h-11 w-full rounded-xl bg-[var(--solid)] px-4 text-sm font-medium text-[var(--on-solid)] disabled:opacity-50"
               onClick={() => {
                 if (
                   !confirm(
@@ -551,7 +551,7 @@ export function PhysicalReviewDetailClient({
                 className={cn(
                   "min-h-10 rounded-lg px-3 py-2 transition md:min-h-0 md:py-1.5",
                   view === value
-                    ? "bg-[var(--ink)] text-white"
+                    ? "bg-[var(--solid)] text-[var(--on-solid)]"
                     : "text-[var(--muted)] hover:text-[var(--ink)]",
                 )}
               >
@@ -707,7 +707,7 @@ export function PhysicalReviewDetailClient({
                             <button
                               type="button"
                               disabled={pending}
-                              className="ml-auto rounded-lg bg-[var(--ink)] px-3 py-1.5 font-medium text-white disabled:opacity-50"
+                              className="ml-auto rounded-lg bg-[var(--solid)] px-3 py-1.5 font-medium text-[var(--on-solid)] disabled:opacity-50"
                               onClick={() =>
                                 applyItems(
                                   group.items
@@ -890,7 +890,7 @@ export function PhysicalReviewDetailClient({
                                           ? "Guarde la corrección antes de aplicar"
                                           : undefined
                                       }
-                                      className="min-h-11 shrink-0 rounded-xl bg-[var(--ink)] px-3 text-sm font-medium text-white disabled:opacity-40"
+                                      className="min-h-11 shrink-0 rounded-xl bg-[var(--solid)] px-3 text-sm font-medium text-[var(--on-solid)] disabled:opacity-40"
                                       onClick={() =>
                                         applyItems(
                                           [item.id],
@@ -981,7 +981,7 @@ export function PhysicalReviewDetailClient({
                       <button
                         type="button"
                         disabled={pending}
-                        className="min-h-12 rounded-xl bg-[var(--ink)] px-4 text-sm font-medium text-white disabled:opacity-50 sm:w-auto"
+                        className="min-h-12 rounded-xl bg-[var(--solid)] px-4 text-sm font-medium text-[var(--on-solid)] disabled:opacity-50 sm:w-auto"
                         onClick={() => {
                           if (
                             !confirm(

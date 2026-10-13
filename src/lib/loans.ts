@@ -66,3 +66,18 @@ export function computeFundingBag(input: {
   const disponible = Decimal.max(aprobado.minus(comprometido), 0);
   return { aprobado, comprometido, pagado, disponible };
 }
+
+/** Estado del ingreso del préstamo en una cuenta puntual de tesorería. */
+export type DisbursementTreasuryStatus =
+  | "EN_TESORERIA"
+  | "SIN_CUENTA"
+  | "PENDIENTE_INGRESO";
+
+export function disbursementTreasuryStatus(d: {
+  bank_account_id: string | null | undefined;
+  bank_transaction_id: string | null | undefined;
+}): DisbursementTreasuryStatus {
+  if (d.bank_transaction_id) return "EN_TESORERIA";
+  if (!d.bank_account_id) return "SIN_CUENTA";
+  return "PENDIENTE_INGRESO";
+}

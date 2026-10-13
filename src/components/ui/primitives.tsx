@@ -126,7 +126,7 @@ export function Button({
 }) {
   const variants = {
     primary:
-      "bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-60",
+      "bg-[var(--accent)] text-[var(--on-solid)] hover:bg-[var(--accent-hover)] disabled:opacity-60",
     secondary:
       "border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--surface-muted)]",
     ghost: "text-[var(--ink)] hover:bg-[var(--sidebar-hover)]",

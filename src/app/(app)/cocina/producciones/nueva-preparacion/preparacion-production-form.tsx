@@ -11,7 +11,7 @@ import { formatCOP, money } from "@/lib/money";
 import { completePreparacionProductionAction } from "../../kitchen-actions";
 
 const inputClass =
-  "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
+  "w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
 
 export type PrepOption = {
   id: string;
@@ -207,7 +207,7 @@ export function PreparacionProductionForm({
         </p>
       </section>
 
-      <section className="grid gap-4 rounded-xl border border-[var(--line)] bg-white p-4 md:grid-cols-2">
+      <section className="grid gap-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 md:grid-cols-2">
         <label className="space-y-1 text-sm md:col-span-2">
           <span className="text-[var(--muted)]">
             Crear más de (preparación del catálogo)
@@ -366,7 +366,7 @@ export function PreparacionProductionForm({
       </section>
 
       {selected?.recipe ? (
-        <section className="rounded-xl border border-[var(--line)] bg-white p-4">
+        <section className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
           <h2 className="font-medium">Consumo de receta · {selected.recipe.name}</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
             ×{batchCount || 0} batch
@@ -467,7 +467,7 @@ export function PreparacionProductionForm({
         <button
           type="submit"
           disabled={pending || !withRecipe.length || !canSubmit}
-          className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
+          className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
         >
           {pending ? "Produciendo…" : "Crear más"}
         </button>

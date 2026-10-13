@@ -95,6 +95,12 @@ export const APP_MODULES: AppModuleDef[] = [
         description:
           "Gerencia/tesorería: contrastar vs POS y acreditar saldos.",
       },
+      {
+        key: "tesoreria.pagos",
+        label: "Historial de pagos",
+        description:
+          "Consulta y exportes para auditoría (socios, contador, externa).",
+      },
     ],
   },
   {
@@ -125,8 +131,8 @@ export const APP_MODULES: AppModuleDef[] = [
     href: "/prestamos",
     mvp: 1,
     submodules: [
-      { key: "prestamos.contratos", label: "Contratos de préstamo" },
-      { key: "prestamos.movimientos", label: "Desembolsos y pagos" },
+      { key: "prestamos.contratos", label: "Registrar préstamos" },
+      { key: "prestamos.movimientos", label: "Cargar en tesorería" },
     ],
   },
   {
@@ -441,6 +447,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "tesoreria.saldos",
     "tesoreria.caja",
     "tesoreria.caja.avalar",
+    "tesoreria.pagos",
     "proveedores",
     "proveedores.maestro",
     "proveedores.cxp",
@@ -469,6 +476,8 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "socios.cuentas",
     "capital",
     "capital.movimientos",
+    "tesoreria",
+    "tesoreria.pagos",
     "documentos",
     "documentos.archivo",
   ],
@@ -479,6 +488,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "tesoreria.cuentas",
     "tesoreria.saldos",
     "tesoreria.caja",
+    "tesoreria.pagos",
     "proveedores",
     "proveedores.maestro",
     "proveedores.cxp",

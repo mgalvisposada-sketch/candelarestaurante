@@ -225,7 +225,7 @@ export default async function InicioPage() {
             </p>
             <Link
               href="/empresa"
-              className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+              className="mt-4 inline-flex rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
             >
               Configurar empresa
             </Link>

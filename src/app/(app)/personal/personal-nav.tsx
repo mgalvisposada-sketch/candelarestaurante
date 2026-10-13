@@ -60,7 +60,7 @@ export function PersonalNav({
           className={cn(
             "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
             l.active(pathname)
-              ? "bg-[var(--ink)] text-white"
+              ? "bg-[var(--solid)] text-[var(--on-solid)]"
               : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]",
           )}
         >

@@ -30,7 +30,7 @@ function parsePct(raw: string): number | null {
 
 export async function createShareholderAction(
   formData: FormData,
-): Promise<ActionResult> {
+): Promise<ActionResult & { name?: string }> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Primero configura la empresa" };
 
@@ -107,7 +107,25 @@ export async function createShareholderAction(
   });
 
   revalidatePath("/socios");
-  return { ok: true, id: data.id };
+  revalidatePath("/prestamos");
+  return { ok: true, id: data.id, name: parsed.data.full_name.trim() };
+}
+
+/** Alta rápida de socio desde formularios (p. ej. préstamos). */
+export async function quickCreateShareholderAction(
+  formData: FormData,
+): Promise<ActionResult & { name?: string }> {
+  if (!formData.get("status")) formData.set("status", "ACTIVO");
+  if (!formData.get("verification_status")) {
+    formData.set("verification_status", "PENDIENTE");
+  }
+  if (!formData.get("registered_capital")) {
+    formData.set("registered_capital", "0");
+  }
+  if (!formData.get("opening_balance")) {
+    formData.set("opening_balance", "0");
+  }
+  return createShareholderAction(formData);
 }
 
 export async function updateShareholderAction(

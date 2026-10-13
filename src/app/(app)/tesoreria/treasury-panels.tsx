@@ -161,8 +161,8 @@ export function FormStep({
       className={cn(
         "overflow-hidden rounded-xl border",
         open
-          ? "border-[var(--ink)]/20 bg-white shadow-[0_1px_0_rgba(18,18,18,0.03)]"
-          : "border-[var(--line)] bg-slate-50/40",
+          ? "border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-soft)]"
+          : "border-[var(--line)] bg-[var(--surface-muted)]/40",
       )}
     >
       <button
@@ -175,17 +175,19 @@ export function FormStep({
           className={cn(
             "mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
             done
-              ? "bg-emerald-600 text-white"
+              ? "bg-[var(--ok)] text-[var(--on-solid)]"
               : open
-                ? "bg-[var(--ink)] text-white"
-                : "bg-white text-[var(--muted)] ring-1 ring-[var(--line)]",
+                ? "bg-[var(--solid)] text-[var(--on-solid)]"
+                : "bg-[var(--surface)] text-[var(--muted)] ring-1 ring-[var(--line)]",
           )}
         >
           {done && !open ? "✓" : step}
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-display text-base font-semibold">{title}</span>
+            <span className="font-display text-base font-semibold text-[var(--ink)]">
+              {title}
+            </span>
             <Chevron open={open} className="mt-0.5" />
           </div>
           {hint && open ? (

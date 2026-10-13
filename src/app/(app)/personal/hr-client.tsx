@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { createEmployeeAction, softDeleteEmployeeAction } from "./actions";
+import { upsertJobPositionAction } from "./payroll-ops-actions";
 import { Badge } from "@/components/ui/primitives";
+import {
+  QuickCreateField,
+  QuickCreateSelect,
+  QuickCreateSelectField,
+} from "@/components/ui/quick-create";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO } from "@/lib/dates";
 import { formatTimeHm, scheduleDiffSummary } from "@/lib/payroll";
@@ -55,7 +61,7 @@ export type JobPositionOption = {
 };
 
 export function CreateEmployeeForm({
-  positions = [],
+  positions: initialPositions = [],
   embedded = false,
 }: {
   positions?: JobPositionOption[];
@@ -64,6 +70,8 @@ export function CreateEmployeeForm({
   const [open, setOpen] = useState(embedded);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [positions, setPositions] = useState(initialPositions);
+  const [positionId, setPositionId] = useState("");
   const [arl, setArl] = useState("I");
   const [employmentType, setEmploymentType] = useState("INDEFINIDO");
   const byShift = employmentType === "POR_TURNO";
@@ -72,7 +80,7 @@ export function CreateEmployeeForm({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)]"
       >
         Nuevo empleado
       </button>
@@ -118,25 +126,55 @@ export function CreateEmployeeForm({
           <span className="mb-1.5 block text-[var(--muted)]">Documento</span>
           <input name="id_number" className={inputClass} />
         </label>
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Cargo Candela</span>
-          <select
-            name="position_id"
-            className={inputClass}
-            defaultValue=""
-            onChange={(e) => {
-              const pos = positions.find((p) => p.id === e.target.value);
-              if (pos) setArl(pos.arl_risk_level);
-            }}
+        <QuickCreateSelect
+          name="position_id"
+          label="Cargo Candela"
+          value={positionId}
+          onChange={(id) => {
+            setPositionId(id);
+            const pos = positions.find((p) => p.id === id);
+            if (pos) setArl(pos.arl_risk_level);
+          }}
+          options={positions.map((p) => ({
+            id: p.id,
+            label: `${p.name} (ARL ${p.arl_risk_level})`,
+          }))}
+          placeholder="Sin cargo maestro…"
+          createLabel="Nuevo cargo"
+          createTitle="Alta rápida de cargo Candela"
+          onCreate={async (fd) => {
+            const r = await upsertJobPositionAction(fd);
+            if (!r.ok || !r.id) {
+              return { ok: false, error: r.error ?? "No se pudo crear" };
+            }
+            const name = String(fd.get("name") ?? "").trim();
+            const arlLevel = String(fd.get("arl_risk_level") ?? "III");
+            setPositions((prev) =>
+              prev.some((p) => p.id === r.id)
+                ? prev
+                : [...prev, { id: r.id!, name, arl_risk_level: arlLevel }],
+            );
+            setArl(arlLevel);
+            return {
+              ok: true,
+              id: r.id,
+              label: `${name} (ARL ${arlLevel})`,
+            };
+          }}
+        >
+          <QuickCreateField name="name" label="Nombre del cargo" required />
+          <QuickCreateSelectField
+            name="arl_risk_level"
+            label="Nivel ARL"
+            defaultValue="III"
           >
-            <option value="">Sin cargo maestro…</option>
-            {positions.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} (ARL {p.arl_risk_level})
-              </option>
-            ))}
-          </select>
-        </label>
+            <option value="I">I</option>
+            <option value="II">II</option>
+            <option value="III">III</option>
+            <option value="IV">IV</option>
+            <option value="V">V</option>
+          </QuickCreateSelectField>
+        </QuickCreateSelect>
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">Cargo (texto)</span>
           <input name="position_title" className={inputClass} />
@@ -222,7 +260,7 @@ export function CreateEmployeeForm({
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white"
+        className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)]"
       >
         {pending ? "Guardando…" : "Guardar"}
       </button>
@@ -316,7 +354,7 @@ export function EmployeeCard({
       <div className="mt-4 flex flex-wrap gap-2">
         <Link
           href={`/personal/${employee.id}`}
-          className="rounded-lg bg-[var(--ink)] px-3 py-1.5 text-sm text-white"
+          className="rounded-lg bg-[var(--solid)] px-3 py-1.5 text-sm text-[var(--on-solid)]"
         >
           Abrir carpeta
         </Link>

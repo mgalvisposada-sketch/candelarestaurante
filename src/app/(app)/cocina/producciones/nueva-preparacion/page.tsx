@@ -106,7 +106,7 @@ export default async function NuevaProduccionPreparacionPage({
             <p className="font-medium">No hay preparaciones en el catálogo</p>
             <Link
               href="/cocina/preparaciones"
-              className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+              className="mt-4 inline-flex rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
             >
               Ir a preparaciones
             </Link>
@@ -119,7 +119,7 @@ export default async function NuevaProduccionPreparacionPage({
             </p>
             <Link
               href="/cocina/preparaciones"
-              className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+              className="mt-4 inline-flex rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
             >
               Ir a preparaciones
             </Link>
@@ -134,7 +134,7 @@ export default async function NuevaProduccionPreparacionPage({
             </p>
             <Link
               href="/cocina/preparaciones"
-              className="mt-4 inline-flex rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+              className="mt-4 inline-flex rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
             >
               Definir receta
             </Link>

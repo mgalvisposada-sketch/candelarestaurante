@@ -217,7 +217,7 @@ export function HorarioCandelaForm({ schedule }: { schedule: ScheduleRow | null 
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white"
+        className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)]"
       >
         {pending ? "Guardando…" : "Guardar horario"}
       </button>
@@ -411,7 +411,7 @@ export function ParametrosOrdinariosForm({
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white"
+        className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)]"
       >
         {pending ? "Guardando…" : "Guardar nueva vigencia"}
       </button>
@@ -544,7 +544,7 @@ export function CargosCandelaForm({
         <button
           type="submit"
           disabled={pending}
-          className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white"
+          className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)]"
         >
           {pending ? "Guardando…" : "Guardar cargo"}
         </button>

@@ -37,35 +37,40 @@ export const createInvoicePaymentRequestSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
-const moneyOptional = z
-  .string()
-  .optional()
-  .nullable()
-  .refine((v) => {
-    if (v === undefined || v === null || String(v).trim() === "") return true;
-    const n = Number(String(v).replace(/,/g, "").trim());
-    return !Number.isNaN(n) && n >= 0;
-  }, "Monto inválido");
+const moneyOptional = z.preprocess((v) => {
+  if (v === undefined || v === null) return "";
+  return String(v);
+}, z.string().refine((v) => {
+  if (v.trim() === "") return true;
+  const n = Number(v.replace(/,/g, "").trim());
+  return !Number.isNaN(n) && n >= 0;
+}, "Monto inválido"));
+
+/** FormData suele mandar null cuando el campo no existe. */
+const optionalAccountId = z.preprocess((v) => {
+  if (v === undefined || v === null) return "";
+  return String(v).trim();
+}, z.union([
+  z.literal(""),
+  z.string().uuid("Cuenta inválida"),
+]));
 
 export const payPaymentRequestSchema = z
   .object({
     payment_date: z.string().min(1, "Fecha obligatoria"),
-    /** Una sola cuenta (modo simple). */
-    bank_account_id: z
-      .string()
-      .uuid("Cuenta inválida")
-      .optional()
-      .or(z.literal("")),
+    bank_account_id: optionalAccountId,
     amount: moneyOptional,
     /** Segunda pata opcional (ej. Base + caja/banco). */
-    secondary_account_id: z
-      .string()
-      .uuid("Cuenta secundaria inválida")
-      .optional()
-      .or(z.literal("")),
+    secondary_account_id: optionalAccountId,
     secondary_amount: moneyOptional,
-    payment_reference: z.string().optional().nullable(),
-    notes: z.string().optional().nullable(),
+    payment_reference: z.preprocess(
+      (v) => (v === undefined || v === null ? "" : String(v)),
+      z.string(),
+    ),
+    notes: z.preprocess(
+      (v) => (v === undefined || v === null ? "" : String(v)),
+      z.string(),
+    ),
   })
   .superRefine((v, ctx) => {
     const primary = v.bank_account_id?.trim();

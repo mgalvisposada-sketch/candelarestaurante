@@ -237,7 +237,7 @@ export function NovedadesClient({
         <button
           type="submit"
           disabled={pending}
-          className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white"
+          className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)]"
         >
           {pending ? "Enviando…" : "Enviar a aprobación"}
         </button>
@@ -268,7 +268,7 @@ export function NovedadesClient({
               onClick={() => setFilter(s)}
               className={`rounded-lg px-3 py-1.5 text-sm ${
                 filter === s
-                  ? "bg-[var(--ink)] text-white"
+                  ? "bg-[var(--solid)] text-[var(--on-solid)]"
                   : "text-[var(--muted)]"
               }`}
             >

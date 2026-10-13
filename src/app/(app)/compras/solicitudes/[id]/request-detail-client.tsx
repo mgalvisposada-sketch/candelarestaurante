@@ -36,9 +36,18 @@ import {
   type PurchasePaymentTerms,
   type SupplierTermsMix,
 } from "@/lib/purchases/payment-terms";
-import { createProductFromRequestAction } from "../../inventory-actions";
+import {
+  createProductCategoryAction,
+  createProductFromRequestAction,
+} from "../../inventory-actions";
+import { quickCreatePurchaseSupplierAction } from "../../supplier-category-actions";
 import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
 import { Badge } from "@/components/ui/primitives";
+import {
+  QuickCreateField,
+  QuickCreateSelect,
+  QuickCreateSelectField,
+} from "@/components/ui/quick-create";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
 import { formatCOP } from "@/lib/money";
 import { suggestedPurchaseQty } from "@/lib/inventory/cost";
@@ -142,10 +151,10 @@ function suppliersForCategory(
 export function AddItemForm({
   requestId,
   products: initialProducts,
-  categories: allCategories,
+  categories: initialCategories,
   units,
-  suppliers,
-  links,
+  suppliers: initialSuppliers,
+  links: initialLinks,
   existingProductIds,
   canCreateProduct,
 }: {
@@ -166,11 +175,21 @@ export function AddItemForm({
   const [rowNotes, setRowNotes] = useState<Record<string, string>>({});
   const [defaultSupplierId, setDefaultSupplierId] = useState("");
   const [localProducts, setLocalProducts] = useState<ProductOption[]>([]);
+  const [extraCategories, setExtraCategories] = useState<CategoryOption[]>([]);
+  const [suppliers, setSuppliers] = useState(initialSuppliers);
+  const [links, setLinks] = useState(initialLinks);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  const allCategories = useMemo(() => {
+    const map = new Map<string, CategoryOption>();
+    for (const c of initialCategories) map.set(c.id, c);
+    for (const c of extraCategories) map.set(c.id, c);
+    return [...map.values()];
+  }, [initialCategories, extraCategories]);
 
   const products = useMemo(() => {
     const map = new Map<string, ProductOption>();
@@ -324,34 +343,46 @@ export function AddItemForm({
       </div>
 
       <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr]">
-        <label className="block text-sm">
-          <span className="mb-1 block text-[var(--muted)]">Categoría *</span>
-          <select
-            name="category_id"
-            value={categoryId}
-            onChange={(e) => {
-              const nextId = e.target.value;
-              setCategoryId(nextId);
-              setSelected(new Set());
-              setQuantities({});
-              setRowSuppliers({});
-              setRowNotes({});
-              setFilter("");
-              setSuccess(null);
-              setError(null);
-              setDefaultSupplierId("");
-            }}
-            className={inputClass}
-            required
-          >
-            <option value="">Seleccione categoría…</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.count})
-              </option>
-            ))}
-          </select>
-        </label>
+        <QuickCreateSelect
+          name="category_id"
+          label="Categoría"
+          required
+          value={categoryId}
+          onChange={(nextId) => {
+            setCategoryId(nextId);
+            setSelected(new Set());
+            setQuantities({});
+            setRowSuppliers({});
+            setRowNotes({});
+            setFilter("");
+            setSuccess(null);
+            setError(null);
+            setDefaultSupplierId("");
+          }}
+          options={categories.map((c) => ({
+            id: c.id,
+            label: `${c.name} (${c.count})`,
+          }))}
+          placeholder="Seleccione categoría…"
+          createLabel="Nueva categoría"
+          createTitle="Alta rápida de categoría de insumos"
+          onCreate={async (fd) => {
+            const r = await createProductCategoryAction(fd);
+            if (!r.ok || !r.id) {
+              return { ok: false, error: r.error ?? "No se pudo crear" };
+            }
+            const name = String(fd.get("name") ?? "").trim();
+            setExtraCategories((prev) =>
+              prev.some((c) => c.id === r.id)
+                ? prev
+                : [...prev, { id: r.id!, name }],
+            );
+            return { ok: true, id: r.id, label: `${name} (0)` };
+          }}
+        >
+          <QuickCreateField name="code" label="Código" required placeholder="VERD" />
+          <QuickCreateField name="name" label="Nombre" required placeholder="Verduras" />
+        </QuickCreateSelect>
         <label className="block text-sm">
           <span className="mb-1 block text-[var(--muted)]">Buscar producto</span>
           <input
@@ -362,48 +393,107 @@ export function AddItemForm({
             className={inputClass}
           />
         </label>
-        <label className="block text-sm">
-          <span className="mb-1 block text-[var(--muted)]">
-            Proveedor por defecto
-          </span>
-          <span className="mb-1 block text-xs text-[var(--muted)]">
-            En cada opción: Crédito o Prepago del proveedor.
-          </span>
-          <div className="flex gap-2">
-            <select
-              value={categoryDefaultSupplier}
-              disabled={!categoryId}
-              onChange={(e) => setDefaultSupplierId(e.target.value)}
-              className={inputClass}
+        <div className="space-y-2">
+          <QuickCreateSelect
+            name="default_supplier_id"
+            label="Proveedor por defecto"
+            value={categoryDefaultSupplier}
+            onChange={setDefaultSupplierId}
+            options={options.map((s) => ({
+              id: s.id,
+              label: formatSupplierSelectLabel(s.name, {
+                terms: s.purchase_payment_terms,
+                leadTimeDays: s.lead_time_days,
+              }),
+            }))}
+            placeholder="—"
+            createLabel="Nuevo proveedor"
+            createTitle="Alta rápida de proveedor para esta categoría"
+            hint={
+              !categoryId
+                ? "Elija categoría primero."
+                : "Crédito o Prepago del proveedor."
+            }
+            onCreate={async (fd) => {
+              if (!categoryId) {
+                return {
+                  ok: false,
+                  error: "Seleccione una categoría antes de crear el proveedor",
+                };
+              }
+              fd.set("category_id", categoryId);
+              const r = await quickCreatePurchaseSupplierAction(fd);
+              if (!r.ok || !r.id) {
+                return { ok: false, error: r.error ?? "No se pudo crear" };
+              }
+              const name = r.name ?? String(fd.get("name") ?? "Proveedor");
+              const terms = String(fd.get("purchase_payment_terms") ?? "PREPAGO");
+              setSuppliers((prev) =>
+                prev.some((s) => s.id === r.id)
+                  ? prev
+                  : [
+                      ...prev,
+                      {
+                        id: r.id!,
+                        name,
+                        lead_time_days: null,
+                        purchase_payment_terms: terms,
+                      },
+                    ],
+              );
+              setLinks((prev) =>
+                prev.some(
+                  (l) =>
+                    l.supplier_id === r.id && l.category_id === categoryId,
+                )
+                  ? prev
+                  : [
+                      ...prev,
+                      {
+                        supplier_id: r.id!,
+                        category_id: categoryId,
+                        lead_time_days: null,
+                      },
+                    ],
+              );
+              return {
+                ok: true,
+                id: r.id,
+                label: formatSupplierSelectLabel(name, {
+                  terms,
+                  leadTimeDays: null,
+                }),
+              };
+            }}
+          >
+            <QuickCreateField name="name" label="Nombre" required />
+            <QuickCreateField name="tax_id" label="NIT" placeholder="Opcional" />
+            <QuickCreateSelectField
+              name="purchase_payment_terms"
+              label="Términos"
+              defaultValue="PREPAGO"
             >
-              <option value="">—</option>
-              {options.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {formatSupplierSelectLabel(s.name, {
-                    terms: s.purchase_payment_terms,
-                    leadTimeDays: s.lead_time_days,
-                  })}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={!categoryId || !categoryDefaultSupplier || selected.size === 0}
-              className="shrink-0 rounded-lg border border-[var(--line)] px-2 text-xs disabled:opacity-50"
-              title="Aplicar a seleccionados"
-              onClick={() => {
-                if (!categoryDefaultSupplier) return;
-                setRowSuppliers((prev) => {
-                  const next = { ...prev };
-                  for (const id of selected) next[id] = categoryDefaultSupplier;
-                  return next;
-                });
-              }}
-            >
-              Aplicar
-            </button>
-          </div>
-        </label>
+              <option value="PREPAGO">Prepago</option>
+              <option value="CREDITO">Crédito</option>
+            </QuickCreateSelectField>
+          </QuickCreateSelect>
+          <button
+            type="button"
+            disabled={!categoryId || !categoryDefaultSupplier || selected.size === 0}
+            className="rounded-lg border border-[var(--line)] px-2 py-1 text-xs disabled:opacity-50"
+            title="Aplicar a seleccionados"
+            onClick={() => {
+              if (!categoryDefaultSupplier) return;
+              setRowSuppliers((prev) => {
+                const next = { ...prev };
+                for (const id of selected) next[id] = categoryDefaultSupplier;
+                return next;
+              });
+            }}
+          >
+            Aplicar a seleccionados
+          </button>
+        </div>
       </div>
 
       {!categoryId ? (
@@ -623,7 +713,7 @@ export function AddItemForm({
                     <button
                       type="button"
                       disabled={pending || units.length === 0}
-                      className="rounded-lg bg-[var(--ink)] px-3 py-2 text-sm text-white disabled:opacity-60"
+                      className="rounded-lg bg-[var(--solid)] px-3 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
                       onClick={() => {
                         const name = (
                           document.getElementById(
@@ -748,7 +838,7 @@ export function AddItemForm({
           selected.size === 0 ||
           missingSupplierCount > 0
         }
-        className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
       >
         {pending
           ? "Agregando…"
@@ -802,7 +892,7 @@ function RequestProcessSteps({ status }: { status: string }) {
             key={step.key}
             className={`rounded-lg px-3 py-1.5 text-xs ${
               current
-                ? "bg-[var(--ink)] text-white"
+                ? "bg-[var(--solid)] text-[var(--on-solid)]"
                 : done
                   ? "bg-emerald-50 text-emerald-900"
                   : "bg-neutral-50 text-[var(--muted)]"
@@ -913,7 +1003,7 @@ function SupplierOrdersPanel({
         </div>
         <Link
           href={pedidoHref}
-          className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white"
+          className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
         >
           Documento para imprimir / PDF
         </Link>
@@ -1950,7 +2040,7 @@ function SupplierInvoiceForm({
       <button
         type="submit"
         disabled={pending || invoiceTotal <= 0 || missingPrices}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
       >
         {pending
           ? "Enviando…"
@@ -2110,7 +2200,7 @@ function AddPendingToSupplierForm({
                 <button
                   type="button"
                   disabled={pending || units.length === 0}
-                  className="rounded-lg bg-[var(--ink)] px-3 py-1.5 text-sm text-white disabled:opacity-60"
+                  className="rounded-lg bg-[var(--solid)] px-3 py-1.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
                   onClick={() => {
                     const name = createName.trim();
                     if (!name) {
@@ -2231,7 +2321,7 @@ function AddPendingToSupplierForm({
           <button
             type="submit"
             disabled={pending || !productId}
-            className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
+            className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
           >
             {pending ? "Agregando…" : "Agregar al pedido"}
           </button>
@@ -2291,7 +2381,7 @@ function SupplierReceiveForm({
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
       >
         {pending ? "Guardando…" : `Guardar recepción · ${supplierName}`}
       </button>
@@ -2501,7 +2591,7 @@ function SupplierOperationsPanel({
     );
     const nextTone =
       nextStep.startsWith("Siguiente")
-        ? "bg-[var(--ink)] text-white"
+        ? "bg-[var(--solid)] text-[var(--on-solid)]"
         : nextStep === "Listo"
           ? "bg-emerald-100 text-emerald-900"
           : "bg-neutral-200 text-neutral-800";
@@ -2798,7 +2888,7 @@ function SuggestedImportPanel({
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
       >
         {pending ? "Agregando…" : "Agregar seleccionados"}
       </button>
@@ -3012,7 +3102,7 @@ export function RequestDetailClient({
           <button
             type="button"
             disabled={pending || items.length === 0}
-            className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
+            className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
             onClick={() =>
               startTransition(async () => {
                 setError(null);
@@ -3176,7 +3266,7 @@ export function RequestDetailClient({
             <button
               type="submit"
               disabled={pending || items.length === 0}
-              className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
+              className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
             >
               Autorizar compra
             </button>
@@ -3218,7 +3308,7 @@ export function RequestDetailClient({
             <button
               type="button"
               disabled={pending}
-              className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60"
+              className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
               onClick={() =>
                 startTransition(async () => {
                   setError(null);

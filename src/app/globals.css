@@ -19,6 +19,12 @@ html[data-theme="light"] {
   --warn: #9a6b00;
   --danger: #b91c1c;
   --info: #2a4a5c;
+  /* Rellenos sólidos (tabs activos, botones ink): siempre oscuro + texto claro */
+  --solid: #1c1917;
+  --on-solid: #ffffff;
+  --panel-warm: #faf8f5;
+  --panel-warm-mid: #f3efe8;
+  --panel-warm-deep: #efe8df;
   --sidebar: #faf8f5;
   --sidebar-text: #1c1917;
   --sidebar-muted: #7a746c;
@@ -49,6 +55,12 @@ html[data-theme="dark"] {
   --warn: #d4a017;
   --danger: #f07171;
   --info: #7eb0c7;
+  /* Mismo contraste que en claro: pastilla/botón oscuro + texto blanco */
+  --solid: #0f0e0c;
+  --on-solid: #ffffff;
+  --panel-warm: #2a2622;
+  --panel-warm-mid: #241f1c;
+  --panel-warm-deep: #1e1a17;
   --sidebar: #1c1916;
   --sidebar-text: #efebe4;
   --sidebar-muted: #9a948a;
@@ -90,40 +102,95 @@ body {
 }
 
 /*
- * Compatibilidad: muchos formularios usan bg-white / slate-50.
- * En oscuro los mapeamos a superficies del tema.
+ * Compatibilidad dark: fondos Tailwind “white/neutral” → superficies del tema.
+ * El texto del body ya usa --ink (claro en oscuro).
  */
 html[data-theme="dark"] .bg-white {
-  background-color: var(--surface);
+  background-color: var(--surface) !important;
+  color: var(--ink);
 }
 
+html[data-theme="dark"] .bg-white\/50,
 html[data-theme="dark"] .bg-white\/60,
+html[data-theme="dark"] .bg-white\/70,
 html[data-theme="dark"] .bg-white\/80,
+html[data-theme="dark"] .bg-white\/90,
 html[data-theme="dark"] .bg-white\/95 {
-  background-color: color-mix(in srgb, var(--surface) 92%, transparent);
+  background-color: color-mix(in srgb, var(--surface) 88%, transparent) !important;
+  color: var(--ink);
 }
 
 html[data-theme="dark"] .bg-slate-50,
 html[data-theme="dark"] .bg-neutral-50,
-html[data-theme="dark"] .bg-stone-50 {
-  background-color: var(--surface-muted);
+html[data-theme="dark"] .bg-stone-50,
+html[data-theme="dark"] .bg-amber-50,
+html[data-theme="dark"] .bg-neutral-50\/80,
+html[data-theme="dark"] .bg-neutral-50\/50,
+html[data-theme="dark"] .bg-slate-50\/80,
+html[data-theme="dark"] .bg-slate-50\/70,
+html[data-theme="dark"] .bg-slate-50\/60,
+html[data-theme="dark"] .bg-slate-50\/50,
+html[data-theme="dark"] .bg-amber-50\/70,
+html[data-theme="dark"] .bg-amber-50\/50,
+html[data-theme="dark"] .bg-red-50,
+html[data-theme="dark"] .bg-red-50\/40,
+html[data-theme="dark"] .bg-red-50\/50,
+html[data-theme="dark"] .bg-emerald-50 {
+  background-color: var(--surface-muted) !important;
+  color: var(--ink);
+}
+
+html[data-theme="dark"] .text-amber-800,
+html[data-theme="dark"] .text-amber-900,
+html[data-theme="dark"] .text-amber-950,
+html[data-theme="dark"] .text-red-700,
+html[data-theme="dark"] .text-red-800,
+html[data-theme="dark"] .text-red-900 {
+  color: var(--danger) !important;
+}
+
+html[data-theme="dark"] .text-emerald-700,
+html[data-theme="dark"] .text-emerald-800,
+html[data-theme="dark"] .text-emerald-900 {
+  color: var(--ok) !important;
 }
 
 html[data-theme="dark"] .text-neutral-700,
+html[data-theme="dark"] .text-neutral-800,
+html[data-theme="dark"] .text-neutral-900,
+html[data-theme="dark"] .text-slate-700,
 html[data-theme="dark"] .text-slate-800,
-html[data-theme="dark"] .text-emerald-900 {
-  color: var(--ink);
+html[data-theme="dark"] .text-slate-900,
+html[data-theme="dark"] .text-stone-700,
+html[data-theme="dark"] .text-stone-800,
+html[data-theme="dark"] .text-stone-900,
+html[data-theme="dark"] .text-black {
+  color: var(--ink) !important;
 }
 
 html[data-theme="dark"] .bg-neutral-100,
-html[data-theme="dark"] .bg-slate-100,
-html[data-theme="dark"] .bg-emerald-50 {
-  background-color: var(--surface-muted);
+html[data-theme="dark"] .bg-slate-100 {
+  background-color: var(--surface-muted) !important;
   color: var(--ink);
 }
 
-html[data-theme="dark"] .hover\:bg-neutral-50:hover {
-  background-color: var(--surface-muted);
+html[data-theme="dark"] .hover\:bg-neutral-50:hover,
+html[data-theme="dark"] .hover\:bg-slate-50:hover,
+html[data-theme="dark"] .hover\:bg-slate-50\/60:hover,
+html[data-theme="dark"] .hover\:bg-white:hover,
+html[data-theme="dark"] .focus\:bg-white:focus {
+  background-color: var(--surface-muted) !important;
+}
+
+/* Gradientes con blanco fijo (p. ej. cabeceras de formularios). */
+html[data-theme="dark"] [class*="linear-gradient"][class*="#fff"],
+html[data-theme="dark"] [class*="linear-gradient"][class*="white"] {
+  background-image: linear-gradient(
+    180deg,
+    var(--surface),
+    color-mix(in srgb, var(--accent) 10%, var(--surface))
+  ) !important;
+  color: var(--ink);
 }
 
 html[data-theme="dark"] .hover\:bg-black\/5:hover {
@@ -134,3 +201,13 @@ html[data-theme="dark"] .border-white\/10,
 html[data-theme="dark"] .border-white\/15 {
   border-color: var(--sidebar-border);
 }
+
+/*
+ * Red de seguridad: si algún botón aún usa --ink como fondo,
+ * en oscuro --ink es claro y text-white queda invisible.
+ */
+html[data-theme="dark"] [class*="bg-[var(--ink)]"] {
+  background-color: var(--solid) !important;
+  color: var(--on-solid) !important;
+}
+

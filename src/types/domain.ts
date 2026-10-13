@@ -56,7 +56,7 @@ export const NAV_ITEMS = [
     href: "/prestamos",
     label: "Préstamos",
     mvp: 1,
-    hint: "Contratos y movimientos",
+    hint: "Socios prestan a la empresa",
   },
   {
     href: "/capital",

@@ -76,7 +76,7 @@ export function CreateShareholderForm({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-white"
+        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)]"
       >
         Agregar socio
       </button>
@@ -142,7 +142,7 @@ export function CreateShareholderForm({
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+        className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm font-medium text-[var(--on-solid)] disabled:opacity-60"
       >
         {pending ? "Guardando…" : "Guardar socio"}
       </button>
@@ -410,7 +410,7 @@ export function ShareholderCard({
             <button
               type="submit"
               disabled={pending}
-              className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm text-white disabled:opacity-60"
+              className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
             >
               {pending ? "Guardando…" : "Guardar ahora"}
             </button>
@@ -528,7 +528,7 @@ export function ShareholderCard({
             <button
               type="submit"
               disabled={pending}
-              className="rounded-md bg-[var(--ink)] px-3 py-2 text-xs font-medium text-white md:col-span-2 disabled:opacity-60"
+              className="rounded-md bg-[var(--solid)] px-3 py-2 text-xs font-medium text-[var(--on-solid)] md:col-span-2 disabled:opacity-60"
             >
               Registrar movimiento
             </button>
