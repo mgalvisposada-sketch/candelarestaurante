@@ -145,38 +145,25 @@ export async function createNoveltyAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
   }
 
+  if (parsed.data.novelty_type === "TURNO_LABORADO") {
+    return {
+      ok: false,
+      error:
+        "Los días de prestadores por turno se liquidan en Gastos → liquidación por turno",
+    };
+  }
+
   const minutesRaw = emptyToNull(parsed.data.minutes);
   const minutes = minutesRaw != null ? Number(minutesRaw) : null;
-  let amount = parseMoney(parsed.data.amount);
+  const amount = parseMoney(parsed.data.amount);
   const moneyTypes = ["ANTICIPO", "DESCUENTO_AUTORIZADO", "BONO_OCASIONAL"];
-  const isShiftDay = parsed.data.novelty_type === "TURNO_LABORADO";
 
   const supabase = await createClient();
-
-  if (isShiftDay && amount == null) {
-    const { data: emp } = await supabase
-      .from("employees")
-      .select("basic_salary, salary_or_fee, employment_type")
-      .eq("id", parsed.data.employee_id)
-      .eq("organization_id", ctx.organization.id)
-      .is("deleted_at", null)
-      .maybeSingle();
-    const rate = Number(emp?.basic_salary ?? emp?.salary_or_fee ?? 0);
-    if (!rate || Number.isNaN(rate)) {
-      return {
-        ok: false,
-        error:
-          "Indique el valor del turno o configure la tarifa día/turno en el empleado",
-      };
-    }
-    amount = rate;
-  }
 
   if (moneyTypes.includes(parsed.data.novelty_type) && amount == null) {
     return { ok: false, error: "Indique el monto" };
   }
   if (
-    !isShiftDay &&
     !moneyTypes.includes(parsed.data.novelty_type) &&
     parsed.data.novelty_type !== "PERMISO_REMUNERADO" &&
     (minutes == null || !Number.isFinite(minutes) || minutes <= 0) &&
@@ -197,7 +184,7 @@ export async function createNoveltyAction(
       amount,
       start_time: emptyToNull(parsed.data.start_time),
       end_time: emptyToNull(parsed.data.end_time),
-      is_paid: parsed.data.novelty_type === "PERMISO_REMUNERADO" || isShiftDay,
+      is_paid: parsed.data.novelty_type === "PERMISO_REMUNERADO",
       notes: emptyToNull(parsed.data.notes),
       support_note: emptyToNull(parsed.data.support_note),
       reported_by: ctx.userId,
@@ -548,6 +535,10 @@ export async function calculatePayrollPeriodAction(
     novByEmp.set(n.employee_id, list);
   }
 
+  const payrollEmployees = (employees ?? []).filter(
+    (e) => !isShiftDayContractor(String(e.employment_type ?? "")),
+  );
+
   const result = liquidatePeriod({
     year: period.period_year,
     month: period.period_month,
@@ -555,7 +546,7 @@ export async function calculatePayrollPeriodAction(
     candelaSchedule: candela,
     legal: legalMapped,
     includeGoalBonuses: true,
-    employees: (employees ?? []).map((e) => ({
+    employees: payrollEmployees.map((e) => ({
       employeeId: e.id,
       fullName: e.full_name,
       positionTitle: e.position_title,

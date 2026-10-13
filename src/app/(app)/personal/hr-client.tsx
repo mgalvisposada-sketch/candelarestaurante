@@ -56,10 +56,12 @@ export type JobPositionOption = {
 
 export function CreateEmployeeForm({
   positions = [],
+  embedded = false,
 }: {
   positions?: JobPositionOption[];
+  embedded?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(embedded);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [arl, setArl] = useState("I");
@@ -78,26 +80,32 @@ export function CreateEmployeeForm({
   }
   return (
     <form
-      className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
+      className={
+        embedded
+          ? "space-y-4"
+          : "space-y-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
+      }
       action={(fd) => {
         setError(null);
         startTransition(async () => {
           const r = await createEmployeeAction(fd);
           if (!r.ok) setError(r.error ?? "Error");
-          else setOpen(false);
+          else if (!embedded) setOpen(false);
         });
       }}
     >
-      <div className="flex justify-between">
-        <h3 className="font-medium">Nuevo empleado</h3>
-        <button
-          type="button"
-          className="text-sm text-[var(--muted)]"
-          onClick={() => setOpen(false)}
-        >
-          Cancelar
-        </button>
-      </div>
+      {!embedded ? (
+        <div className="flex justify-between">
+          <h3 className="font-medium">Nuevo empleado</h3>
+          <button
+            type="button"
+            className="text-sm text-[var(--muted)]"
+            onClick={() => setOpen(false)}
+          >
+            Cancelar
+          </button>
+        </div>
+      ) : null}
       <p className="text-sm text-[var(--muted)]">
         Hereda el Horario Candela vigente. Puede personalizarlo en su carpeta.
       </p>

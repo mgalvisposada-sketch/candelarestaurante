@@ -25,7 +25,7 @@ Matriz resumida MVP 1:
 |---------|:-----------:|:-------:|:-----:|:--------:|:-------:|
 | Empresa | CRUD | RU | R* | R* | R* |
 | Socios | CRUD | CRUD | R | R* | R* |
-| Empalme | CRUD + cierre | CRUD + cierre | R | R* | R* |
+| Checklist inicial | CRUD + cierre | CRUD + cierre | R | R* | R* |
 | Bancos / saldos | CRUD | CRUD | R | R* | R* |
 | Proveedores / CxP | CRUD | CRUD | R | R* | R* |
 | Préstamos / capital | CRUD | CRUD | R | R* | R* |
@@ -84,7 +84,7 @@ Tabla `audit_logs` (append-only desde la app / triggers):
 - `old_values` / `new_values` (jsonb)
 - `created_at`
 
-Auditar como mínimo: creación, modificación, validación, anulación, cierre de empalme, pagos, préstamos, cambios de presupuesto.
+Auditar como mínimo: creación, modificación, validación, anulación, cierre de checklist inicial, pagos, préstamos, cambios de presupuesto.
 
 ## Soft delete
 
@@ -93,7 +93,7 @@ No eliminar físicamente:
 - gastos pagados
 - CxP / pagos
 - préstamos / desembolsos / pagos
-- snapshots de empalme
+- snapshots del checklist inicial
 - obligaciones pagadas
 - movimientos bancarios conciliados
 

@@ -79,7 +79,7 @@ export default async function NovedadesPage() {
         />
         <PageIntro
           title="Novedades"
-          description="Registro operativo del local (tardanzas, permisos, extras, anticipos). Los turnos de prestadores se marcan en el calendario quincenal y quedan aprobados de una vez; el resto de novedades requiere aprobación del gerente para entrar a la liquidación."
+          description="Registro operativo del local (tardanzas, permisos, extras, anticipos). Requiere aprobación del gerente para entrar a la liquidación de nómina. Los prestadores por turno se liquidan en Gastos → liquidación por turno (días + pago)."
         />
         <NovedadesClient
           novelties={novelties}

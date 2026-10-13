@@ -139,6 +139,7 @@ export async function createOrganizationAction(
 
   revalidatePath("/empresa");
   revalidatePath("/inicio");
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   revalidatePath("/personal");
   return { ok: true, id: org.id };
@@ -211,6 +212,7 @@ export async function updateOrganizationAction(
   });
 
   revalidatePath("/empresa");
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   return { ok: true, id: organizationId };
 }

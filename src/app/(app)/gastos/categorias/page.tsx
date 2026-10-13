@@ -1,5 +1,10 @@
 import { AppHeader } from "@/components/layout/app-header";
-import { Card, EmptyState, PageIntro } from "@/components/ui/primitives";
+import { Badge, Card, PageIntro } from "@/components/ui/primitives";
+import {
+  WorkEmptyHint,
+  WorkSection,
+  WorkStack,
+} from "@/components/ui/work-section";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { isSuperAdmin } from "@/types/domain";
@@ -99,25 +104,42 @@ export default async function GastosCategoriasPage() {
           permissions={ctx.permissions}
           isSuperAdmin={isSuperAdmin(ctx.role)}
         />
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <PageIntro
-            title="Categorías de gastos"
-            description="Clasificación exclusiva del módulo Gastos (arriendo, gas, seguridad…). No se combina con las categorías de inventario de Compras."
-          />
-          <CreateExpenseCategoryForm canCreate={canManage} />
-        </div>
+        <PageIntro
+          title="Categorías de gastos"
+          description="Clasificación exclusiva del módulo Gastos (arriendo, gas, seguridad…). No se combina con las categorías de inventario de Compras."
+        />
 
-        {categories.length === 0 ? (
-          <EmptyState
-            title="Sin categorías de gasto"
-            description="Cree el maestro para clasificar facturas operativas al registrarlas."
-          />
-        ) : (
-          <div className="space-y-3">
-            <h3 className="font-medium">Maestro ({categories.length})</h3>
-            <ExpenseCategoryList categories={categories} canEdit={canManage} />
-          </div>
-        )}
+        <WorkStack>
+          {canManage ? (
+            <WorkSection
+              kind="form"
+              title="Nueva categoría"
+              description="Solo para opex; no se mezcla con Compras."
+              defaultOpen={categories.length === 0}
+            >
+              <CreateExpenseCategoryForm canCreate={canManage} embedded />
+            </WorkSection>
+          ) : null}
+
+          <WorkSection
+            kind="list"
+            title="Maestro de categorías"
+            badge={<Badge tone="neutral">{categories.length}</Badge>}
+            defaultOpen
+          >
+            {categories.length === 0 ? (
+              <WorkEmptyHint
+                title="Sin categorías de gasto"
+                description="Cree el maestro para clasificar facturas operativas al registrarlas."
+              />
+            ) : (
+              <ExpenseCategoryList
+                categories={categories}
+                canEdit={canManage}
+              />
+            )}
+          </WorkSection>
+        </WorkStack>
       </main>
     </>
   );

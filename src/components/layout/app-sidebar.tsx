@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import {
   ArrowLeftRight,
+  Banknote,
   BarChart3,
   Building2,
   Calculator,
@@ -35,6 +36,7 @@ import {
   usePendingActions,
 } from "@/components/layout/pending-actions-inbox";
 import { SignOutButton } from "@/components/layout/sign-out-button";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { canAccessModuleHref, firstAllowedHref } from "@/lib/permissions-catalog";
 import {
   NAV_GROUPS,
@@ -70,9 +72,10 @@ const ENABLED_HREFS: Set<string> = new Set(
 
 const NAV_ICONS: Record<NavItem["href"], LucideIcon> = {
   "/inicio": LayoutDashboard,
-  "/empalme": ArrowLeftRight,
+  "/checklist-inicial": ArrowLeftRight,
   "/empresa": Building2,
   "/socios": Users,
+  "/cierre-caja": Banknote,
   "/tesoreria": Wallet,
   "/proveedores": Truck,
   "/prestamos": Landmark,
@@ -168,15 +171,15 @@ export function AppSidebar({
   const totalVisible = groups.reduce((acc, g) => acc + g.items.length, 0);
 
   return (
-    <aside className="flex h-dvh w-full flex-col bg-[var(--sidebar)] text-[var(--sidebar-text)] md:h-auto md:min-h-screen md:w-72 md:shrink-0">
-      <div className="border-b border-white/10 px-4 py-5">
+    <aside className="flex h-dvh w-full flex-col border-r border-[var(--sidebar-border)] bg-[var(--sidebar)] text-[var(--sidebar-text)] md:h-auto md:min-h-screen md:w-72 md:shrink-0">
+      <div className="border-b border-[var(--sidebar-border)] px-4 py-5">
         <Link
           href={homeHref}
           onClick={onNavigate}
           className="flex flex-col items-center gap-2.5 text-center"
         >
           <BrandLogo size="md" priority className="shrink-0 drop-shadow-sm" />
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--gold)]">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--accent)]">
             Admin
           </p>
         </Link>
@@ -191,13 +194,13 @@ export function AppSidebar({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Buscar módulo…"
-            className="w-full rounded-md border border-white/10 bg-white/5 py-2 pl-8 pr-8 text-sm text-white placeholder:text-[var(--sidebar-muted)] outline-none transition focus:border-[var(--accent)]/50 focus:bg-white/8"
+            className="w-full rounded-md border border-[var(--sidebar-border)] bg-[var(--sidebar-chip)] py-2 pl-8 pr-8 text-sm text-[var(--sidebar-text)] placeholder:text-[var(--sidebar-muted)] outline-none transition focus:border-[var(--accent)]/40 focus:bg-[var(--surface)]"
           />
           {query ? (
             <button
               type="button"
               onClick={() => setQuery("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[var(--sidebar-muted)] hover:text-white"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[var(--sidebar-muted)] hover:text-[var(--sidebar-text)]"
               aria-label="Limpiar búsqueda"
             >
               <X className="size-3.5" />
@@ -239,7 +242,7 @@ export function AppSidebar({
                             "group flex gap-2.5 rounded-md px-2.5 py-2 transition",
                             showHint ? "items-start" : "items-center",
                             active &&
-                              "bg-[var(--sidebar-active)] text-white shadow-[inset_3px_0_0_0_var(--accent)]",
+                              "bg-[var(--sidebar-active)] text-[var(--sidebar-text)] shadow-[inset_3px_0_0_0_var(--accent)]",
                             !active &&
                               allowed &&
                               "hover:bg-[var(--sidebar-hover)]",
@@ -258,8 +261,8 @@ export function AppSidebar({
                               "size-4 shrink-0",
                               showHint && "mt-0.5",
                               active
-                                ? "text-[var(--gold)]"
-                                : "text-[var(--sidebar-muted)] group-hover:text-white/80",
+                                ? "text-[var(--accent)]"
+                                : "text-[var(--sidebar-muted)] group-hover:text-[var(--sidebar-text)]",
                             )}
                             aria-hidden
                           />
@@ -272,7 +275,7 @@ export function AppSidebar({
                                 className={cn(
                                   "mt-0.5 block text-[11px] leading-snug",
                                   active
-                                    ? "text-white/65"
+                                    ? "text-[var(--muted)]"
                                     : "text-[var(--sidebar-muted)]",
                                 )}
                               >
@@ -294,16 +297,20 @@ export function AppSidebar({
         )}
       </nav>
 
-      <div className="space-y-3 border-t border-white/10 px-3 py-4">
+      <div className="space-y-3 border-t border-[var(--sidebar-border)] px-3 py-4">
         <PendingActionsBell
           items={pendingItems}
           counts={pendingCounts}
           loading={pendingLoading}
         />
+        <ThemeToggle />
         {(userEmail || role) && (
           <div className="px-1 text-xs text-[var(--sidebar-muted)]">
             {userEmail ? (
-              <p className="truncate text-sm text-white/90" title={userEmail}>
+              <p
+                className="truncate text-sm text-[var(--sidebar-text)]"
+                title={userEmail}
+              >
                 {userEmail}
               </p>
             ) : null}
@@ -316,7 +323,7 @@ export function AppSidebar({
           <SignOutButton />
         </div>
         <p className="px-1 text-[10px] text-[var(--sidebar-muted)]">
-          Administración financiera · COP
+          Operación · COP
         </p>
       </div>
     </aside>

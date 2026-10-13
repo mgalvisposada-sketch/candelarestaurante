@@ -62,10 +62,14 @@ function verificationTone(status: VerificationStatus) {
   return "danger" as const;
 }
 
-export function CreateShareholderForm() {
+export function CreateShareholderForm({
+  embedded = false,
+}: {
+  embedded?: boolean;
+}) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(embedded);
 
   if (!open) {
     return (
@@ -81,26 +85,32 @@ export function CreateShareholderForm() {
 
   return (
     <form
-      className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
+      className={
+        embedded
+          ? "space-y-4"
+          : "space-y-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
+      }
       action={(fd) => {
         setError(null);
         startTransition(async () => {
           const result = await createShareholderAction(fd);
           if (!result.ok) setError(result.error ?? "Error");
-          else setOpen(false);
+          else if (!embedded) setOpen(false);
         });
       }}
     >
-      <div className="flex items-center justify-between">
-        <h3 className="font-medium">Nuevo socio</h3>
-        <button
-          type="button"
-          className="text-sm text-[var(--muted)]"
-          onClick={() => setOpen(false)}
-        >
-          Cancelar
-        </button>
-      </div>
+      {!embedded ? (
+        <div className="flex items-center justify-between">
+          <h3 className="font-medium">Nuevo socio</h3>
+          <button
+            type="button"
+            className="text-sm text-[var(--muted)]"
+            onClick={() => setOpen(false)}
+          >
+            Cancelar
+          </button>
+        </div>
+      ) : null}
       <ShareholderFields />
       <div className="grid gap-4 border-t border-[var(--line)] pt-4 md:grid-cols-2">
         <label className="block text-sm md:col-span-2">

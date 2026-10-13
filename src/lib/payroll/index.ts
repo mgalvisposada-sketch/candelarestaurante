@@ -4,6 +4,8 @@ export * from "./rates";
 export * from "./mappers";
 export * from "./novelties";
 export * from "./vacations";
+export * from "./shift-settlement";
+export * from "./quincena";
 export { simulateBiweekly } from "./simulate-biweekly";
 export { liquidatePeriod } from "./liquidate-period";
 export type { LiquidateEmployeeInput, LiquidationLine } from "./liquidate-period";

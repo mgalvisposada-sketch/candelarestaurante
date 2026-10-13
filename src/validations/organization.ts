@@ -31,7 +31,7 @@ export const organizationSchema = z.object({
 export type OrganizationInput = z.infer<typeof organizationSchema>;
 
 export const handoverSessionSchema = z.object({
-  cutoff_date: z.string().min(1, "La fecha de corte es obligatoria"),
+  cutoff_date: z.string().min(1, "La fecha de inicio operativo es obligatoria"),
   delivered_by_name: z.string().optional().nullable(),
   received_by_name: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),

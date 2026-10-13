@@ -30,16 +30,16 @@ export const APP_MODULES: AppModuleDef[] = [
   },
   {
     key: "empalme",
-    label: "Empalme",
-    href: "/empalme",
+    label: "Checklist inicial",
+    href: "/checklist-inicial",
     mvp: 1,
     submodules: [
-      { key: "empalme.sesion", label: "Sesión de empalme" },
+      { key: "empalme.sesion", label: "Sesión de arranque" },
       { key: "empalme.items", label: "Ítems y verificación" },
       {
         key: "empalme.cerrar",
-        label: "Cerrar empalme",
-        description: "Permite congelar / cerrar la sesión de empalme",
+        label: "Cerrar checklist",
+        description: "Congela el checklist de arranque (opcional)",
       },
     ],
   },
@@ -63,6 +63,20 @@ export const APP_MODULES: AppModuleDef[] = [
     ],
   },
   {
+    key: "cierre-caja",
+    label: "Cierre de caja",
+    href: "/cierre-caja",
+    mvp: 1,
+    submodules: [
+      {
+        key: "cierre-caja.declarar",
+        label: "Declarar cierre del día",
+        description:
+          "Admin del local: ventas en efectivo, adquirencia y transferencia/QR.",
+      },
+    ],
+  },
+  {
     key: "tesoreria",
     label: "Tesorería",
     href: "/tesoreria",
@@ -72,20 +86,14 @@ export const APP_MODULES: AppModuleDef[] = [
       { key: "tesoreria.saldos", label: "Saldos iniciales" },
       {
         key: "tesoreria.caja",
-        label: "Cierre diario de caja",
-        description: "Ver cierres, liquidez viva y contrastes POS/banco.",
-      },
-      {
-        key: "tesoreria.caja.declarar",
-        label: "Declarar cierre de caja",
-        description:
-          "Admin del local: base, efectivo del día y adquirencia (datáfono).",
+        label: "Ver cierres / cola de aval",
+        description: "Historial de cierres y contraste desde tesorería.",
       },
       {
         key: "tesoreria.caja.avalar",
         label: "Avalar cierre de caja",
         description:
-          "Gerencia: contrastar vs POS/banco y acreditar saldos a tesorería.",
+          "Gerencia/tesorería: contrastar vs POS y acreditar saldos.",
       },
     ],
   },
@@ -140,6 +148,10 @@ export const APP_MODULES: AppModuleDef[] = [
       {
         key: "gastos.categorias",
         label: "Maestro de categorías de gastos (no Compras)",
+      },
+      {
+        key: "gastos.liquidacion-turno",
+        label: "Liquidación de prestadores por turno",
       },
     ],
   },
@@ -364,6 +376,13 @@ export const ALL_PERMISSION_KEYS: string[] = APP_MODULES.flatMap((m) => [
   ...m.submodules.map((s) => s.key),
 ]);
 
+const CHECKLIST_PERMISSION_KEYS = new Set([
+  "empalme",
+  "empalme.sesion",
+  "empalme.items",
+  "empalme.cerrar",
+]);
+
 const ALL_EXCEPT_CONFIG_ADMIN = ALL_PERMISSION_KEYS.filter(
   (k) =>
     k !== "configuracion" &&
@@ -371,12 +390,17 @@ const ALL_EXCEPT_CONFIG_ADMIN = ALL_PERMISSION_KEYS.filter(
     k !== "configuracion.permisos",
 );
 
+/** Operación diaria: sin checklist de arranque por defecto. */
+const ALL_EXCEPT_CONFIG_AND_CHECKLIST = ALL_EXCEPT_CONFIG_ADMIN.filter(
+  (k) => !CHECKLIST_PERMISSION_KEYS.has(k),
+);
+
 /** Defaults por rol cuando se crea un usuario (SUPER_ADMIN no necesita filas). */
 export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
   SUPER_ADMIN: [...ALL_PERMISSION_KEYS],
-  // Gestión: puede ajustar permisos de módulos; crear/editar usuarios sigue siendo SUPER_ADMIN.
+  // Gestión: puede ajustar permisos; checklist se otorga bajo demanda.
   GESTION: [
-    ...ALL_EXCEPT_CONFIG_ADMIN,
+    ...ALL_EXCEPT_CONFIG_AND_CHECKLIST,
     "configuracion",
     "configuracion.permisos",
   ],
@@ -402,9 +426,8 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "compras.solicitudes.pedir",
     "compras.solicitudes.recibir",
     "compras.solicitudes.recibir.extras",
-    "tesoreria",
-    "tesoreria.caja",
-    "tesoreria.caja.declarar",
+    "cierre-caja",
+    "cierre-caja.declarar",
   ],
   /**
    * Tesorería / compras (Juliana): factura, cola de pago, bancos y CxP.
@@ -417,6 +440,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "tesoreria.cuentas",
     "tesoreria.saldos",
     "tesoreria.caja",
+    "tesoreria.caja.avalar",
     "proveedores",
     "proveedores.maestro",
     "proveedores.cxp",
@@ -447,8 +471,6 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "capital.movimientos",
     "documentos",
     "documentos.archivo",
-    "empalme",
-    "empalme.sesion",
   ],
   CONTADOR: [
     "inicio",
@@ -502,6 +524,7 @@ const LEGACY_PERMISSION_TO_CURRENT: Record<string, string> = {
   "compras.inventario.minimo": "inventario.minimo",
   "compras.inventario-fisico": "inventario.fisico",
   "compras.inventario-fisico.ajustar": "inventario.fisico.ajustar",
+  "tesoreria.caja.declarar": "cierre-caja.declarar",
 };
 
 /**
@@ -519,6 +542,7 @@ export function normalizePermissionKeys(
   // Si hay submódulos de inventario, asegurar el módulo padre.
   for (const key of [...out]) {
     if (key.startsWith("inventario.")) out.add("inventario");
+    if (key.startsWith("cierre-caja.")) out.add("cierre-caja");
   }
   return [...out];
 }
@@ -526,6 +550,8 @@ export function normalizePermissionKeys(
 export function moduleKeyFromPath(pathname: string): string | null {
   const segment = pathname.split("/").filter(Boolean)[0];
   if (!segment) return null;
+  // Alias legacy: /empalme → checklist inicial
+  if (segment === "empalme") return "empalme";
   const mod = APP_MODULES.find((m) => m.href === `/${segment}`);
   return mod?.key ?? null;
 }
@@ -543,6 +569,9 @@ const PERMISSION_ALIASES: Record<string, readonly string[]> = {
   "compras.inventario.minimo": ["inventario.minimo"],
   "compras.inventario-fisico": ["inventario.fisico"],
   "compras.inventario-fisico.ajustar": ["inventario.fisico.ajustar"],
+  "cierre-caja.declarar": ["tesoreria.caja.declarar"],
+  "cierre-caja": ["tesoreria.caja.declarar", "cierre-caja.declarar"],
+  "tesoreria.caja.declarar": ["cierre-caja.declarar"],
 };
 
 export function hasPermission(

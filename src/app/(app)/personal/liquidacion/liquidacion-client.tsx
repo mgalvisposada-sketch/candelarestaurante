@@ -54,8 +54,9 @@ export function CreatePeriodForm() {
     >
       <h3 className="font-medium">Nueva liquidación quincenal</h3>
       <p className="text-sm text-[var(--muted)]">
-        Cree el periodo; luego calcule con empleados activos + novedades aprobadas
-        y emita el paquete a Contabilidad/RRHH, Tesorería y SST.
+        Cree el periodo; luego calcule con empleados de nómina activos + novedades
+        aprobadas y emita el paquete a Contabilidad/RRHH, Tesorería y SST. Los
+        prestadores por turno se pagan en Gastos → liquidación por turno.
       </p>
       <div className="grid gap-3 md:grid-cols-3">
         <label className="block text-sm">
@@ -283,7 +284,7 @@ export function PeriodDetailClient({
       <div className="space-y-2">
         {lines.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">
-            Sin líneas. Pulse Calcular para liquidar empleados activos.
+            Sin líneas. Pulse Calcular para liquidar empleados de nómina activos.
           </p>
         ) : (
           lines.map((l) => {

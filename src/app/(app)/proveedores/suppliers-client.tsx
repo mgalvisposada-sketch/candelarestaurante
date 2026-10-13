@@ -85,10 +85,12 @@ export type ProveedoresCaps = {
 
 export function CreateCategoryMasterForm({
   canManage = true,
+  embedded = false,
 }: {
   canManage?: boolean;
+  embedded?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(embedded);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   if (!canManage) return null;
@@ -105,13 +107,17 @@ export function CreateCategoryMasterForm({
   }
   return (
     <form
-      className="space-y-3 rounded-xl border border-[var(--line)] bg-white p-4"
+      className={
+        embedded
+          ? "space-y-3"
+          : "space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4"
+      }
       action={(fd) => {
         setError(null);
         startTransition(async () => {
           const r = await createProductCategoryAction(fd);
           if (!r.ok) setError(r.error ?? "Error");
-          else setOpen(false);
+          else if (!embedded) setOpen(false);
         });
       }}
     >
@@ -126,9 +132,15 @@ export function CreateCategoryMasterForm({
         <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-3 py-2 text-sm text-white">
           Guardar categoría
         </button>
-        <button type="button" className="text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
-          Cancelar
-        </button>
+        {!embedded ? (
+          <button
+            type="button"
+            className="text-sm text-[var(--muted)]"
+            onClick={() => setOpen(false)}
+          >
+            Cancelar
+          </button>
+        ) : null}
       </div>
     </form>
   );
@@ -198,11 +210,13 @@ export function CategoryMasterList({
 export function CreateSupplierForm({
   categories,
   canCreate = true,
+  embedded = false,
 }: {
   categories: ProductCategoryOption[];
   canCreate?: boolean;
+  embedded?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(embedded);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   if (!canCreate) return null;
@@ -219,22 +233,32 @@ export function CreateSupplierForm({
   }
   return (
     <form
-      className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
+      className={
+        embedded
+          ? "space-y-4"
+          : "space-y-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
+      }
       action={(fd) => {
         setError(null);
         startTransition(async () => {
           const r = await createSupplierAction(fd);
           if (!r.ok) setError(r.error ?? "Error");
-          else setOpen(false);
+          else if (!embedded) setOpen(false);
         });
       }}
     >
-      <div className="flex justify-between">
-        <h3 className="font-medium">Nuevo proveedor</h3>
-        <button type="button" className="text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
-          Cancelar
-        </button>
-      </div>
+      {!embedded ? (
+        <div className="flex justify-between">
+          <h3 className="font-medium">Nuevo proveedor</h3>
+          <button
+            type="button"
+            className="text-sm text-[var(--muted)]"
+            onClick={() => setOpen(false)}
+          >
+            Cancelar
+          </button>
+        </div>
+      ) : null}
       <SupplierFields categories={categories} />
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
       <button type="submit" disabled={pending} className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-60">

@@ -68,7 +68,7 @@
 ## Separación de capas
 
 1. **UI** — presentación, formularios, tablas, dashboards.
-2. **Application / Domain** — reglas de negocio (CxP, préstamos, empalme, presupuestos).
+2. **Application / Domain** — reglas de negocio (caja, tesorería, CxP, préstamos, checklist inicial, presupuestos).
 3. **Data access** — clientes Supabase tipados, queries, mutaciones.
 4. **Infrastructure** — Auth, Storage, PDF, import CSV/XLSX, CI.
 
@@ -80,15 +80,18 @@ La autorización se aplica en **tres capas**: RLS (DB), server (actions/routes),
 - Usuario ↔ organización vía `organization_users` + rol.
 - RLS: ningún usuario accede a datos de otra organización.
 
-## Empalme y snapshots
+## Checklist inicial y snapshots (opcional)
+
+Ruta UI `/checklist-inicial` (redirect legacy desde `/empalme`). No es el flujo diario.
 
 ```
-HandoverSession (fecha de corte, estado)
+HandoverSession (fecha de inicio operativo, estado)
     ├── HandoverItems (bancos, CxP, socios, … + verification_status)
     └── al cerrar → HandoverSnapshot (JSON inmutable + closed_by/at)
 ```
 
 Cambios posteriores al cierre = **ajustes**, no reescritura silenciosa del snapshot.
+La operación diaria (caja, pagos, compras) no depende de cerrar este checklist.
 
 ## Dinero y tiempo
 
@@ -113,18 +116,17 @@ src/integrations/filipo/
   README.md         # Contrato de integración futura
 ```
 
-Candela Admin **nunca** escribe datos operacionales de FILIPO. Solo consume agregados READ ONLY cuando exista la integración.
+Hoy Filipo = POS. Candela opera caja, costos y dinero. Cuando exista integración, Candela solo **lee** agregados de ventas.
 
-## Flujos críticos MVP 1
+## Flujos críticos (fase operativa)
 
-1. Login → selección/contexto de organización.
-2. Configurar Empresa + fecha de corte.
-3. Registrar Socios y participación.
-4. Registrar bancos/caja + saldos iniciales con evidencia.
-5. Alta proveedores → documentos CxP → (pagos opcionales).
-6. Registrar préstamos / desembolsos / uso del capital (mínimo viable).
-7. Completar ítems de empalme con estados de verificación.
-8. Ver Resumen de Empalme → cerrar → Snapshot + Acta PDF / Línea Base PDF.
+1. Login → contexto de organización.
+2. Configurar Empresa + fecha de inicio operativo.
+3. Registrar bancos/caja + saldos iniciales.
+4. Operar: cierre de caja → aval Tesorería → pagos / CxP / gastos.
+5. Compras, inventario y cocina según el local.
+6. Socios, préstamos y capital según gobierno.
+7. (Opcional) Checklist inicial → cierre/snapshot de arranque.
 
 ## Entornos
 
@@ -147,6 +149,6 @@ Candela Admin **nunca** escribe datos operacionales de FILIPO. Solo consume agre
 | App Router + Server Actions | Menos superficie API pública; mutaciones server-side |
 | RLS en todas las tablas sensibles | Defensa en profundidad multi-tenant |
 | Soft delete en registros financieros | Auditoría e histórico |
-| Snapshots de empalme | Inmutabilidad de la línea base |
+| Snapshots del checklist inicial | Inmutabilidad del arranque (opcional) |
 | Sin OCR bancario en MVP | Complejidad vs valor; CSV/XLSX basta |
 | Sin firma electrónica legal en acta | El acta es evidencia administrativa, no instrumento legal |

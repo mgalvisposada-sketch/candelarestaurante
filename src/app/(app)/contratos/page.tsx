@@ -1,5 +1,10 @@
 import { AppHeader } from "@/components/layout/app-header";
-import { Card, EmptyState, PageIntro, StatCard } from "@/components/ui/primitives";
+import { Badge, Card, PageIntro, StatCard } from "@/components/ui/primitives";
+import {
+  WorkEmptyHint,
+  WorkSection,
+  WorkStack,
+} from "@/components/ui/work-section";
 import { getOrgContext } from "@/lib/org-context";
 import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -57,25 +62,45 @@ export default async function ContratosPage() {
     <>
       <AppHeader title="Contratos" subtitle="Compromisos comerciales y vencimientos" />
       <main className="space-y-6 p-8">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <PageIntro
-            title="Contratos activos"
-            description="Seguimiento de contraprestes, costos y fechas de aviso. No reemplaza gestión legal completa."
-          />
-          <CreateContractForm />
-        </div>
+        <PageIntro
+          title="Contratos activos"
+          description="Seguimiento de contraprestes, costos y fechas de aviso. No reemplaza gestión legal completa."
+        />
         <div className="grid gap-4 md:grid-cols-2">
-          <StatCard label="Activos" value={String(contracts.filter((c) => c.status === "ACTIVO").length)} />
+          <StatCard
+            label="Activos"
+            value={String(contracts.filter((c) => c.status === "ACTIVO").length)}
+          />
           <StatCard label="Por vencer / aviso" value={String(upcoming)} />
         </div>
-        {contracts.length === 0 ? (
-          <EmptyState
-            title="Sin contratos"
-            description="Registre arrendamientos, servicios y otros compromisos con fechas de fin."
-          />
-        ) : (
-          <ContractList contracts={contracts} />
-        )}
+        <WorkStack>
+          <WorkSection
+            kind="form"
+            title="Nuevo contrato"
+            description="Contraparte, tipo, costos y fechas de aviso."
+            defaultOpen={contracts.length === 0}
+          >
+            <CreateContractForm embedded />
+          </WorkSection>
+          <WorkSection
+            kind="list"
+            title="Contratos registrados"
+            badge={<Badge tone="neutral">{contracts.length}</Badge>}
+            summary={
+              upcoming > 0 ? `${upcoming} por vencer / aviso` : undefined
+            }
+            defaultOpen
+          >
+            {contracts.length === 0 ? (
+              <WorkEmptyHint
+                title="Sin contratos"
+                description="Registre arrendamientos, servicios y otros compromisos con fechas de fin."
+              />
+            ) : (
+              <ContractList contracts={contracts} />
+            )}
+          </WorkSection>
+        </WorkStack>
       </main>
     </>
   );

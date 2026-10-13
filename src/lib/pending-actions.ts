@@ -273,7 +273,7 @@ export async function fetchPendingActions(
       id: `caja:${row.id}`,
       kind: "caja_avalar",
       title: "Avalar cierre de caja",
-      body: `${formatDateCO(row.business_date as string)} · Efectivo ${cash} · Datáfono ${card} · QR ${transfer}`,
+      body: `${formatDateCO(row.business_date as string)} · Efectivo ${cash} · Adquirencia ${card} · QR ${transfer}`,
       href: "/tesoreria#caja",
       createdAt:
         (row.submitted_at as string | null) ??

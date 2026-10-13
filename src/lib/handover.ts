@@ -27,7 +27,7 @@ export type HandoverItemMetadata = {
 };
 
 /**
- * Calcula % de calidad del empalme.
+ * Calcula % de calidad del checklist inicial.
  * El cierre NUNCA se bloquea por pendientes; solo se reportan métricas.
  */
 export function summarizeHandoverQuality(

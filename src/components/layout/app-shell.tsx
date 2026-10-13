@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
 import type { AppRole } from "@/types/domain";
 import { cn } from "@/lib/utils";
 
@@ -40,7 +41,7 @@ export function AppShell({
         type="button"
         aria-label="Cerrar menú"
         className={cn(
-          "fixed inset-0 z-40 bg-black/50 transition-opacity md:hidden print:hidden",
+          "fixed inset-0 z-40 bg-[var(--overlay)] transition-opacity md:hidden print:hidden",
           navOpen ? "opacity-100" : "pointer-events-none opacity-0",
         )}
         onClick={() => setNavOpen(false)}
@@ -68,13 +69,14 @@ export function AppShell({
             aria-label="Abrir menú"
             aria-expanded={navOpen}
             onClick={() => setNavOpen(true)}
-            className="inline-flex size-10 items-center justify-center rounded-xl border border-[var(--line)] bg-white text-[var(--ink)]"
+            className="inline-flex size-10 items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)]"
           >
             <Menu className="size-5" aria-hidden />
           </button>
-          <span className="truncate font-display text-sm font-semibold tracking-tight">
+          <span className="min-w-0 flex-1 truncate font-display text-sm font-semibold tracking-tight">
             Candela Admin
           </span>
+          <ThemeToggle variant="header" />
         </div>
         {children}
       </div>

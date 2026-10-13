@@ -5,7 +5,16 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess } from "@/lib/permissions";
 import { todayInBogota } from "@/lib/dates";
-import { expenseCategorySchema, expenseSchema } from "@/validations/expenses";
+import { money } from "@/lib/money";
+import {
+  biweeklyRange,
+  isShiftDayContractor,
+} from "@/lib/payroll";
+import {
+  expenseCategorySchema,
+  expenseSchema,
+  shiftLiquidationExpenseSchema,
+} from "@/validations/expenses";
 import type { ActionResult } from "../empresa/actions";
 
 function emptyToNull(value: string | null | undefined) {
@@ -37,6 +46,16 @@ function canManageExpenseCategories(
     ctxCanAccess(ctx, "gastos.categorias") ||
     ctxCanAccess(ctx, "gastos") ||
     ctxCanAccess(ctx, "gastos.registro")
+  );
+}
+
+/** Solo administración (permiso dedicado o liquidación de personal). */
+function canCreateShiftLiquidation(
+  ctx: NonNullable<Awaited<ReturnType<typeof getOrgContext>>>,
+) {
+  return (
+    ctxCanAccess(ctx, "gastos.liquidacion-turno") ||
+    ctxCanAccess(ctx, "personal.liquidacion")
   );
 }
 
@@ -194,6 +213,7 @@ export async function createExpenseAction(
       criticality: "ESENCIAL",
       status: "APROBADO",
       shared_service: false,
+      expense_kind: "OPERATIVO",
       created_by: ctx.userId,
       updated_by: ctx.userId,
     })
@@ -229,7 +249,11 @@ export async function createExpenseAction(
     action: "CREATE",
     entity: "expenses",
     entity_id: data.id,
-    new_values: { payment_request_source: "GASTO", total },
+    new_values: {
+      payment_request_source: "GASTO",
+      expense_kind: "OPERATIVO",
+      total,
+    },
   });
 
   revalidateExpensePaths();
@@ -296,4 +320,256 @@ export async function softDeleteExpenseAction(
 
   revalidateExpensePaths();
   return { ok: true, id: expenseId };
+}
+
+/** Solo administración: marca días del prestador, crea el gasto y lo envía a aval/pago. */
+export async function createShiftLiquidationExpenseAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!canCreateShiftLiquidation(ctx)) {
+    return {
+      ok: false,
+      error: "Sin permiso para liquidar prestadores por turno",
+    };
+  }
+
+  const parsed = shiftLiquidationExpenseSchema.safeParse({
+    employee_id: formData.get("employee_id"),
+    period_year: formData.get("period_year"),
+    period_month: formData.get("period_month"),
+    period_half: formData.get("period_half"),
+    dates: formData.getAll("dates").map(String),
+    expense_date: formData.get("expense_date") || todayInBogota(),
+    category_id: formData.get("category_id"),
+    priority: formData.get("priority") || "NORMAL",
+    notes: formData.get("notes"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const half = parsed.data.period_half as 1 | 2;
+  const range = biweeklyRange(
+    parsed.data.period_year,
+    parsed.data.period_month,
+    half,
+  );
+  const selectedDates = [...new Set(parsed.data.dates)].filter(
+    (d) => d >= range.startIso && d <= range.endIso,
+  );
+  if (selectedDates.length === 0) {
+    return { ok: false, error: "Marque al menos un día trabajado en la quincena" };
+  }
+
+  const orgId = ctx.organization.id;
+  const supabase = await createClient();
+
+  const { data: emp, error: empError } = await supabase
+    .from("employees")
+    .select("id, full_name, employment_type, basic_salary, salary_or_fee")
+    .eq("id", parsed.data.employee_id)
+    .eq("organization_id", orgId)
+    .eq("is_active", true)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (empError) return { ok: false, error: empError.message };
+  if (!emp) return { ok: false, error: "Empleado no encontrado" };
+  if (!isShiftDayContractor(String(emp.employment_type ?? ""))) {
+    return {
+      ok: false,
+      error: "Solo aplica a prestadores con contrato por turno",
+    };
+  }
+
+  const rate = Number(emp.basic_salary ?? emp.salary_or_fee ?? 0);
+  if (!rate || Number.isNaN(rate)) {
+    return {
+      ok: false,
+      error: "Configure la tarifa día/turno en el empleado",
+    };
+  }
+
+  const { data: moneyNovelties, error: moneyErr } = await supabase
+    .from("shift_novelties")
+    .select("novelty_type, amount")
+    .eq("organization_id", orgId)
+    .eq("employee_id", parsed.data.employee_id)
+    .eq("status", "APROBADA")
+    .is("deleted_at", null)
+    .in("novelty_type", ["ANTICIPO", "DESCUENTO_AUTORIZADO", "BONO_OCASIONAL"])
+    .gte("novelty_date", range.startIso)
+    .lte("novelty_date", range.endIso);
+  if (moneyErr) return { ok: false, error: moneyErr.message };
+
+  let advances = money(0);
+  let discounts = money(0);
+  let bonuses = money(0);
+  for (const n of moneyNovelties ?? []) {
+    const amt = money(Number(n.amount ?? 0));
+    if (n.novelty_type === "ANTICIPO") advances = advances.plus(amt);
+    else if (n.novelty_type === "DESCUENTO_AUTORIZADO") {
+      discounts = discounts.plus(amt);
+    } else if (n.novelty_type === "BONO_OCASIONAL") {
+      bonuses = bonuses.plus(amt);
+    }
+  }
+
+  const shiftPay = money(rate).times(selectedDates.length);
+  let netPay = shiftPay.plus(bonuses).minus(advances).minus(discounts);
+  if (netPay.lt(0)) netPay = money(0);
+  const net = netPay.toDecimalPlaces(2).toNumber();
+  if (net <= 0) {
+    return {
+      ok: false,
+      error: "El neto a pagar queda en $0 (revise anticipos/descuentos)",
+    };
+  }
+
+  const periodLabel = `${half === 1 ? "1ª" : "2ª"} quincena ${String(parsed.data.period_month).padStart(2, "0")}/${parsed.data.period_year}`;
+  const concept = `Liquidación por turno · ${emp.full_name} · ${periodLabel}`;
+  const detailNotes = [
+    `${selectedDates.length} día(s) × ${rate}`,
+    bonuses.gt(0) ? `bonos $${bonuses.toDecimalPlaces(2).toNumber()}` : null,
+    advances.gt(0)
+      ? `anticipos −$${advances.toDecimalPlaces(2).toNumber()}`
+      : null,
+    discounts.gt(0)
+      ? `descuentos −$${discounts.toDecimalPlaces(2).toNumber()}`
+      : null,
+    emptyToNull(parsed.data.notes),
+  ].filter(Boolean);
+  const notes = detailNotes.join(" · ");
+
+  const { data: existingShifts, error: existingErr } = await supabase
+    .from("shift_novelties")
+    .select("id, novelty_date, status")
+    .eq("organization_id", orgId)
+    .eq("employee_id", parsed.data.employee_id)
+    .eq("novelty_type", "TURNO_LABORADO")
+    .gte("novelty_date", range.startIso)
+    .lte("novelty_date", range.endIso)
+    .is("deleted_at", null)
+    .in("status", ["PENDIENTE", "APROBADA"]);
+  if (existingErr) return { ok: false, error: existingErr.message };
+
+  const activeByDate = new Map<string, string>();
+  for (const row of existingShifts ?? []) {
+    const date = String(row.novelty_date);
+    if (!activeByDate.has(date)) activeByDate.set(date, row.id as string);
+  }
+  const selectedSet = new Set(selectedDates);
+  const toCreate = selectedDates.filter((d) => !activeByDate.has(d));
+  const toAnnul = [...activeByDate.entries()]
+    .filter(([date]) => !selectedSet.has(date))
+    .map(([, id]) => id);
+
+  const now = new Date().toISOString();
+  if (toCreate.length > 0) {
+    const { error: insertShiftErr } = await supabase.from("shift_novelties").insert(
+      toCreate.map((novelty_date) => ({
+        organization_id: orgId,
+        employee_id: parsed.data.employee_id,
+        novelty_date,
+        novelty_type: "TURNO_LABORADO" as const,
+        status: "APROBADA" as const,
+        amount: rate,
+        is_paid: true,
+        notes: "Turno registrado en liquidación por gasto",
+        reported_by: ctx.userId,
+        reviewed_by: ctx.userId,
+        reviewed_at: now,
+        created_by: ctx.userId,
+        updated_by: ctx.userId,
+      })),
+    );
+    if (insertShiftErr) return { ok: false, error: insertShiftErr.message };
+  }
+  if (toAnnul.length > 0) {
+    const { error: annulErr } = await supabase
+      .from("shift_novelties")
+      .update({ status: "ANULADA", updated_by: ctx.userId })
+      .eq("organization_id", orgId)
+      .in("id", toAnnul);
+    if (annulErr) return { ok: false, error: annulErr.message };
+  }
+
+  const { data, error } = await supabase
+    .from("expenses")
+    .insert({
+      organization_id: orgId,
+      expense_date: parsed.data.expense_date,
+      supplier_id: null,
+      category_id: emptyToNull(parsed.data.category_id),
+      concept,
+      amount: net,
+      tax_amount: 0,
+      total_amount: net,
+      nature: "UNICO",
+      criticality: "ESENCIAL",
+      status: "APROBADO",
+      shared_service: false,
+      expense_kind: "LIQUIDACION_TURNO",
+      employee_id: parsed.data.employee_id,
+      period_year: parsed.data.period_year,
+      period_month: parsed.data.period_month,
+      period_half: parsed.data.period_half,
+      period: periodLabel,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      return {
+        ok: false,
+        error: "Ya existe una liquidación por turno para ese empleado y quincena",
+      };
+    }
+    return { ok: false, error: error.message };
+  }
+
+  const { error: payError } = await supabase.from("payment_requests").insert({
+    organization_id: orgId,
+    source: "GASTO",
+    status: "EN_REVISION",
+    priority: parsed.data.priority ?? "NORMAL",
+    concept,
+    amount: net,
+    requested_at: parsed.data.expense_date,
+    due_date: null,
+    supplier_id: null,
+    expense_id: data.id,
+    document_type: "CUENTA_DE_COBRO",
+    document_number: null,
+    issue_date: parsed.data.expense_date,
+    notes,
+    requested_by: ctx.userId,
+    created_by: ctx.userId,
+    updated_by: ctx.userId,
+  });
+  if (payError) return { ok: false, error: payError.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: orgId,
+    user_id: ctx.userId,
+    action: "CREATE",
+    entity: "expenses",
+    entity_id: data.id,
+    new_values: {
+      payment_request_source: "GASTO",
+      expense_kind: "LIQUIDACION_TURNO",
+      employee_id: parsed.data.employee_id,
+      dates: selectedDates,
+      total: net,
+    },
+  });
+
+  revalidateExpensePaths();
+  revalidatePath("/personal/novedades");
+  return { ok: true, id: data.id };
 }

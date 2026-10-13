@@ -7,12 +7,13 @@ export function sumOpeningBalances(balances: MoneyInput[]): string {
     .toFixed(2);
 }
 
-export function bankKindLabel(kind: string): string {
+export function bankKindLabel(kind: string, opts?: { isCashFloat?: boolean }) {
+  if (opts?.isCashFloat) return "Base / flotante";
   switch (kind) {
     case "BANCO":
       return "Banco";
     case "CAJA":
-      return "Caja";
+      return "Caja (ventas)";
     case "PASARELA":
       return "Pasarela";
     case "OTRO":
@@ -22,36 +23,71 @@ export function bankKindLabel(kind: string): string {
   }
 }
 
+export function findCashFloatAccount<
+  T extends { is_cash_float?: boolean | null; is_active?: boolean },
+>(accounts: T[]): T | null {
+  return (
+    accounts.find((a) => a.is_cash_float && a.is_active !== false) ??
+    accounts.find((a) => a.is_cash_float) ??
+    null
+  );
+}
+
 type AccountForClose = {
   id: string;
   account_kind: string;
   is_active: boolean;
+  is_cash_float?: boolean | null;
 };
 
 /**
- * Destinos automáticos del cierre:
- * - efectivo → primera cuenta CAJA activa
- * - datáfono → primera BANCO (o PASARELA) activa
- * - transferencia/QR → misma cuenta del datáfono (cae al banco)
+ * Destinos del cierre:
+ * - efectivo (ventas) → cuenta CAJA que NO es la base/flotante
+ * - adquirencia (débito+crédito) → banco/pasarela donde liquida el datáfono
+ * - transferencia/QR → banco donde caen esos abonos (puede ser otro)
  */
-export function resolveCashCloseDestinations(accounts: AccountForClose[]): {
+export function resolveCashCloseDestinations(
+  accounts: AccountForClose[],
+  overrides?: {
+    cardAccountId?: string | null;
+    transferAccountId?: string | null;
+  },
+): {
   cashAccountId: string | null;
   cardAccountId: string | null;
   transferAccountId: string | null;
 } {
   const active = accounts.filter((a) => a.is_active);
   const cash =
+    active.find((a) => a.account_kind === "CAJA" && !a.is_cash_float) ??
     active.find((a) => a.account_kind === "CAJA") ??
-    active.find((a) => a.account_kind === "OTRO") ??
+    active.find((a) => a.account_kind === "OTRO" && !a.is_cash_float) ??
     null;
-  const bank =
-    active.find((a) => a.account_kind === "BANCO") ??
-    active.find((a) => a.account_kind === "PASARELA") ??
-    active.find((a) => a.account_kind === "OTRO") ??
-    null;
+  const banks = active.filter(
+    (a) =>
+      !a.is_cash_float &&
+      (a.account_kind === "BANCO" ||
+        a.account_kind === "PASARELA" ||
+        a.account_kind === "OTRO"),
+  );
+  const defaultBank = banks[0] ?? null;
+
+  const pickBank = (id: string | null | undefined) => {
+    if (!id) return null;
+    return banks.find((a) => a.id === id) ?? null;
+  };
+
+  const card =
+    pickBank(overrides?.cardAccountId) ??
+    defaultBank;
+  const transfer =
+    pickBank(overrides?.transferAccountId) ??
+    card ??
+    defaultBank;
+
   return {
     cashAccountId: cash?.id ?? null,
-    cardAccountId: bank?.id ?? null,
-    transferAccountId: bank?.id ?? null,
+    cardAccountId: card?.id ?? null,
+    transferAccountId: transfer?.id ?? null,
   };
 }

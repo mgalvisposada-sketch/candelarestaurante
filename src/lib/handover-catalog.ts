@@ -1,5 +1,5 @@
 /**
- * Catálogo de empalme — Candela (fast food mexicano + tragos, una sede).
+ * Catálogo del checklist inicial — Candela (fast food mexicano + tragos, una sede).
  *
  * Contexto de diseño:
  * - Emilio (socio ~20%) entrega la administración pero sigue como socio/chef.
@@ -389,7 +389,7 @@ export const DEFAULT_HANDOVER_ITEMS: Array<{
     domain: "tesoreria",
     item_key: "bancos",
     label: "Bancos",
-    ask: "¿En qué bancos hay plata y cuánto en cada uno a la fecha de corte?",
+    ask: "¿En qué bancos hay plata y cuánto en cada uno a la fecha de inicio operativo?",
     answerMode: "list",
     expect: "Un renglón por cuenta. Ideal con extracto o captura.",
     answerHint:
@@ -993,7 +993,7 @@ export function sanitizeItemComments(
     "Saldos de Bold, PayU, u otros medios de pago.",
     "Puede ser la suma de bancos + caja + pasarelas.",
     "Usa el desglose: un renglón por tercero.",
-    "Suma de cuentas bancarias a la fecha de corte",
+    "Suma de cuentas bancarias a la fecha de inicio operativo",
     "Puede coincidir con la suma de bancos + caja + pasarelas",
     "Puede dejarse en 0 si solo se declara estado; detalle en módulo Socios",
     "Use comentarios para listar RUT, Cámara, estatutos, etc.",

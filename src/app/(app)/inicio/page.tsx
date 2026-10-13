@@ -5,7 +5,6 @@ import { formatDateCO } from "@/lib/dates";
 import { getOrgContext } from "@/lib/org-context";
 import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
-import { summarizeHandoverQuality } from "@/lib/handover";
 import {
   sumAvailableBalances,
   type BalanceSnapshotInput,
@@ -15,53 +14,36 @@ import { computeLoanKpis, computeFundingBag } from "@/lib/loans";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 
+const OPS_LINKS = [
+  { href: "/cierre-caja", label: "Cierre de caja", hint: "Ventas del día" },
+  { href: "/tesoreria", label: "Tesorería", hint: "Bancos, base y avales" },
+  { href: "/compras", label: "Compras", hint: "Pedidos e insumos" },
+  { href: "/gastos", label: "Gastos", hint: "Facturas operativas" },
+  {
+    href: "/solicitudes-pago",
+    label: "Solicitudes de pago",
+    hint: "Aprobar y pagar",
+  },
+  { href: "/personal", label: "Personal", hint: "Novedades y liquidación" },
+  { href: "/inventario", label: "Inventario", hint: "Maestro y físico" },
+  { href: "/proveedores", label: "Proveedores & CxP", hint: "Cuentas por pagar" },
+] as const;
+
 export default async function InicioPage() {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
   requireModuleAccess(ctx, "inicio");
 
-  let quality = {
-    pctConfirmed: 0,
-    pctDeclared: 0,
-    pctPending: 0,
-  };
-  let handoverStatus: string | null = null;
   let liquidity = "0.00";
   let cxpTotal = money(0);
   let loanDebt = money(0);
   let capitalAvailable = money(0);
   let monthlyExpense = money(0);
+  let openCashCloses = 0;
 
   if (ctx.organization) {
     const supabase = await createClient();
     const orgId = ctx.organization.id;
-
-    const { data: session } = await supabase
-      .from("handover_sessions")
-      .select("id, status")
-      .eq("organization_id", orgId)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (session) {
-      handoverStatus = session.status;
-      const { data: items } = await supabase
-        .from("handover_items")
-        .select("verification_status")
-        .eq("handover_session_id", session.id)
-        .is("deleted_at", null);
-      quality = summarizeHandoverQuality(
-        (items ?? []).map((i) => ({
-          status: i.verification_status as
-            | "CONFIRMADO"
-            | "DECLARADO"
-            | "PENDIENTE",
-        })),
-      );
-    }
-
     const cutoff = ctx.organization.administrative_cutoff_date;
 
     const { data: activeAccounts } = await supabase
@@ -204,25 +186,33 @@ export default async function InicioPage() {
       (acc, e) => acc.plus(money(e.total_amount)),
       money(0),
     );
+
+    const { count } = await supabase
+      .from("cash_daily_closes")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId)
+      .is("deleted_at", null)
+      .eq("status", "EN_REVISION");
+    openCashCloses = count ?? 0;
   }
 
   return (
     <>
       <AppHeader
         title="Inicio"
-        subtitle="Panel administrativo — línea base y control financiero"
+        subtitle="Operación del día — caja, liquidez y costos"
       />
       <main className="space-y-6 p-8">
         <PageIntro
           title={
             ctx.organization
               ? ctx.organization.trade_name || ctx.organization.legal_name
-              : "Situación administrativa"
+              : "Candela Admin"
           }
           description={
             ctx.organization
-              ? `Corte: ${formatDateCO(ctx.organization.administrative_cutoff_date)} · Rol: ${ctx.role}`
-              : "Candela Admin responde qué tiene y qué debe la empresa. Configura primero la organización en Empresa."
+              ? `Inicio operativo: ${formatDateCO(ctx.organization.administrative_cutoff_date)} · Rol: ${ctx.role}`
+              : "Configura la empresa para empezar a operar caja, tesorería y costos. Filipo cubre el POS; aquí va el día a día administrativo."
           }
         />
 
@@ -230,7 +220,8 @@ export default async function InicioPage() {
           <Card>
             <p className="font-medium">Aún no hay empresa configurada</p>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Crea la organización para iniciar el empalme y la línea base.
+              Crea la organización, define la fecha de inicio operativo y registra
+              saldos iniciales en Tesorería.
             </p>
             <Link
               href="/empresa"
@@ -245,7 +236,7 @@ export default async function InicioPage() {
           <StatCard
             label="Liquidez"
             value={formatCOP(liquidity)}
-            hint="Disponible: corte + ingresos − egresos"
+            hint="Disponible: saldo inicial + ingresos − egresos"
           />
           <StatCard label="CxP" value={formatCOP(cxpTotal)} hint="Saldo proveedores" />
           <StatCard
@@ -266,77 +257,49 @@ export default async function InicioPage() {
         </div>
 
         <div className="grid gap-4 lg:grid-cols-3">
-          <Card>
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="font-medium">Calidad del empalme</h3>
-              <Badge tone={handoverStatus === "CERRADO" ? "ok" : "warn"}>
-                {handoverStatus ?? "Sin sesión"}
-              </Badge>
+          <Card className="lg:col-span-2">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h3 className="font-medium">Hoy en operación</h3>
+              {openCashCloses > 0 ? (
+                <Badge tone="warn">{openCashCloses} cierre(s) por avalar</Badge>
+              ) : (
+                <Badge tone="ok">Sin cierres pendientes</Badge>
+              )}
             </div>
-            <div className="space-y-2 text-sm text-[var(--muted)]">
-              <p>Confirmado: {quality.pctConfirmed}%</p>
-              <p>Declarado: {quality.pctDeclared}%</p>
-              <p>Pendiente: {quality.pctPending}%</p>
-            </div>
-            <Link
-              href="/empalme"
-              className="mt-4 inline-block text-sm font-medium text-[var(--accent)]"
-            >
-              Ir al empalme →
-            </Link>
-          </Card>
-          <Card>
-            <h3 className="mb-3 font-medium">Módulos listos</h3>
-            <ul className="space-y-2 text-sm text-[var(--muted)]">
-              <li>
-                <Link href="/proveedores" className="text-[var(--accent)]">
-                  Proveedores & CxP
-                </Link>
-              </li>
-              <li>
-                <Link href="/prestamos" className="text-[var(--accent)]">
-                  Préstamos
-                </Link>{" "}
-                ·{" "}
-                <Link href="/capital" className="text-[var(--accent)]">
-                  Capital
-                </Link>
-              </li>
-              <li>
-                <Link href="/gastos" className="text-[var(--accent)]">
-                  Gastos
-                </Link>{" "}
-                ·{" "}
-                <Link href="/presupuesto" className="text-[var(--accent)]">
-                  Presupuesto
-                </Link>
-              </li>
-              <li>
-                <Link href="/personal" className="text-[var(--accent)]">
-                  Personal
-                </Link>{" "}
-                ·{" "}
-                <Link href="/contratos" className="text-[var(--accent)]">
-                  Contratos
-                </Link>{" "}
-                ·{" "}
-                <Link href="/tributario" className="text-[var(--accent)]">
-                  Tributario
-                </Link>{" "}
-                ·{" "}
-                <Link href="/sst" className="text-[var(--accent)]">
-                  SST
-                </Link>
-              </li>
+            <ul className="grid gap-3 sm:grid-cols-2">
+              {OPS_LINKS.map((link) => (
+                <li key={link.href}>
+                  <Link
+                    href={link.href}
+                    className="flex flex-col rounded-lg border border-[var(--line)] px-3 py-2.5 transition hover:border-[var(--accent)]/40 hover:bg-[var(--bg)]"
+                  >
+                    <span className="text-sm font-medium text-[var(--accent)]">
+                      {link.label}
+                    </span>
+                    <span className="text-xs text-[var(--muted)]">{link.hint}</span>
+                  </Link>
+                </li>
+              ))}
             </ul>
           </Card>
+
           <Card>
-            <h3 className="mb-3 font-medium">Frontera FILIPO</h3>
+            <h3 className="mb-3 font-medium">Filipo (POS)</h3>
             <p className="text-sm leading-relaxed text-[var(--muted)]">
-              Ventas, Food Cost e inventarios operativos no se muestran aquí.
-              Cuando exista integración, aparecerán en una sección READ ONLY
-              claramente identificada.
+              Por ahora Filipo solo cubre punto de venta. Ventas, comandas y ticket
+              viven allá; en Candela operas caja, tesorería, compras, inventario,
+              cocina, gastos y personal.
             </p>
+            <p className="mt-3 text-sm leading-relaxed text-[var(--muted)]">
+              Cuando haya integración, los agregados de ventas se mostrarán aquí
+              en solo lectura.
+            </p>
+            <Link
+              href="/empresa"
+              className="mt-4 inline-block text-sm font-medium text-[var(--accent)]"
+            >
+              Datos de empresa →
+            </Link>
           </Card>
         </div>
       </main>

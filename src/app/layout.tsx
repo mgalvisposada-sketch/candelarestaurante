@@ -1,5 +1,6 @@
 import { Archivo, Barlow } from "next/font/google";
 import type { Metadata } from "next";
+import { ThemeProvider } from "@/components/theme/theme-provider";
 import "./globals.css";
 
 const display = Archivo({
@@ -17,17 +18,36 @@ const sans = Barlow({
 export const metadata: Metadata = {
   title: "Candela Admin",
   description:
-    "Plataforma administrativa y financiera para gobierno empresarial de Candela",
+    "Operación administrativa y financiera de Candela — caja, tesorería y costos",
 };
+
+const themeBootScript = `
+(function () {
+  try {
+    var stored = localStorage.getItem("candela-theme");
+    var theme = stored === "dark" || stored === "light" ? stored : "light";
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  } catch (e) {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.colorScheme = "light";
+  }
+})();
+`;
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="es"
+      data-theme="light"
+      suppressHydrationWarning
       className={`${display.variable} ${sans.variable} h-full antialiased`}
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
+      </head>
       <body className="min-h-full bg-[var(--bg)] text-[var(--ink)]">
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

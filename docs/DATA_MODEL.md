@@ -60,20 +60,20 @@ organizations ─┬─ organization_users ─ profiles
 | `shareholder_accounts` | Cuenta socio↔sociedad (acreedor/deudor/sin saldo) |
 | `shareholder_transactions` | Movimientos de esa cuenta |
 
-### Empalme
+### Checklist inicial (tablas `handover_*`)
 
 | Tabla | Descripción |
 |-------|-------------|
-| `handover_sessions` | Sesión de empalme + fecha de corte + estado |
+| `handover_sessions` | Sesión de arranque + fecha de inicio + estado |
 | `handover_items` | Ítems por dominio con verification_status |
-| `handover_snapshots` | Fotografía inmutable al cierre |
+| `handover_snapshots` | Fotografía inmutable al cierre (opcional) |
 
 ### Tesorería
 
 | Tabla | Descripción |
 |-------|-------------|
 | `bank_accounts` | Bancos, caja, pasarelas, otros |
-| `bank_balance_snapshots` | Saldo inicial a fecha de corte + evidencia |
+| `bank_balance_snapshots` | Saldo inicial a fecha de inicio operativo + evidencia |
 | `bank_transactions` | Débitos/créditos, conciliación, vínculos |
 
 ### Proveedores y CxP
@@ -118,7 +118,7 @@ organizations ─┬─ organization_users ─ profiles
 | `tax_obligations` | Obligaciones fiscales |
 | `tax_payments` | Pagos / sanciones / acuerdos |
 | `contracts` | Contratos y compromisos |
-| `assets` | Activos de empalme |
+| `assets` | Activos de arranque (fotografía inicial) |
 | `opening_inventory_summary` | Resumen apertura (no SKU) |
 
 ### Transversales
@@ -178,7 +178,7 @@ documents.storage_path = path privado
 
 ## Campos de verificación (patrón)
 
-Aplicar a ítems de empalme, documentos CxP, saldos iniciales, etc.:
+Aplicar a ítems del checklist inicial, documentos CxP, saldos iniciales, etc.:
 
 ```sql
 verification_status verification_status NOT NULL DEFAULT 'PENDIENTE',
@@ -188,17 +188,18 @@ comments text,
 source text
 ```
 
-## Cierre de empalme
+## Cierre del checklist inicial
 
 1. `handover_sessions.status` → `CERRADO`.
 2. Insertar `handover_snapshots` con payload JSON completo.
 3. Registrar `closed_by`, `closed_at`, `closing_notes`.
 4. Calcular y persistir métricas: `% CONFIRMADO / DECLARADO / PENDIENTE`.
 5. Post-cierre: mutaciones = ajustes referenciados al snapshot, sin alterar el JSON.
+6. No bloquea caja, tesorería, compras ni pagos.
 
 ## Integridad
 
-- Participación accionaria: **advertir** si ≠ 100%; no bloquear empalme.
+- Participación accionaria: **advertir** si ≠ 100%; no bloquear la operación.
 - Registros financieros importantes: soft delete + auditoría; no `DELETE` físico.
 - Montos: constraints `>= 0` donde aplique; débitos/créditos mutuamente exclusivos en movimientos.
 

@@ -64,7 +64,8 @@ export default function LoginPage() {
             Candela Admin
           </p>
           <p className="mt-2 max-w-sm text-sm text-neutral-400">
-            Acceso privado a la administración financiera y corporativa.
+            Acceso privado a la operación administrativa: caja, tesorería y
+            costos.
           </p>
         </div>
 

@@ -18,8 +18,10 @@ export type SupplierOption = { id: string; name: string };
 export type BankAccountOption = {
   id: string;
   bank_name: string;
+  account_kind?: string | null;
   masked_number: string | null;
   available_balance?: number | string;
+  is_cash_float?: boolean | null;
 };
 export type PaymentRequestRow = {
   id: string;
@@ -96,6 +98,23 @@ function isOverdue(dueDate: string | null, status: string) {
   return dueDate < todayInBogota();
 }
 
+function accountOptionLabel(a: BankAccountOption) {
+  const kind = a.is_cash_float
+    ? "Base / flotante"
+    : a.account_kind === "CAJA"
+      ? "Caja (ventas)"
+      : a.account_kind === "BANCO"
+        ? "Banco"
+        : a.account_kind === "PASARELA"
+          ? "Pasarela"
+          : a.account_kind || "Cuenta";
+  return `${kind} · ${a.bank_name}${a.masked_number ? ` · ${a.masked_number}` : ""}${
+    a.available_balance !== undefined
+      ? ` · disp. ${formatCOP(a.available_balance)}`
+      : ""
+  }`;
+}
+
 function PayForm({
   requestId,
   defaultAmount,
@@ -107,6 +126,24 @@ function PayForm({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const total = Number(defaultAmount) || 0;
+  const floatAcc = bankAccounts.find((a) => a.is_cash_float);
+  const otherAccounts = bankAccounts.filter((a) => !a.is_cash_float);
+  const defaultPrimary =
+    otherAccounts.find((a) => a.account_kind === "BANCO")?.id ??
+    otherAccounts[0]?.id ??
+    bankAccounts[0]?.id ??
+    "";
+
+  const [split, setSplit] = useState(false);
+  const [primaryId, setPrimaryId] = useState(defaultPrimary);
+  const [primaryAmt, setPrimaryAmt] = useState(String(total || ""));
+  const [secondaryAmt, setSecondaryAmt] = useState("");
+
+  const primaryN = Number(String(primaryAmt).replace(/,/g, "")) || 0;
+  const secondaryN = Number(String(secondaryAmt).replace(/,/g, "")) || 0;
+  const partsSum = split ? primaryN + secondaryN : primaryN;
+  const partsOk = !split || Math.abs(partsSum - total) < 0.01;
 
   return (
     <form
@@ -121,19 +158,61 @@ function PayForm({
       }}
     >
       <p className="md:col-span-12 text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
-        Registrar pago
+        Registrar pago · total {formatCOP(total)}
       </p>
+
+      {floatAcc ? (
+        <label className="md:col-span-12 flex cursor-pointer items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={split}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setSplit(on);
+              if (on) {
+                const floatAvail = Number(floatAcc.available_balance ?? 0);
+                const fromBase = Math.min(Math.max(floatAvail, 0), total);
+                const fromOther = Math.max(0, total - fromBase);
+                setSecondaryAmt(fromBase > 0 ? String(fromBase) : "");
+                setPrimaryAmt(String(fromOther));
+                if (!primaryId || primaryId === floatAcc.id) {
+                  setPrimaryId(defaultPrimary);
+                }
+              } else {
+                setPrimaryAmt(String(total));
+                setSecondaryAmt("");
+              }
+            }}
+          />
+          <span>
+            Repartir entre <strong>Base</strong> y otra cuenta (caja/banco)
+          </span>
+        </label>
+      ) : (
+        <p className="md:col-span-12 text-xs text-amber-800">
+          Aún no hay cuenta Base. Defínala en{" "}
+          <Link href="/tesoreria" className="underline">
+            Tesorería
+          </Link>{" "}
+          (meta + saldo).
+        </p>
+      )}
+
       <label className="block text-sm md:col-span-5">
-        <span className="mb-1 block text-[var(--muted)]">Cuenta *</span>
-        <select name="bank_account_id" required className={inputClass}>
+        <span className="mb-1 block text-[var(--muted)]">
+          {split ? "Cuenta principal (caja/banco) *" : "Cuenta *"}
+        </span>
+        <select
+          name="bank_account_id"
+          required
+          value={primaryId}
+          onChange={(e) => setPrimaryId(e.target.value)}
+          className={inputClass}
+        >
           <option value="">Seleccione…</option>
-          {bankAccounts.map((a) => (
+          {(split ? otherAccounts : bankAccounts).map((a) => (
             <option key={a.id} value={a.id}>
-              {a.bank_name}
-              {a.masked_number ? ` · ${a.masked_number}` : ""}
-              {a.available_balance !== undefined
-                ? ` · disp. ${formatCOP(a.available_balance)}`
-                : ""}
+              {accountOptionLabel(a)}
             </option>
           ))}
         </select>
@@ -149,9 +228,53 @@ function PayForm({
         />
       </label>
       <label className="block text-sm md:col-span-4">
-        <span className="mb-1 block text-[var(--muted)]">Monto</span>
-        <input name="amount" defaultValue={String(defaultAmount)} className={inputClass} />
+        <span className="mb-1 block text-[var(--muted)]">
+          {split ? "Monto desde cuenta principal *" : "Monto"}
+        </span>
+        <input
+          name="amount"
+          value={primaryAmt}
+          onChange={(e) => {
+            setPrimaryAmt(e.target.value);
+            if (split) {
+              const n = Number(String(e.target.value).replace(/,/g, "")) || 0;
+              setSecondaryAmt(String(Math.max(0, total - n)));
+            }
+          }}
+          className={inputClass}
+        />
       </label>
+
+      {split && floatAcc ? (
+        <>
+          <input type="hidden" name="secondary_account_id" value={floatAcc.id} />
+          <label className="block text-sm md:col-span-8">
+            <span className="mb-1 block text-[var(--muted)]">
+              Monto desde Base / flotante * · disp.{" "}
+              {formatCOP(floatAcc.available_balance ?? 0)}
+            </span>
+            <input
+              name="secondary_amount"
+              value={secondaryAmt}
+              onChange={(e) => {
+                setSecondaryAmt(e.target.value);
+                const n = Number(String(e.target.value).replace(/,/g, "")) || 0;
+                setPrimaryAmt(String(Math.max(0, total - n)));
+              }}
+              className={inputClass}
+            />
+          </label>
+          <div className="md:col-span-4 flex items-end pb-2 text-sm text-[var(--muted)]">
+            Suma {formatCOP(partsSum)}
+            {!partsOk ? (
+              <span className="ml-2 text-red-700">≠ {formatCOP(total)}</span>
+            ) : (
+              <span className="ml-2 text-emerald-700">= total</span>
+            )}
+          </div>
+        </>
+      ) : null}
+
       <label className="block text-sm md:col-span-8">
         <span className="mb-1 block text-[var(--muted)]">Referencia</span>
         <input
@@ -163,7 +286,7 @@ function PayForm({
       <div className="flex items-end md:col-span-4">
         <button
           type="submit"
-          disabled={pending || bankAccounts.length === 0}
+          disabled={pending || bankAccounts.length === 0 || (split && !partsOk)}
           className="w-full rounded-lg bg-[var(--ink)] px-3 py-2.5 text-sm font-medium text-white disabled:opacity-60"
         >
           {pending ? "Pagando…" : "Confirmar pago"}
@@ -181,6 +304,12 @@ function PayForm({
             Tesorería
           </Link>{" "}
           para poder pagar.
+        </p>
+      ) : null}
+      {floatAcc && Number(floatAcc.available_balance ?? 0) <= 0 ? (
+        <p className="md:col-span-12 text-xs text-amber-800">
+          La Base tiene disponible $0. Registre o traspase saldo en Tesorería
+          antes de usarla.
         </p>
       ) : null}
     </form>

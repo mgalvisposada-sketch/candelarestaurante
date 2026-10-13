@@ -32,8 +32,12 @@ function daysUntil(date: string | null) {
   return Math.round((d.getTime() - t.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-export function CreateContractForm() {
-  const [open, setOpen] = useState(false);
+export function CreateContractForm({
+  embedded = false,
+}: {
+  embedded?: boolean;
+}) {
+  const [open, setOpen] = useState(embedded);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   if (!open) {
@@ -49,22 +53,32 @@ export function CreateContractForm() {
   }
   return (
     <form
-      className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
+      className={
+        embedded
+          ? "space-y-4"
+          : "space-y-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
+      }
       action={(fd) => {
         setError(null);
         startTransition(async () => {
           const r = await createContractAction(fd);
           if (!r.ok) setError(r.error ?? "Error");
-          else setOpen(false);
+          else if (!embedded) setOpen(false);
         });
       }}
     >
-      <div className="flex justify-between">
-        <h3 className="font-medium">Contrato</h3>
-        <button type="button" className="text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
-          Cancelar
-        </button>
-      </div>
+      {!embedded ? (
+        <div className="flex justify-between">
+          <h3 className="font-medium">Contrato</h3>
+          <button
+            type="button"
+            className="text-sm text-[var(--muted)]"
+            onClick={() => setOpen(false)}
+          >
+            Cancelar
+          </button>
+        </div>
+      ) : null}
       <div className="grid gap-3 md:grid-cols-2">
         <label className="block text-sm md:col-span-2">
           <span className="mb-1.5 block text-[var(--muted)]">Contraparte</span>

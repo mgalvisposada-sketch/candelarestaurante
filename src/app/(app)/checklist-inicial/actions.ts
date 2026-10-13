@@ -152,6 +152,7 @@ export async function createHandoverSessionAction(
     entity_id: session.id,
   });
 
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   revalidatePath("/empresa");
   return { ok: true, id: session.id };
@@ -187,7 +188,7 @@ export async function updateHandoverSessionAction(
 
   if (!existing) return { ok: false, error: "Sesión no encontrada" };
   if (existing.status === "CERRADO") {
-    return { ok: false, error: "El empalme cerrado no se puede editar" };
+    return { ok: false, error: "El checklist cerrado no se puede editar" };
   }
 
   const { error } = await supabase
@@ -212,6 +213,7 @@ export async function updateHandoverSessionAction(
     })
     .eq("id", ctx.organization.id);
 
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   revalidatePath("/empresa");
   return { ok: true, id: sessionId };
@@ -277,6 +279,7 @@ export async function updateHandoverItemAction(
     });
   }
 
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   return { ok: true, id: itemId };
 }
@@ -317,7 +320,10 @@ export async function createHandoverItemAction(
 
   if (!session) return { ok: false, error: "Sesión no encontrada" };
   if (session.status === "CERRADO") {
-    return { ok: false, error: "No se pueden agregar ítems a un empalme cerrado" };
+    return {
+      ok: false,
+      error: "No se pueden agregar ítems a un checklist cerrado",
+    };
   }
 
   const itemKey = `custom_${slugifyItemKey(parsed.data.label)}_${Date.now()}`;
@@ -351,6 +357,7 @@ export async function createHandoverItemAction(
     new_values: parsed.data,
   });
 
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   return { ok: true, id: data.id };
 }
@@ -381,6 +388,7 @@ export async function softDeleteHandoverItemAction(
     entity_id: itemId,
   });
 
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   return { ok: true, id: itemId };
 }
@@ -402,7 +410,7 @@ export async function seedMissingHandoverDefaultsAction(
 
   if (!session) return { ok: false, error: "Sesión no encontrada" };
   if (session.status === "CERRADO") {
-    return { ok: false, error: "Empalme cerrado" };
+    return { ok: false, error: "Checklist cerrado" };
   }
 
   const { data: existing } = await supabase
@@ -436,6 +444,7 @@ export async function seedMissingHandoverDefaultsAction(
 
   if (error) return { ok: false, error: error.message };
 
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   return { ok: true, id: sessionId };
 }
@@ -457,7 +466,7 @@ export async function cleanupObsoleteHandoverItemsAction(
 
   if (!session) return { ok: false, error: "Sesión no encontrada" };
   if (session.status === "CERRADO") {
-    return { ok: false, error: "Empalme cerrado" };
+    return { ok: false, error: "Checklist cerrado" };
   }
 
   const { data: rows } = await supabase
@@ -492,6 +501,7 @@ export async function cleanupObsoleteHandoverItemsAction(
 
   if (error) return { ok: false, error: error.message };
 
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   return { ok: true, id: sessionId, removed: deleted?.length ?? ids.length };
 }
@@ -506,7 +516,7 @@ export async function closeHandoverAction(
   if (!ctxCanAccess(ctx, "empalme.cerrar")) {
     return {
       ok: false,
-      error: "No tienes permiso para cerrar el empalme",
+      error: "No tienes permiso para cerrar el checklist",
     };
   }
 
@@ -519,6 +529,7 @@ export async function closeHandoverAction(
 
   if (error) return { ok: false, error: error.message };
 
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   revalidatePath("/inicio");
   return { ok: true, id: (data as { id: string }).id };

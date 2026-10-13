@@ -132,21 +132,31 @@ describe("treasury", () => {
       "../src/lib/treasury"
     );
     expect(sumOpeningBalances(["1000.50", "2000.25"])).toBe("3000.75");
-    expect(bankKindLabel("CAJA")).toBe("Caja");
+    expect(bankKindLabel("CAJA")).toBe("Caja (ventas)");
+    expect(bankKindLabel("CAJA", { isCashFloat: true })).toBe("Base / flotante");
   });
 
   it("resuelve destinos del cierre por tipo de cuenta", async () => {
     const { resolveCashCloseDestinations } = await import(
       "../src/lib/treasury"
     );
-    const dest = resolveCashCloseDestinations([
-      { id: "caja-1", account_kind: "CAJA", is_active: true },
+    const accounts = [
+      { id: "base-1", account_kind: "CAJA", is_active: true, is_cash_float: true },
+      { id: "caja-1", account_kind: "CAJA", is_active: true, is_cash_float: false },
       { id: "banco-1", account_kind: "BANCO", is_active: true },
-      { id: "pasarela-1", account_kind: "PASARELA", is_active: true },
-    ]);
+      { id: "banco-2", account_kind: "BANCO", is_active: true },
+    ];
+    const dest = resolveCashCloseDestinations(accounts);
     expect(dest.cashAccountId).toBe("caja-1");
     expect(dest.cardAccountId).toBe("banco-1");
     expect(dest.transferAccountId).toBe("banco-1");
+
+    const split = resolveCashCloseDestinations(accounts, {
+      cardAccountId: "banco-1",
+      transferAccountId: "banco-2",
+    });
+    expect(split.cardAccountId).toBe("banco-1");
+    expect(split.transferAccountId).toBe("banco-2");
   });
 
   it("calcula saldo disponible con créditos y débitos posteriores al corte", async () => {

@@ -1,18 +1,33 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import {
   createExpenseAction,
+  createShiftLiquidationExpenseAction,
   softDeleteExpenseAction,
 } from "./actions";
 import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
+import {
+  dayNumber,
+  daysInQuincena,
+  neighboringQuincenas,
+  parseQuincenaKey,
+  quincenaFromDate,
+  shiftWeekdayLabel,
+} from "@/lib/payroll/quincena";
 
 export type CategoryRow = { id: string; code: string; name: string };
 export type SupplierOption = { id: string; name: string };
+export type ShiftEmployeeOption = {
+  id: string;
+  full_name: string;
+  position_title: string | null;
+  daily_rate: number | null;
+};
 export type ExpenseRow = {
   id: string;
   expense_date: string;
@@ -26,6 +41,11 @@ export type ExpenseRow = {
   category_id: string | null;
   supplier_id: string | null;
   shared_service: boolean;
+  expense_kind?: string | null;
+  employee_id?: string | null;
+  period_year?: number | null;
+  period_month?: number | null;
+  period_half?: number | null;
 };
 
 const inputClass =
@@ -40,11 +60,13 @@ function statusTone(s: string) {
 export function CreateExpenseForm({
   categories,
   suppliers,
+  embedded = false,
 }: {
   categories: CategoryRow[];
   suppliers: SupplierOption[];
+  embedded?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(embedded);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   if (!open) {
@@ -60,31 +82,46 @@ export function CreateExpenseForm({
   }
   return (
     <form
-      className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
+      className={
+        embedded
+          ? "space-y-4"
+          : "space-y-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
+      }
       action={(fd) => {
         setError(null);
         startTransition(async () => {
           const r = await createExpenseAction(fd);
           if (!r.ok) setError(r.error ?? "Error");
           else {
-            setOpen(false);
+            if (!embedded) setOpen(false);
             notifyPendingActionsChanged();
           }
         });
       }}
     >
-      <div className="flex justify-between gap-3">
-        <div>
-          <h3 className="font-medium">Gasto operativo</h3>
-          <p className="mt-1 text-xs text-[var(--muted)]">
-            Arriendo, gas, seguridad u otros que no sean compra de insumos. Genera
-            una solicitud de pago; el pago se hace allí.
-          </p>
+      {!embedded ? (
+        <div className="flex justify-between gap-3">
+          <div>
+            <h3 className="font-medium">Gasto operativo</h3>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              Arriendo, gas, seguridad u otros que no sean compra de insumos. Genera
+              una solicitud de pago; el pago se hace allí.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 text-sm text-[var(--muted)]"
+            onClick={() => setOpen(false)}
+          >
+            Cancelar
+          </button>
         </div>
-        <button type="button" className="shrink-0 text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
-          Cancelar
-        </button>
-      </div>
+      ) : (
+        <p className="text-xs text-[var(--muted)]">
+          Arriendo, gas, seguridad u otros que no sean compra de insumos. Genera
+          una solicitud de pago; el pago se hace allí.
+        </p>
+      )}
       <div className="grid gap-3 md:grid-cols-2">
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">Proveedor</span>
@@ -171,6 +208,253 @@ export function CreateExpenseForm({
   );
 }
 
+export function CreateShiftLiquidationForm({
+  categories,
+  employees,
+  embedded = false,
+}: {
+  categories: CategoryRow[];
+  employees: ShiftEmployeeOption[];
+  embedded?: boolean;
+}) {
+  const [open, setOpen] = useState(embedded);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const current = useMemo(() => quincenaFromDate(todayInBogota()), []);
+  const [employeeId, setEmployeeId] = useState(employees[0]?.id ?? "");
+  const [quincenaKey, setQuincenaKey] = useState(current.key);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const quincenaChoices = useMemo(
+    () => neighboringQuincenas(current, 3, 1),
+    [current],
+  );
+  const meta = useMemo(
+    () => parseQuincenaKey(quincenaKey) ?? current,
+    [quincenaKey, current],
+  );
+  const days = useMemo(() => daysInQuincena(meta), [meta]);
+  const employee = employees.find((e) => e.id === employeeId) ?? null;
+  const rate = employee?.daily_rate ?? 0;
+  const estimated = selected.size * (rate || 0);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded-lg border border-[var(--ink)] px-4 py-2.5 text-sm font-medium"
+      >
+        Liquidación por turno
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className={
+        embedded
+          ? "space-y-4"
+          : "space-y-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
+      }
+      action={(fd) => {
+        setError(null);
+        startTransition(async () => {
+          const r = await createShiftLiquidationExpenseAction(fd);
+          if (!r.ok) setError(r.error ?? "Error");
+          else {
+            if (!embedded) setOpen(false);
+            setSelected(new Set());
+            notifyPendingActionsChanged();
+          }
+        });
+      }}
+    >
+      <div className="flex justify-between gap-3">
+        <div>
+          {!embedded ? (
+            <h3 className="font-medium">Liquidación por turno</h3>
+          ) : null}
+          <p className={embedded ? "text-xs text-[var(--muted)]" : "mt-1 text-xs text-[var(--muted)]"}>
+            Marque los días del prestador, cree el gasto asociado a esa persona y
+            envíelo a Solicitudes de pago (aval gerencia → pago caja/banco).
+          </p>
+        </div>
+        {!embedded ? (
+          <button
+            type="button"
+            className="shrink-0 text-sm text-[var(--muted)]"
+            onClick={() => {
+              setOpen(false);
+              setError(null);
+            }}
+          >
+            Cancelar
+          </button>
+        ) : null}
+      </div>
+
+      <input type="hidden" name="period_year" value={meta.year} />
+      <input type="hidden" name="period_month" value={meta.month} />
+      <input type="hidden" name="period_half" value={meta.half} />
+      {[...selected].map((d) => (
+        <input key={d} type="hidden" name="dates" value={d} />
+      ))}
+
+      {employees.length === 0 ? (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          No hay empleados activos con contrato por turno.
+        </p>
+      ) : (
+        <>
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="block text-sm">
+              <span className="mb-1.5 block text-[var(--muted)]">Prestador *</span>
+              <select
+                name="employee_id"
+                required
+                value={employeeId}
+                onChange={(e) => {
+                  setEmployeeId(e.target.value);
+                  setSelected(new Set());
+                }}
+                className={inputClass}
+              >
+                {employees.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.full_name}
+                    {e.daily_rate ? ` · ${formatCOP(e.daily_rate)}/turno` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1.5 block text-[var(--muted)]">Quincena *</span>
+              <select
+                value={quincenaKey}
+                onChange={(e) => {
+                  setQuincenaKey(e.target.value);
+                  setSelected(new Set());
+                }}
+                className={inputClass}
+              >
+                {quincenaChoices.map((q) => (
+                  <option key={q.key} value={q.key}>
+                    {q.label}
+                    {q.key === current.key ? " · actual" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1.5 block text-[var(--muted)]">Fecha gasto *</span>
+              <input
+                type="date"
+                name="expense_date"
+                required
+                defaultValue={todayInBogota()}
+                className={inputClass}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1.5 block text-[var(--muted)]">Categoría</span>
+              <select name="category_id" className={inputClass}>
+                <option value="">—</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.code} — {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1.5 block text-[var(--muted)]">Prioridad</span>
+              <select name="priority" defaultValue="NORMAL" className={inputClass}>
+                <option value="CRITICA">Crítica</option>
+                <option value="ALTA">Alta</option>
+                <option value="NORMAL">Normal</option>
+                <option value="BAJA">Baja</option>
+              </select>
+            </label>
+            <label className="block text-sm md:col-span-2">
+              <span className="mb-1.5 block text-[var(--muted)]">Notas</span>
+              <textarea name="notes" rows={2} className={inputClass} />
+            </label>
+          </div>
+
+          <p className="text-sm text-[var(--muted)]">{meta.rangeLabel}</p>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setSelected(new Set(days))}
+              className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
+            >
+              Marcar todos
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
+            >
+              Limpiar
+            </button>
+          </div>
+
+          <div className="grid grid-cols-4 gap-2 sm:grid-cols-5 md:grid-cols-7">
+            {days.map((iso) => {
+              const on = selected.has(iso);
+              return (
+                <button
+                  key={iso}
+                  type="button"
+                  onClick={() => {
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(iso)) next.delete(iso);
+                      else next.add(iso);
+                      return next;
+                    });
+                  }}
+                  className={`rounded-lg border px-2 py-2 text-center text-sm transition-colors ${
+                    on
+                      ? "border-emerald-700 bg-emerald-700 text-white"
+                      : "border-[var(--line)] bg-[var(--bg)]/40 text-[var(--ink)]"
+                  }`}
+                  title={formatDateCO(iso)}
+                >
+                  <span className="block text-[10px] uppercase opacity-80">
+                    {shiftWeekdayLabel(iso)}
+                  </span>
+                  <span className="block text-base font-medium">
+                    {dayNumber(iso)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="text-sm text-[var(--muted)]">
+            {selected.size} día{selected.size === 1 ? "" : "s"}
+            {rate > 0 ? ` · ${formatCOP(estimated)}` : " · configure tarifa en el empleado"}
+          </p>
+        </>
+      )}
+
+      {error ? (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={pending || employees.length === 0 || selected.size === 0}
+        className="rounded-lg bg-[var(--ink)] px-5 py-2.5 text-sm text-white disabled:opacity-50"
+      >
+        {pending ? "Guardando…" : "Crear gasto y enviar a aval"}
+      </button>
+    </form>
+  );
+}
+
 export function ExpenseList({
   expenses,
   categories,
@@ -197,7 +481,12 @@ export function ExpenseList({
         >
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="font-medium">{e.concept}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-medium">{e.concept}</p>
+                {e.expense_kind === "LIQUIDACION_TURNO" ? (
+                  <Badge tone="info">Por turno</Badge>
+                ) : null}
+              </div>
               <p className="text-sm text-[var(--muted)]">
                 {formatDateCO(e.expense_date)}
                 {e.supplier_id && supplierMap.get(e.supplier_id)

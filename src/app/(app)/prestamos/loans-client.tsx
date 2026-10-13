@@ -190,8 +190,14 @@ function LoanFields({
   );
 }
 
-export function CreateLoanForm({ shareholders }: { shareholders: ShareholderOption[] }) {
-  const [open, setOpen] = useState(false);
+export function CreateLoanForm({
+  shareholders,
+  embedded = false,
+}: {
+  shareholders: ShareholderOption[];
+  embedded?: boolean;
+}) {
+  const [open, setOpen] = useState(embedded);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   if (!open) {
@@ -207,22 +213,32 @@ export function CreateLoanForm({ shareholders }: { shareholders: ShareholderOpti
   }
   return (
     <form
-      className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
+      className={
+        embedded
+          ? "space-y-4"
+          : "space-y-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
+      }
       action={(fd) => {
         setError(null);
         startTransition(async () => {
           const r = await createLoanAction(fd);
           if (!r.ok) setError(r.error ?? "Error");
-          else setOpen(false);
+          else if (!embedded) setOpen(false);
         });
       }}
     >
-      <div className="flex justify-between">
-        <h3 className="font-medium">Nuevo préstamo</h3>
-        <button type="button" className="text-sm text-[var(--muted)]" onClick={() => setOpen(false)}>
-          Cancelar
-        </button>
-      </div>
+      {!embedded ? (
+        <div className="flex justify-between">
+          <h3 className="font-medium">Nuevo préstamo</h3>
+          <button
+            type="button"
+            className="text-sm text-[var(--muted)]"
+            onClick={() => setOpen(false)}
+          >
+            Cancelar
+          </button>
+        </div>
+      ) : null}
       <LoanFields shareholders={shareholders} />
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
       <button

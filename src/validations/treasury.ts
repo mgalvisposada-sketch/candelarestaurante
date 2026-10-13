@@ -11,7 +11,7 @@ export const bankAccountSchema = z.object({
 });
 
 export const bankBalanceSnapshotSchema = z.object({
-  cutoff_date: z.string().min(1, "La fecha de corte es obligatoria"),
+  cutoff_date: z.string().min(1, "La fecha del saldo inicial es obligatoria"),
   opening_balance: z.string().min(1, "El saldo es obligatorio"),
   verification_status: z.enum(["CONFIRMADO", "DECLARADO", "PENDIENTE"]),
   comments: z.string().optional().nullable(),

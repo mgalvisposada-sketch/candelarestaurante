@@ -1,5 +1,10 @@
 import { AppHeader } from "@/components/layout/app-header";
-import { Card, EmptyState, PageIntro, StatCard } from "@/components/ui/primitives";
+import { Badge, Card, PageIntro, StatCard } from "@/components/ui/primitives";
+import {
+  WorkEmptyHint,
+  WorkSection,
+  WorkStack,
+} from "@/components/ui/work-section";
 import { getOrgContext } from "@/lib/org-context";
 import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -82,13 +87,10 @@ export default async function CapitalPage() {
     <>
       <AppHeader title="Capital" subtitle="Uso de recursos prestados y solicitudes" />
       <main className="space-y-6 p-8">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <PageIntro
-            title="¿Qué pasó con el dinero?"
-            description="Por cada desembolso se definen bolsas con aprobado, comprometido, pagado y disponible."
-          />
-          <CreateAllocationForm disbursements={disbursements} />
-        </div>
+        <PageIntro
+          title="¿Qué pasó con el dinero?"
+          description="Por cada desembolso se definen bolsas con aprobado, comprometido, pagado y disponible."
+        />
 
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard label="Aprobado" value={formatCOP(approved)} />
@@ -96,27 +98,54 @@ export default async function CapitalPage() {
           <StatCard label="Disponible" value={formatCOP(available)} />
         </div>
 
-        {disbursements.length === 0 ? (
-          <EmptyState
-            title="Sin desembolsos"
-            description="Registre desembolsos en Préstamos para poder asignar bolsas de uso."
-          />
-        ) : allocations.length === 0 ? (
-          <EmptyState
-            title="Sin asignaciones de capital"
-            description="Cree bolsas (CxP, nómina, impuestos, capital de trabajo…) por desembolso."
-          />
-        ) : (
-          <div className="space-y-4">
-            {allocations.map((a) => (
-              <AllocationCard
-                key={a.id}
-                allocation={a}
-                disbursement={disbursements.find((d) => d.id === a.loan_disbursement_id)}
+        <WorkStack>
+          {disbursements.length > 0 ? (
+            <WorkSection
+              kind="form"
+              title="Asignar bolsa de capital"
+              description="Por desembolso: aprobado, comprometido y pagado."
+              defaultOpen={allocations.length === 0}
+            >
+              <CreateAllocationForm disbursements={disbursements} embedded />
+            </WorkSection>
+          ) : null}
+
+          <WorkSection
+            kind="list"
+            title="Bolsas asignadas"
+            badge={<Badge tone="neutral">{allocations.length}</Badge>}
+            summary={
+              disbursements.length === 0
+                ? "Primero registre desembolsos en Préstamos"
+                : `${allocations.length} asignaciones`
+            }
+            defaultOpen
+          >
+            {disbursements.length === 0 ? (
+              <WorkEmptyHint
+                title="Sin desembolsos"
+                description="Registre desembolsos en Préstamos para poder asignar bolsas de uso."
               />
-            ))}
-          </div>
-        )}
+            ) : allocations.length === 0 ? (
+              <WorkEmptyHint
+                title="Sin asignaciones de capital"
+                description="Cree bolsas (CxP, nómina, impuestos, capital de trabajo…) por desembolso."
+              />
+            ) : (
+              <div className="space-y-4">
+                {allocations.map((a) => (
+                  <AllocationCard
+                    key={a.id}
+                    allocation={a}
+                    disbursement={disbursements.find(
+                      (d) => d.id === a.loan_disbursement_id,
+                    )}
+                  />
+                ))}
+              </div>
+            )}
+          </WorkSection>
+        </WorkStack>
       </main>
     </>
   );

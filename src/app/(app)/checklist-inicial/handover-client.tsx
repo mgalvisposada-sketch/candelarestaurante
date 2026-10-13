@@ -244,24 +244,23 @@ export function CreateHandoverForm({
     >
       <div className="space-y-2 text-sm leading-relaxed text-[var(--muted)]">
         <p>
-          Esta pantalla es tu{" "}
+          Checklist opcional para dejar{" "}
           <strong className="font-medium text-[var(--ink)]">
-            material de apoyo
-          </strong>{" "}
-          para indagar en la reunión: preguntas listas, desgloses y estados de
-          calidad.
+            saldos y datos de arranque
+          </strong>
+          . No sustituye la operación diaria: eso va en Caja, Tesorería, Compras
+          y Gastos.
         </p>
         <p>
-          Empieza por papeles e inventario; Holding, Publicidad y capital por
-          socio vienen después. Si la respuesta viene a medias, márcala
-          declarada y sigue.
+          Empieza por bancos, caja e inventario; socios y capital pueden ir
+          después. Si un dato viene incompleto, márcalo declarado y sigue.
         </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">
-            ¿Hasta qué fecha responde la administración anterior? *
+            Fecha de inicio operativo *
           </span>
           <input
             type="date"
@@ -274,32 +273,32 @@ export function CreateHandoverForm({
         <div className="hidden md:block" />
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">
-            Nombre de quien entrega
+            Responsable que aporta datos
           </span>
           <input
             name="delivered_by_name"
-            placeholder="Administrador anterior"
+            placeholder="Quien declara saldos / documentos"
             className={inputClass}
           />
         </label>
         <label className="block text-sm">
           <span className="mb-1.5 block text-[var(--muted)]">
-            Nombre de quien recibe
+            Responsable que valida
           </span>
           <input
             name="received_by_name"
-            placeholder="Nueva administración"
+            placeholder="Quien revisa en Candela"
             className={inputClass}
           />
         </label>
         <label className="block text-sm md:col-span-2">
           <span className="mb-1.5 block text-[var(--muted)]">
-            Notas de la reunión (opcional)
+            Notas (opcional)
           </span>
           <textarea
             name="notes"
             rows={3}
-            placeholder="Ej. Nos reunimos en el local; faltan extractos del banco X…"
+            placeholder="Ej. Faltan extractos del banco X; base física ya en local…"
             className={inputClass}
           />
         </label>
@@ -310,7 +309,7 @@ export function CreateHandoverForm({
         </p>
       ) : null}
       <Button type="submit" disabled={pending}>
-        {pending ? "Preparando…" : "Empezar la entrega"}
+        {pending ? "Preparando…" : "Empezar checklist"}
       </Button>
     </form>
   );
@@ -355,11 +354,11 @@ export function SessionMetaForm({ session }: { session: HandoverSession }) {
     return (
       <div className="grid gap-3 text-sm md:grid-cols-2">
         <div>
-          <span className="text-[var(--muted)]">Entrega:</span>{" "}
+          <span className="text-[var(--muted)]">Aporta datos:</span>{" "}
           {session.delivered_by_name || "—"}
         </div>
         <div>
-          <span className="text-[var(--muted)]">Recibe:</span>{" "}
+          <span className="text-[var(--muted)]">Valida:</span>{" "}
           {session.received_by_name || "—"}
         </div>
         <div className="md:col-span-2">
@@ -374,7 +373,9 @@ export function SessionMetaForm({ session }: { session: HandoverSession }) {
     <form ref={formRef} className="space-y-3" onSubmit={(e) => e.preventDefault()}>
       <div className="grid gap-4 md:grid-cols-2">
         <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Fecha de corte</span>
+          <span className="mb-1.5 block text-[var(--muted)]">
+            Fecha de inicio operativo
+          </span>
           <input
             type="date"
             name="cutoff_date"
@@ -386,7 +387,9 @@ export function SessionMetaForm({ session }: { session: HandoverSession }) {
         </label>
         <div />
         <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Quién entrega</span>
+          <span className="mb-1.5 block text-[var(--muted)]">
+            Responsable que aporta datos
+          </span>
           <input
             name="delivered_by_name"
             defaultValue={session.delivered_by_name ?? ""}
@@ -395,7 +398,9 @@ export function SessionMetaForm({ session }: { session: HandoverSession }) {
           />
         </label>
         <label className="block text-sm">
-          <span className="mb-1.5 block text-[var(--muted)]">Quién recibe</span>
+          <span className="mb-1.5 block text-[var(--muted)]">
+            Responsable que valida
+          </span>
           <input
             name="received_by_name"
             defaultValue={session.received_by_name ?? ""}
@@ -1018,7 +1023,7 @@ export function HandoverItemCard({
                     </label>
                     <label className="block text-sm md:col-span-2">
                       <span className="mb-1 block text-[var(--muted)]">
-                        Notas de la indagación
+                        Notas
                       </span>
                       <textarea
                         rows={2}
@@ -1334,8 +1339,7 @@ export function HandoverDomainSections({
     <div className="space-y-5">
       <div className="rounded-2xl border border-[var(--line)] bg-white/80 px-4 py-4">
         <p className="mb-3 text-xs leading-relaxed text-[var(--muted)]">
-          Tu mapa de indagación. Elige una esfera para entrar al bloque; las
-          preguntas empiezan colapsadas.
+          Elige un bloque del checklist; las preguntas empiezan colapsadas.
         </p>
         <div className="flex flex-wrap gap-2.5">
           {grouped.map((group, index) => {
@@ -1479,15 +1483,15 @@ export function CloseHandoverForm({
       >
         <div>
           <h3 className="font-display text-lg font-bold tracking-tight">
-            Congelar el empalme
+            Congelar el checklist
           </h3>
           <p className="mt-1 text-sm leading-relaxed text-[var(--muted)]">
-            Cuando la conversación haya llegado lo suficientemente lejos,
-            cierren aquí. No hace falta tenerlo todo perfecto
+            Cuando ya tengan lo esencial capturado, cierren aquí. No hace falta
+            tenerlo todo perfecto
             {pendingCount > 0
-              ? `: pueden quedar ${pendingCount} puntos por conversar o pendientes`
+              ? `: pueden quedar ${pendingCount} puntos pendientes`
               : ""}
-            .
+            . La operación diaria sigue en Caja, Tesorería y Costos.
           </p>
         </div>
 
@@ -1519,7 +1523,7 @@ export function CloseHandoverForm({
           </p>
         ) : null}
         <Button type="submit" disabled={pending}>
-          {pending ? "Cerrando…" : "Cerrar empalme"}
+          {pending ? "Cerrando…" : "Cerrar checklist"}
         </Button>
       </form>
     </Card>
@@ -1584,20 +1588,20 @@ export function ClosedActaView({
 
         <div className="mt-5 grid gap-3 rounded-xl bg-[var(--bg)] p-4 text-sm md:grid-cols-2">
           <p>
-            <span className="text-[var(--muted)]">Entrega:</span>{" "}
+            <span className="text-[var(--muted)]">Aporta datos:</span>{" "}
             <span className="font-medium">
               {session.delivered_by_name || "—"}
             </span>
           </p>
           <p>
-            <span className="text-[var(--muted)]">Recibe:</span>{" "}
+            <span className="text-[var(--muted)]">Valida:</span>{" "}
             <span className="font-medium">
               {session.received_by_name || "—"}
             </span>
           </p>
           {session.notes ? (
             <p className="md:col-span-2">
-              <span className="text-[var(--muted)]">Notas de reunión:</span>{" "}
+              <span className="text-[var(--muted)]">Notas:</span>{" "}
               {session.notes}
             </p>
           ) : null}
@@ -1914,7 +1918,7 @@ export function EmpalmeMeetingView({
 
       <CollapsibleSection
         title="Datos de la sesión"
-        subtitle="Quién entrega / quién recibe / fecha de corte · preparar preguntas"
+        subtitle="Responsables y fecha de inicio · preparar preguntas"
         defaultOpen={
           !session.delivered_by_name ||
           !session.received_by_name ||
@@ -1930,11 +1934,11 @@ export function EmpalmeMeetingView({
       <section className="space-y-3">
         <div className="max-w-3xl">
           <h3 className="font-display text-xl font-bold tracking-tight">
-            Guía de indagación
+            Temas del checklist
           </h3>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Una pregunta abierta a la vez. Lo demás queda compacto para no
-            perder el hilo de la reunión.
+            Una pregunta a la vez. Úsalo para dejar saldos y datos de arranque;
+            el día a día se opera en los demás módulos.
           </p>
         </div>
 
@@ -1985,8 +1989,8 @@ export function EmpalmeMeetingView({
 
       {canClose && !readOnly ? (
         <CollapsibleSection
-          title="Cerrar empalme"
-          subtitle="Solo cuando la reunión haya llegado lo suficientemente lejos"
+          title="Cerrar checklist"
+          subtitle="Opcional: congela el arranque cuando ya tengan lo esencial"
           defaultOpen={false}
         >
           <CloseHandoverForm
@@ -2043,8 +2047,8 @@ function ReminderList({
 export function EmpalmeSteps({ current }: { current: 1 | 2 | 3 }) {
   const steps = [
     { n: 1 as const, label: "Quiénes y fecha" },
-    { n: 2 as const, label: "Conversar los temas" },
-    { n: 3 as const, label: "Cerrar el empalme" },
+    { n: 2 as const, label: "Capturar temas" },
+    { n: 3 as const, label: "Cerrar checklist" },
   ];
 
   return (

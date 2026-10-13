@@ -1,6 +1,6 @@
 # FILIPO Integration (preparación)
 
-Candela Admin **no** implementa la integración operacional en el MVP.
+**Hoy Filipo es solo POS** (ventas / comandas / ticket). Candela Admin opera el resto del día a día administrativo.
 
 Este directorio define el contrato READ ONLY para recibir agregados desde FILIPO en una fase futura:
 
@@ -14,9 +14,9 @@ Este directorio define el contrato READ ONLY para recibir agregados desde FILIPO
 
 ## Reglas
 
-1. FILIPO es source of truth operacional.
-2. Candela Admin solo **lee** agregados importados.
+1. FILIPO es source of truth de **POS / ventas**.
+2. Candela Admin solo **lee** agregados importados (cuando existan).
 3. La UI deberá marcar claramente: “Información operacional proveniente de FILIPO”.
-4. No desarrollar sync, webhooks ni UI operativa hasta la fase futura.
+4. Mientras no haya sync, el local declara caja en Candela (Cierre de caja) y opera costos aquí.
 
 Ver `types.ts` y `client.ts`.

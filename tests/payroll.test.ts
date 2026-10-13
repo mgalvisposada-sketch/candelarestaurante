@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   art1141ExemptionApplies,
   computePeriodHours,
+  computeShiftContractorSettlement,
+  liquidatePeriod,
   ordinaryHourValue,
   scheduleDiffSummary,
   simulateBiweekly,
@@ -317,5 +319,83 @@ describe("simulateBiweekly", () => {
     expect(sim.usesCustomSchedule).toBe(true);
     expect(sim.earnings.fixedBonuses).toBe(100_000);
     expect(sim.notes.some((n) => n.includes("personalizado"))).toBe(true);
+  });
+
+  it("excluye POR_TURNO de la liquidación de nómina", () => {
+    const result = liquidatePeriod({
+      year: 2026,
+      month: 1,
+      half: 1,
+      candelaSchedule: candelaClosedSunday,
+      legal: legalBase,
+      employees: [
+        {
+          employeeId: "lab-1",
+          fullName: "Nómina",
+          positionTitle: "Mesero",
+          basicSalary: 1_800_000,
+          employmentType: "INDEFINIDO",
+          receivesTransportAid: false,
+          arlRiskLevel: "I",
+          schedule: {
+            ordinary_entry_time: "10:00",
+            ordinary_exit_time: "18:00",
+            break_minutes: 60,
+            uses_custom_schedule: false,
+          },
+          bonuses: [],
+          novelties: [],
+        },
+        {
+          employeeId: "turno-1",
+          fullName: "Mauro",
+          positionTitle: "Prestador",
+          basicSalary: 80_000,
+          employmentType: "POR_TURNO",
+          receivesTransportAid: null,
+          arlRiskLevel: "I",
+          schedule: {
+            ordinary_entry_time: "10:00",
+            ordinary_exit_time: "18:00",
+            break_minutes: 60,
+            uses_custom_schedule: false,
+          },
+          bonuses: [],
+          novelties: [
+            {
+              novelty_type: "TURNO_LABORADO",
+              novelty_date: "2026-01-05",
+              amount: 80_000,
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.lines).toHaveLength(1);
+    expect(result.lines[0]?.employeeId).toBe("lab-1");
+  });
+
+  it("calcula neto de liquidación por turno para gasto", () => {
+    const settlement = computeShiftContractorSettlement([
+      {
+        novelty_type: "TURNO_LABORADO",
+        novelty_date: "2026-01-05",
+        amount: 80_000,
+      },
+      {
+        novelty_type: "TURNO_LABORADO",
+        novelty_date: "2026-01-06",
+        amount: 80_000,
+      },
+      {
+        novelty_type: "ANTICIPO",
+        novelty_date: "2026-01-07",
+        amount: 20_000,
+      },
+    ]);
+    expect(settlement.shiftDays).toBe(2);
+    expect(settlement.shiftPay).toBe(160_000);
+    expect(settlement.advances).toBe(20_000);
+    expect(settlement.netPay).toBe(140_000);
   });
 });

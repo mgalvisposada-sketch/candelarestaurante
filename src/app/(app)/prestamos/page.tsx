@@ -1,5 +1,15 @@
 import { AppHeader } from "@/components/layout/app-header";
-import { Card, EmptyState, PageIntro, StatCard } from "@/components/ui/primitives";
+import {
+  Badge,
+  Card,
+  PageIntro,
+  StatCard,
+} from "@/components/ui/primitives";
+import {
+  WorkEmptyHint,
+  WorkSection,
+  WorkStack,
+} from "@/components/ui/work-section";
 import { getOrgContext } from "@/lib/org-context";
 import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -109,13 +119,10 @@ export default async function PrestamosPage() {
         subtitle="Financiación de socios — distinta de aportes de capital"
       />
       <main className="space-y-6 p-8">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <PageIntro
-            title="Préstamos de socios"
-            description="Diferencie CAPITAL, PRÉSTAMO, ANTICIPO y OTRO. Cada préstamo muestra capital inicial, desembolsado, pagado, interés y saldo."
-          />
-          <CreateLoanForm shareholders={shareholders} />
-        </div>
+        <PageIntro
+          title="Préstamos de socios"
+          description="Diferencie CAPITAL, PRÉSTAMO, ANTICIPO y OTRO. Cada préstamo muestra capital inicial, desembolsado, pagado, interés y saldo."
+        />
 
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard label="Saldo capital activo" value={formatCOP(totalDebt)} />
@@ -123,25 +130,50 @@ export default async function PrestamosPage() {
           <StatCard label="Préstamos" value={String(loans.length)} />
         </div>
 
-        {loans.length === 0 ? (
-          <EmptyState
-            title="Sin préstamos"
-            description="Registre contratos, desembolsos y pagos. El uso del dinero se asigna en Capital."
-          />
-        ) : (
-          <div className="space-y-4">
-            {loans.map((loan) => (
-              <LoanCard
-                key={loan.id}
-                loan={loan}
-                disbursements={disbursements.filter((d) => d.loan_id === loan.id)}
-                payments={payments.filter((p) => p.loan_id === loan.id)}
-                shareholders={shareholders}
-                banks={banks}
+        <WorkStack>
+          <WorkSection
+            kind="form"
+            title="Nuevo préstamo"
+            description="Alta del contrato. Desembolsos y pagos se cargan en cada ficha."
+            defaultOpen={loans.length === 0}
+          >
+            <CreateLoanForm shareholders={shareholders} embedded />
+          </WorkSection>
+
+          <WorkSection
+            kind="list"
+            title="Préstamos registrados"
+            badge={<Badge tone="neutral">{loans.length}</Badge>}
+            summary={
+              loans.length === 0
+                ? "Sin préstamos"
+                : `Saldo activo ${formatCOP(totalDebt)}`
+            }
+            defaultOpen
+          >
+            {loans.length === 0 ? (
+              <WorkEmptyHint
+                title="Sin préstamos"
+                description="Registre contratos, desembolsos y pagos. El uso del dinero se asigna en Capital."
               />
-            ))}
-          </div>
-        )}
+            ) : (
+              <div className="space-y-4">
+                {loans.map((loan) => (
+                  <LoanCard
+                    key={loan.id}
+                    loan={loan}
+                    disbursements={disbursements.filter(
+                      (d) => d.loan_id === loan.id,
+                    )}
+                    payments={payments.filter((p) => p.loan_id === loan.id)}
+                    shareholders={shareholders}
+                    banks={banks}
+                  />
+                ))}
+              </div>
+            )}
+          </WorkSection>
+        </WorkStack>
       </main>
     </>
   );

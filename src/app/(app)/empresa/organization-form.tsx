@@ -35,7 +35,7 @@ const fields: Array<{
   { name: "phone", label: "Teléfono" },
   {
     name: "administrative_cutoff_date",
-    label: "Fecha de corte administrativa",
+    label: "Fecha de inicio operativo",
     type: "date",
     required: true,
   },
@@ -95,7 +95,7 @@ export function OrganizationForm({
       setSuccess(
         organization
           ? "Empresa actualizada. Puedes seguir editando cuando quieras."
-          : "Empresa creada. Ya puedes continuar con el empalme.",
+          : "Empresa creada. Sigue con Tesorería para registrar saldos iniciales.",
       );
     });
   }

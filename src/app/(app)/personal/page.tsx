@@ -1,5 +1,15 @@
 import { AppHeader } from "@/components/layout/app-header";
-import { Card, EmptyState, PageIntro, StatCard } from "@/components/ui/primitives";
+import {
+  Badge,
+  Card,
+  PageIntro,
+  StatCard,
+} from "@/components/ui/primitives";
+import {
+  WorkEmptyHint,
+  WorkSection,
+  WorkStack,
+} from "@/components/ui/work-section";
 import { getOrgContext } from "@/lib/org-context";
 import { requirePersonalSubAccess } from "@/lib/permissions";
 import { isSuperAdmin } from "@/types/domain";
@@ -83,13 +93,10 @@ export default async function PersonalPage() {
           permissions={ctx.permissions}
           isSuperAdmin={isSuperAdmin(ctx.role)}
         />
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <PageIntro
-            title="Empleados"
-            description="Maestro de personal con contrato, horario y carpeta para simular la liquidación quincenal ordinaria (sin novedades de turno)."
-          />
-          <CreateEmployeeForm positions={positions ?? []} />
-        </div>
+        <PageIntro
+          title="Empleados"
+          description="Maestro de personal con contrato, horario y carpeta para simular la liquidación quincenal ordinaria (sin novedades de turno)."
+        />
 
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard label="Activos" value={String(active.length)} />
@@ -104,22 +111,41 @@ export default async function PersonalPage() {
           />
         </div>
 
-        {employees.length === 0 ? (
-          <EmptyState
-            title="Sin empleados registrados"
-            description="Cree el primer empleado. Heredará el Horario Candela definido en Parámetros."
-          />
-        ) : (
-          <div className="grid gap-4">
-            {employees.map((e) => (
-              <EmployeeCard
-                key={e.id}
-                employee={e}
-                candelaSchedule={candela}
+        <WorkStack>
+          <WorkSection
+            kind="form"
+            title="Nuevo empleado"
+            description="Hereda el Horario Candela. Puede personalizarlo luego en su carpeta."
+            defaultOpen={employees.length === 0}
+          >
+            <CreateEmployeeForm positions={positions ?? []} embedded />
+          </WorkSection>
+
+          <WorkSection
+            kind="list"
+            title="Empleados registrados"
+            badge={<Badge tone="neutral">{employees.length}</Badge>}
+            summary={`${active.length} activos`}
+            defaultOpen
+          >
+            {employees.length === 0 ? (
+              <WorkEmptyHint
+                title="Sin empleados registrados"
+                description="Cree el primer empleado. Heredará el Horario Candela definido en Parámetros."
               />
-            ))}
-          </div>
-        )}
+            ) : (
+              <div className="grid gap-4">
+                {employees.map((e) => (
+                  <EmployeeCard
+                    key={e.id}
+                    employee={e}
+                    candelaSchedule={candela}
+                  />
+                ))}
+              </div>
+            )}
+          </WorkSection>
+        </WorkStack>
       </main>
     </>
   );

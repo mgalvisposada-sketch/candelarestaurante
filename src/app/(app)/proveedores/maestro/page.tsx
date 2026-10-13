@@ -1,5 +1,10 @@
 import { AppHeader } from "@/components/layout/app-header";
-import { Card, EmptyState, PageIntro } from "@/components/ui/primitives";
+import { Badge, Card, PageIntro } from "@/components/ui/primitives";
+import {
+  WorkEmptyHint,
+  WorkSection,
+  WorkStack,
+} from "@/components/ui/work-section";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { isSuperAdmin } from "@/types/domain";
@@ -128,52 +133,95 @@ export default async function ProveedoresMaestroPage() {
           permissions={ctx.permissions}
           isSuperAdmin={isSuperAdmin(ctx.role)}
         />
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <PageIntro
-            title="Maestro de proveedores"
-            description="Catálogo secundario: contactos, tipo (insumos o administrativo) y categorías. El trabajo diario de facturas y saldos está en Cuentas por pagar."
-          />
-          <div className="flex flex-wrap gap-2">
-            <CreateCategoryMasterForm canManage={caps.canManageCategories} />
-            <CreateSupplierForm
-              categories={categories}
-              canCreate={caps.canCreateSupplier}
-            />
-          </div>
-        </div>
+        <PageIntro
+          title="Maestro de proveedores"
+          description="Catálogo secundario: contactos, tipo (insumos o administrativo) y categorías. El trabajo diario de facturas y saldos está en Cuentas por pagar."
+        />
 
-        {categories.length > 0 ? (
-          <Card>
-            <h3 className="font-medium">Categorías de insumo</h3>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              Maestro compartido con inventario de compras.
-            </p>
-            <CategoryMasterList
-              categories={categories}
-              canManage={caps.canManageCategories}
-            />
-          </Card>
-        ) : null}
+        <WorkStack>
+          {caps.canManageCategories || caps.canCreateSupplier ? (
+            <WorkSection
+              kind="form"
+              title="Alta en maestro"
+              description="Categorías de insumo y nuevos proveedores."
+              defaultOpen={suppliers.length === 0}
+            >
+              <div className="grid gap-6 lg:grid-cols-2">
+                {caps.canManageCategories ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Nueva categoría</p>
+                    <CreateCategoryMasterForm
+                      canManage={caps.canManageCategories}
+                      embedded
+                    />
+                  </div>
+                ) : null}
+                {caps.canCreateSupplier ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Nuevo proveedor</p>
+                    <CreateSupplierForm
+                      categories={categories}
+                      canCreate={caps.canCreateSupplier}
+                      embedded
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </WorkSection>
+          ) : null}
 
-        {suppliers.length === 0 ? (
-          <EmptyState
-            title="Sin proveedores"
-            description="Cree el maestro de proveedores. Luego cargue facturas en Cuentas por pagar."
-          />
-        ) : (
-          <SupplierMasterList
-            suppliers={suppliers}
-            categories={categories}
-            balanceBySupplier={Object.fromEntries(
-              [...balanceBySupplier.entries()].map(([id, bal]) => [
-                id,
-                bal.toNumber(),
-              ]),
+          <WorkSection
+            kind="list"
+            title="Categorías de insumo"
+            description="Maestro compartido con inventario de compras."
+            badge={<Badge tone="neutral">{categories.length}</Badge>}
+            defaultOpen={categories.length > 0}
+          >
+            {categories.length === 0 ? (
+              <WorkEmptyHint
+                title="Sin categorías"
+                description="Cree la primera categoría de insumo arriba."
+              />
+            ) : (
+              <CategoryMasterList
+                categories={categories}
+                canManage={caps.canManageCategories}
+              />
             )}
-            docsCountBySupplier={Object.fromEntries(docsCountBySupplier)}
-            caps={caps}
-          />
-        )}
+          </WorkSection>
+
+          <WorkSection
+            kind="list"
+            title="Proveedores"
+            badge={<Badge tone="neutral">{suppliers.length}</Badge>}
+            summary={
+              suppliers.length === 0
+                ? "Sin proveedores"
+                : `${suppliers.length} en maestro`
+            }
+            defaultOpen
+          >
+            {suppliers.length === 0 ? (
+              <WorkEmptyHint
+                title="Sin proveedores"
+                description="Cree el maestro de proveedores. Luego cargue facturas en Cuentas por pagar."
+              />
+            ) : (
+              <SupplierMasterList
+                suppliers={suppliers}
+                categories={categories}
+                balanceBySupplier={Object.fromEntries(
+                  [...balanceBySupplier.entries()].map(([id, bal]) => [
+                    id,
+                    bal.toNumber(),
+                  ]),
+                )}
+                docsCountBySupplier={Object.fromEntries(docsCountBySupplier)}
+                caps={caps}
+              />
+            )}
+          </WorkSection>
+        </WorkStack>
       </main>
     </>
   );

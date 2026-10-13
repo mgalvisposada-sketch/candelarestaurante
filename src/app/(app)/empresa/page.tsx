@@ -15,12 +15,12 @@ export default async function EmpresaPage() {
     <>
       <AppHeader
         title="Empresa"
-        subtitle="Identidad corporativa y fecha de corte administrativa"
+        subtitle="Identidad corporativa y fecha de inicio operativo"
       />
       <main className="space-y-6 p-8">
         <PageIntro
           title="Datos societarios"
-          description="Razón social, NIT, representante legal y fecha de corte que define la línea base del empalme. Los documentos societarios se cargarán desde Documentos."
+          description="Razón social, NIT, representante legal y fecha desde la cual se llevan saldos y movimientos. Los documentos societarios se cargan en Documentos."
         />
 
         {ctx.organization ? (
@@ -38,7 +38,7 @@ export default async function EmpresaPage() {
                 </p>
               </div>
               <div className="text-right text-sm text-[var(--muted)]">
-                <div>Fecha de corte</div>
+                <div>Inicio operativo</div>
                 <div className="font-medium text-[var(--ink)]">
                   {formatDateCO(ctx.organization.administrative_cutoff_date)}
                 </div>

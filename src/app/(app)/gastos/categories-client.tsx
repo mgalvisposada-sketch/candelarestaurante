@@ -17,8 +17,14 @@ export type CategoryRow = {
 const inputClass =
   "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
 
-export function CreateExpenseCategoryForm({ canCreate }: { canCreate: boolean }) {
-  const [open, setOpen] = useState(false);
+export function CreateExpenseCategoryForm({
+  canCreate,
+  embedded = false,
+}: {
+  canCreate: boolean;
+  embedded?: boolean;
+}) {
+  const [open, setOpen] = useState(embedded);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -37,30 +43,38 @@ export function CreateExpenseCategoryForm({ canCreate }: { canCreate: boolean })
 
   return (
     <form
-      className="space-y-3 rounded-xl border border-[var(--line)] bg-white p-5"
+      className={
+        embedded
+          ? "space-y-3"
+          : "space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
+      }
       action={(fd) => {
         setError(null);
         startTransition(async () => {
           const r = await createExpenseCategoryAction(fd);
           if (!r.ok) setError(r.error ?? "Error");
-          else setOpen(false);
+          else if (!embedded) setOpen(false);
         });
       }}
     >
       <div className="flex justify-between gap-3">
         <div>
-          <h3 className="font-medium">Categoría de gasto</h3>
-          <p className="mt-1 text-xs text-[var(--muted)]">
+          {!embedded ? (
+            <h3 className="font-medium">Categoría de gasto</h3>
+          ) : null}
+          <p className={embedded ? "text-xs text-[var(--muted)]" : "mt-1 text-xs text-[var(--muted)]"}>
             Solo para el módulo Gastos. No se mezcla con categorías de Compras.
           </p>
         </div>
-        <button
-          type="button"
-          className="shrink-0 text-sm text-[var(--muted)]"
-          onClick={() => setOpen(false)}
-        >
-          Cancelar
-        </button>
+        {!embedded ? (
+          <button
+            type="button"
+            className="shrink-0 text-sm text-[var(--muted)]"
+            onClick={() => setOpen(false)}
+          >
+            Cancelar
+          </button>
+        ) : null}
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="block text-sm">

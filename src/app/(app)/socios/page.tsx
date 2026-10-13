@@ -1,5 +1,10 @@
 import { AppHeader } from "@/components/layout/app-header";
-import { Badge, Card, EmptyState, PageIntro } from "@/components/ui/primitives";
+import { Badge, Card, PageIntro } from "@/components/ui/primitives";
+import {
+  WorkEmptyHint,
+  WorkSection,
+  WorkStack,
+} from "@/components/ui/work-section";
 import { getOrgContext } from "@/lib/org-context";
 import { requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -97,13 +102,10 @@ export default async function SociosPage() {
         subtitle="Composición accionaria y cuentas socio ↔ sociedad"
       />
       <main className="space-y-6 p-8">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <PageIntro
-            title="Gobierno de socios"
-            description="La participación accionaria se gestiona aparte de los préstamos. Si el total no suma 100% se advierte, pero no se bloquea el empalme."
-          />
-          <CreateShareholderForm />
-        </div>
+        <PageIntro
+          title="Gobierno de socios"
+          description="La participación accionaria se gestiona aparte de los préstamos. Si el total no suma 100% se advierte, pero no se bloquea la operación."
+        />
 
         <div className="grid gap-4 md:grid-cols-3">
           <Card>
@@ -141,33 +143,57 @@ export default async function SociosPage() {
           </Card>
         </div>
 
-        {shareholders.length === 0 ? (
-          <EmptyState
-            title="Sin socios registrados"
-            description="Registre cada socio con identificación, porcentaje, capital registrado y estado. Las cuentas acreedor/deudor viven en entidades separadas."
-          />
-        ) : (
-          <div className="space-y-4">
-            {shareholders.map((shareholder) => {
-              const account =
-                accounts.find((a) => a.shareholder_id === shareholder.id) ??
-                null;
-              const txs = account
-                ? transactions.filter(
-                    (t) => t.shareholder_account_id === account.id,
-                  )
-                : [];
-              return (
-                <ShareholderCard
-                  key={shareholder.id}
-                  shareholder={shareholder}
-                  account={account}
-                  transactions={txs}
-                />
-              );
-            })}
-          </div>
-        )}
+        <WorkStack>
+          <WorkSection
+            kind="form"
+            title="Nuevo socio"
+            description="Identificación, participación y saldo inicial de cuenta socio ↔ sociedad."
+            defaultOpen={shareholders.length === 0}
+          >
+            <CreateShareholderForm embedded />
+          </WorkSection>
+
+          <WorkSection
+            kind="list"
+            title="Socios registrados"
+            description="Ficha, participación y movimientos de cada cuenta."
+            badge={<Badge tone="neutral">{shareholders.length}</Badge>}
+            summary={
+              shareholders.length === 0
+                ? "Aún no hay socios"
+                : `${shareholders.filter((s) => s.status === "ACTIVO").length} activos`
+            }
+            defaultOpen
+          >
+            {shareholders.length === 0 ? (
+              <WorkEmptyHint
+                title="Sin socios registrados"
+                description="Registre cada socio con identificación, porcentaje, capital registrado y estado."
+              />
+            ) : (
+              <div className="space-y-4">
+                {shareholders.map((shareholder) => {
+                  const account =
+                    accounts.find((a) => a.shareholder_id === shareholder.id) ??
+                    null;
+                  const txs = account
+                    ? transactions.filter(
+                        (t) => t.shareholder_account_id === account.id,
+                      )
+                    : [];
+                  return (
+                    <ShareholderCard
+                      key={shareholder.id}
+                      shareholder={shareholder}
+                      account={account}
+                      transactions={txs}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </WorkSection>
+        </WorkStack>
       </main>
     </>
   );

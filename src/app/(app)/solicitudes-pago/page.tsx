@@ -4,6 +4,7 @@ import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { formatCOP, money } from "@/lib/money";
+import { ensureCashFloatAccount } from "@/lib/cash-float";
 import {
   availableBalanceForAccount,
   type BalanceSnapshotInput,
@@ -43,6 +44,16 @@ export default async function SolicitudesPagoPage() {
   }
 
   const supabase = await createClient();
+  try {
+    await ensureCashFloatAccount(
+      supabase,
+      ctx.organization.id,
+      ctx.userId,
+    );
+  } catch {
+    /* la lista puede seguir sin Base si falla */
+  }
+
   const [{ data: requestRows }, { data: supplierRows }, { data: bankRows }] =
     await Promise.all([
       supabase
@@ -62,7 +73,7 @@ export default async function SolicitudesPagoPage() {
         .order("name"),
       supabase
         .from("bank_accounts")
-        .select("id, bank_name, masked_number")
+        .select("id, bank_name, account_kind, masked_number, is_cash_float")
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
         .eq("is_active", true)
@@ -71,7 +82,13 @@ export default async function SolicitudesPagoPage() {
 
   const requests = (requestRows ?? []) as PaymentRequestRow[];
   const suppliers = (supplierRows ?? []) as SupplierOption[];
-  const bankBase = (bankRows ?? []) as BankAccountOption[];
+  const bankBase = ([...(bankRows ?? [])] as BankAccountOption[]).sort(
+    (a, b) => {
+      const rank = (x: BankAccountOption) =>
+        x.is_cash_float ? 0 : x.account_kind === "CAJA" ? 1 : 2;
+      return rank(a) - rank(b);
+    },
+  );
   const bankIds = bankBase.map((b) => b.id);
   const orgCutoff = ctx.organization.administrative_cutoff_date;
 

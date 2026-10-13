@@ -1,5 +1,12 @@
 import { cn } from "@/lib/utils";
 
+export {
+  WorkEmptyHint,
+  WorkSection,
+  WorkStack,
+  type WorkSectionKind,
+} from "@/components/ui/work-section";
+
 export function Card({
   children,
   className,
@@ -13,7 +20,7 @@ export function Card({
     <div
       id={id}
       className={cn(
-        "rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 shadow-[0_1px_0_rgba(18,18,18,0.04)]",
+        "rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]",
         className,
       )}
     >
@@ -56,11 +63,11 @@ export function Badge({
   tone?: "neutral" | "ok" | "warn" | "danger" | "info" | "accent";
 }) {
   const tones = {
-    neutral: "bg-neutral-100 text-neutral-700",
-    ok: "bg-emerald-50 text-emerald-900",
+    neutral: "bg-[var(--surface-muted)] text-[var(--ink)]",
+    ok: "bg-[var(--surface-muted)] text-[var(--ok)]",
     warn: "bg-[var(--gold-soft)] text-[var(--warn)]",
     danger: "bg-[var(--accent-soft)] text-[var(--danger)]",
-    info: "bg-slate-100 text-slate-800",
+    info: "bg-[var(--surface-muted)] text-[var(--info)]",
     accent: "bg-[var(--accent-soft)] text-[var(--accent)]",
   };
   return (
@@ -100,7 +107,7 @@ export function EmptyState({
   description: string;
 }) {
   return (
-    <div className="rounded-xl border border-dashed border-[var(--line)] bg-white/60 px-6 py-12 text-center">
+    <div className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface-muted)]/60 px-6 py-12 text-center">
       <p className="font-display text-lg font-semibold">{title}</p>
       <p className="mx-auto mt-2 max-w-md text-sm text-[var(--muted)]">
         {description}
@@ -121,8 +128,8 @@ export function Button({
     primary:
       "bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-60",
     secondary:
-      "border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] hover:bg-neutral-50",
-    ghost: "text-[var(--ink)] hover:bg-black/5",
+      "border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--surface-muted)]",
+    ghost: "text-[var(--ink)] hover:bg-[var(--sidebar-hover)]",
   };
   return (
     <button

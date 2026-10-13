@@ -29,3 +29,21 @@ export const expenseSchema = z.object({
   priority: z.enum(["CRITICA", "ALTA", "NORMAL", "BAJA"]).optional(),
   notes: z.string().optional().nullable(),
 });
+
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida");
+
+export const shiftLiquidationExpenseSchema = z.object({
+  employee_id: z.string().uuid("Empleado obligatorio"),
+  period_year: z.coerce.number().int().min(2020).max(2100),
+  period_month: z.coerce.number().int().min(1).max(12),
+  period_half: z.coerce.number().int().min(1).max(2),
+  dates: z
+    .array(isoDate)
+    .min(1, "Marque al menos un día trabajado"),
+  expense_date: z.string().min(1, "Fecha obligatoria"),
+  category_id: z.string().uuid().optional().nullable().or(z.literal("")),
+  priority: z.enum(["CRITICA", "ALTA", "NORMAL", "BAJA"]).optional(),
+  notes: z.string().optional().nullable(),
+});

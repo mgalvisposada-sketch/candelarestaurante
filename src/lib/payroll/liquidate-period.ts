@@ -1,3 +1,4 @@
+import { isShiftDayContractor } from "./rates";
 import { simulateBiweekly } from "./simulate-biweekly";
 import type {
   ArlRiskLevel,
@@ -62,6 +63,9 @@ export function liquidatePeriod(input: {
   let noveltyCount = 0;
 
   for (const emp of input.employees) {
+    // Prestadores POR_TURNO se pagan como gasto (Gastos → liquidación por turno).
+    if (isShiftDayContractor(emp.employmentType)) continue;
+
     const simulation = simulateBiweekly({
       year: input.year,
       month: input.month,

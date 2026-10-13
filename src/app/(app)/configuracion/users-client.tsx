@@ -56,9 +56,13 @@ function RoleSelect({
   );
 }
 
-export function CreateSystemUserForm() {
+export function CreateSystemUserForm({
+  embedded = false,
+}: {
+  embedded?: boolean;
+}) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(embedded);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -76,7 +80,11 @@ export function CreateSystemUserForm() {
 
   return (
     <form
-      className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5"
+      className={
+        embedded
+          ? "space-y-4"
+          : "space-y-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5"
+      }
       onSubmit={(e) => {
         e.preventDefault();
         const fd = new FormData(e.currentTarget);
@@ -88,7 +96,7 @@ export function CreateSystemUserForm() {
               setError(r.error ?? "Error");
               return;
             }
-            setOpen(false);
+            if (!embedded) setOpen(false);
             router.refresh();
           } catch (err) {
             setError(
@@ -98,16 +106,18 @@ export function CreateSystemUserForm() {
         });
       }}
     >
-      <div className="flex items-center justify-between">
-        <h3 className="font-medium">Crear usuario del sistema</h3>
-        <button
-          type="button"
-          className="text-sm text-[var(--muted)]"
-          onClick={() => setOpen(false)}
-        >
-          Cancelar
-        </button>
-      </div>
+      {!embedded ? (
+        <div className="flex items-center justify-between">
+          <h3 className="font-medium">Crear usuario del sistema</h3>
+          <button
+            type="button"
+            className="text-sm text-[var(--muted)]"
+            onClick={() => setOpen(false)}
+          >
+            Cancelar
+          </button>
+        </div>
+      ) : null}
       <div className="grid gap-3 md:grid-cols-2">
         <label className="block text-sm md:col-span-2">
           <span className="mb-1.5 block text-[var(--muted)]">Nombre</span>

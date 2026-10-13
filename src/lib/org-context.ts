@@ -22,6 +22,8 @@ export type OrganizationRow = {
   currency: string;
   timezone: string;
   administrative_cutoff_date: string | null;
+  /** Base/flotante oficial del local (la define Tesorería). */
+  cash_float_target: number | string;
 };
 
 export type OrgContext = {
@@ -81,7 +83,7 @@ export async function getOrgContext(): Promise<OrgContext | null> {
       supabase
         .from("organizations")
         .select(
-          "id, legal_name, trade_name, nit, dv, company_type, incorporation_date, commercial_registration, primary_ciiu, secondary_activities, address, municipality, department, corporate_email, phone, legal_representative, currency, timezone, administrative_cutoff_date",
+          "id, legal_name, trade_name, nit, dv, company_type, incorporation_date, commercial_registration, primary_ciiu, secondary_activities, address, municipality, department, corporate_email, phone, legal_representative, currency, timezone, administrative_cutoff_date, cash_float_target",
         )
         .eq("id", membership.organization_id)
         .is("deleted_at", null)

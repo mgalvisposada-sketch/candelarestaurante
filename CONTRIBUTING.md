@@ -23,7 +23,7 @@ Si es operación → **FILIPO**, no aquí.
 - Validar inputs con schemas en server.
 - No hard delete de registros financieros; soft delete + auditoría.
 - No commitear `.env`, service role keys ni contraseñas.
-- Preferir pruebas unitarias en CxP, préstamos, empalme y dinero.
+- Preferir pruebas unitarias en CxP, préstamos, caja/tesorería y dinero.
 
 ## Revisión de PR
 

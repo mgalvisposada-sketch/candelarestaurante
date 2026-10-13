@@ -1,8 +1,8 @@
 # Candela Admin
 
-Plataforma web privada para el control **administrativo y financiero** de una empresa de restaurantes.
+Plataforma web privada para la **operación administrativa y financiera** de una empresa de restaurantes.
 
-> No es un POS ni un ERP contable. La operación del restaurante (ventas, inventarios, Food Cost, pedidos) pertenece a **FILIPO**.
+> Filipo cubre el **POS** (ventas/comandas). Candela opera el día a día: caja, tesorería, compras, inventario, cocina, gastos, personal y gobierno de socios.
 
 ## Stack
 
@@ -14,7 +14,7 @@ Plataforma web privada para el control **administrativo y financiero** de una em
 
 | Documento | Contenido |
 |-----------|-----------|
-| [docs/PRODUCT.md](docs/PRODUCT.md) | Visión, frontera FILIPO, DoD MVP |
+| [docs/PRODUCT.md](docs/PRODUCT.md) | Visión, frontera FILIPO, DoD |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitectura técnica |
 | [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Modelo de datos |
 | [docs/SECURITY.md](docs/SECURITY.md) | Auth, RLS, Storage, auditoría |
@@ -49,15 +49,15 @@ npx supabase db push
 
 ## Principios
 
-1. Simplicidad, trazabilidad, evidencia, histórico, auditoría.
+1. Operación primero: caja, liquidez y costos del local.
 2. Dinero en `NUMERIC` / `Decimal` — nunca float.
 3. Fechas visuales DD/MM/YYYY · timezone `America/Bogota` · moneda COP.
 4. Cambios de schema solo vía migraciones en `supabase/migrations/`.
 5. Sin secretos en el repositorio.
 
-## MVP 1 (en construcción)
+## Enfoque actual
 
-Login, Empresa, Socios, Empalme, Documentos, Bancos/saldos, Proveedores/CxP, Préstamos, Resumen y Acta PDF.
+Empresa + saldos iniciales, Cierre de caja, Tesorería, Compras/Inventario/Cocina, Gastos, Solicitudes de pago, Personal, Proveedores/CxP, Socios/Capital. Checklist inicial opcional (arranque). Filipo = POS.
 
 Ver Definition of Done en `docs/PRODUCT.md`.
 

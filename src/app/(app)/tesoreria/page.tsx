@@ -6,11 +6,13 @@ import {
   PageIntro,
   StatCard,
 } from "@/components/ui/primitives";
+import { WorkSection, WorkStack } from "@/components/ui/work-section";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
+import { ensureCashFloatAccount } from "@/lib/cash-float";
 import { bankKindLabel } from "@/lib/treasury";
 import {
   availableBalanceForAccount,
@@ -22,6 +24,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
   BankAccountCard,
+  CashFloatAndTransferPanel,
   CreateBankAccountForm,
   type BalanceSnapshotRow,
   type BankAccountRow,
@@ -42,7 +45,7 @@ export default async function TesoreriaPage() {
       <>
         <AppHeader
           title="Tesorería"
-          subtitle="Caja diaria, bancos y liquidez"
+          subtitle="Bancos, liquidez y aval de cierres"
         />
         <main className="p-8">
           <Card>
@@ -65,15 +68,20 @@ export default async function TesoreriaPage() {
   const today = todayInBogota();
 
   const canManageAccounts = ctxCanAccess(ctx, "tesoreria.cuentas");
-  const canDeclare = ctxCanAccess(ctx, "tesoreria.caja.declarar");
   const canAvalar = ctxCanAccess(ctx, "tesoreria.caja.avalar");
   const canSeeCaja =
-    ctxCanAccess(ctx, "tesoreria.caja") || canDeclare || canAvalar;
+    ctxCanAccess(ctx, "tesoreria.caja") || canAvalar;
+
+  try {
+    await ensureCashFloatAccount(supabase, orgId, ctx.userId);
+  } catch {
+    /* sigue sin Base si falla */
+  }
 
   const { data: accountRows } = await supabase
     .from("bank_accounts")
     .select(
-      "id, bank_name, account_kind, account_type, masked_number, holder_name, is_active, notes",
+      "id, bank_name, account_kind, account_type, masked_number, holder_name, is_active, notes, is_cash_float",
     )
     .eq("organization_id", orgId)
     .is("deleted_at", null)
@@ -149,7 +157,7 @@ export default async function TesoreriaPage() {
     const { data: closeRows } = await supabase
       .from("cash_daily_closes")
       .select(
-        "id, business_date, status, cash_float, cash_sales, card_sales, transfer_sales, cash_account_id, card_account_id, transfer_account_id, pos_cash_amount, pos_card_amount, pos_transfer_amount, bank_card_amount, cash_credited, card_credited, transfer_credited, rejection_reason, comments, submitted_at, reviewed_at",
+        "id, business_date, status, cash_float, cash_sales, card_sales, card_debit_sales, card_credit_sales, transfer_sales, cash_account_id, card_account_id, transfer_account_id, pos_cash_amount, pos_card_amount, pos_transfer_amount, bank_card_amount, cash_credited, card_credited, transfer_credited, rejection_reason, comments, submitted_at, reviewed_at",
       )
       .eq("organization_id", orgId)
       .is("deleted_at", null)
@@ -193,10 +201,11 @@ export default async function TesoreriaPage() {
     snapshots.length +
     snapshots.filter((s) => s.verification_status === "PENDIENTE").length;
 
-  const todayClose =
-    cashCloses.find((c) => c.business_date === today) ?? null;
   const pendingReview = cashCloses.filter((c) => c.status === "EN_REVISION");
-  const history = cashCloses.filter((c) => c.business_date !== today).slice(0, 12);
+  const history = cashCloses
+    .filter((c) => c.business_date !== today)
+    .slice(0, 12);
+  const cashFloatTarget = Number(ctx.organization.cash_float_target ?? 0);
 
   const availableByAccount = new Map(
     accounts.map((a) => [
@@ -207,6 +216,10 @@ export default async function TesoreriaPage() {
       }).toFixed(2),
     ]),
   );
+  const floatAccount = accounts.find((a) => a.is_cash_float && a.is_active);
+  const cashFloatCurrent = floatAccount
+    ? Number(availableByAccount.get(floatAccount.id) ?? 0)
+    : 0;
 
   const movementsByAccount = new Map<string, BankTransactionRow[]>();
   for (const tx of movementRows) {
@@ -219,80 +232,85 @@ export default async function TesoreriaPage() {
     <>
       <AppHeader
         title="Tesorería"
-        subtitle="Caja diaria, bancos y liquidez operativa"
+        subtitle="Bancos, liquidez y aval de cierres"
       />
-      <main className="space-y-8 p-8">
+      <main className="space-y-6 p-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
-            title="Control de caja y liquidez"
-            description="Declare el cierre diario, avale contra POS/banco y opere egresos solo desde saldos disponibles en cada cuenta."
+            title="Liquidez y cuentas"
+            description="Avalar cierres, definir la base y mover plata entre cuentas. El local reporta en Cierre de caja."
           />
-          {canManageAccounts ? (
-            <CreateBankAccountForm defaultCutoff={cutoff} />
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--muted)]">
+            {cutoff ? (
+              <span>
+                Inicio operativo{" "}
+                <Link href="/empresa" className="font-medium text-[var(--accent)]">
+                  {formatDateCO(cutoff)}
+                </Link>
+              </span>
+            ) : (
+              <Link href="/empresa" className="font-medium text-[var(--accent)]">
+                Definir inicio operativo en Empresa →
+              </Link>
+            )}
+          </div>
         </div>
 
-        {!cutoff ? (
-          <Card>
-            <p className="text-sm text-[var(--muted)]">
-              Aún no hay fecha de corte en Empresa. Puede operar caja, pero
-              conviene definir el corte de empalme para el saldo inicial.
-            </p>
-            <Link
-              href="/empresa"
-              className="mt-3 inline-block text-sm font-medium text-[var(--accent)]"
-            >
-              Ir a Empresa →
-            </Link>
-          </Card>
-        ) : (
-          <Card>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm text-[var(--muted)]">
-                Fecha de corte administrativa:{" "}
-                <strong className="text-[var(--ink)]">
-                  {formatDateCO(cutoff)}
-                </strong>
-              </p>
-              <Link href="/empalme" className="text-sm text-[var(--accent)]">
-                Ver empalme →
-              </Link>
-            </div>
-          </Card>
-        )}
-
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <StatCard
             label="Liquidez disponible"
             value={formatCOP(totalLiquidity)}
             hint="Corte + ingresos − egresos"
           />
           <StatCard label="Bancos" value={formatCOP(byKind.BANCO)} />
-          <StatCard label="Caja" value={formatCOP(byKind.CAJA)} />
-          <StatCard label="Pasarelas" value={formatCOP(byKind.PASARELA)} />
-          <StatCard label="Otros" value={formatCOP(byKind.OTRO)} />
+          <StatCard
+            label="Caja (disponible)"
+            value={formatCOP(byKind.CAJA)}
+            hint="Ventas efectivo acreditadas"
+          />
+          <StatCard
+            label="Base (actual / meta)"
+            value={`${formatCOP(cashFloatCurrent)} / ${formatCOP(cashFloatTarget)}`}
+            hint={
+              cashFloatCurrent + 0.009 < cashFloatTarget
+                ? `Faltan ${formatCOP(cashFloatTarget - cashFloatCurrent)}`
+                : "Flotante operativo"
+            }
+          />
+          <StatCard
+            label="Pasarelas / otros"
+            value={formatCOP(
+              (Number(byKind.PASARELA) + Number(byKind.OTRO)).toFixed(2),
+            )}
+          />
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {pendingReview.length > 0 ? (
+            <Badge tone="warn">
+              Cierres por avalar: {pendingReview.length}
+            </Badge>
+          ) : null}
           <Badge tone="ok">Confirmados: {confirmed}</Badge>
           <Badge tone="warn">Declarados: {declared}</Badge>
-          <Badge tone="danger">
-            Pendientes / sin saldo: {Math.max(pending, 0)}
-          </Badge>
-          <Badge tone="neutral">Cuentas: {accounts.length}</Badge>
-          {pendingReview.length > 0 ? (
-            <Badge tone="warn">Cierres por avalar: {pendingReview.length}</Badge>
+          {Math.max(pending, 0) > 0 ? (
+            <Badge tone="danger">
+              Pendientes / sin saldo: {Math.max(pending, 0)}
+            </Badge>
           ) : null}
+          <Badge tone="neutral">Cuentas: {accounts.length}</Badge>
         </div>
 
         {canSeeCaja ? (
           <CashCloseSection
             accounts={accounts}
-            todayClose={todayClose}
-            pendingReview={pendingReview}
+            todayClose={null}
+            pendingReview={canAvalar ? pendingReview : []}
             history={history}
-            canDeclare={canDeclare}
+            canDeclare={false}
             canAvalar={canAvalar}
+            cashFloatTarget={cashFloatTarget}
+            cashFloatCurrent={cashFloatCurrent}
           />
         ) : null}
 
@@ -300,58 +318,101 @@ export default async function TesoreriaPage() {
           <div>
             <h2 className="font-display text-2xl font-semibold">Cuentas</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Maestro de bancos, caja y pasarelas. El disponible refleja el
-              saldo de corte más movimientos posteriores.
+              Defina la base del local y use traspasos para recomponerla. Toque
+              una cuenta para el detalle.
             </p>
           </div>
 
-          {accounts.length === 0 ? (
-            <EmptyState
-              title="Sin cuentas registradas"
-              description="Agregue bancos, caja o pasarelas para construir la liquidez y destinar los cierres diarios."
-            />
-          ) : (
-            <div className="space-y-4">
-              {accounts.map((account) => (
-                <BankAccountCard
-                  key={account.id}
-                  account={account}
-                  snapshot={
-                    snapshots.find((s) => s.bank_account_id === account.id) ??
-                    null
-                  }
-                  defaultCutoff={cutoff}
-                  availableBalance={availableByAccount.get(account.id)}
-                  movements={movementsByAccount.get(account.id) ?? []}
-                  canManage={canManageAccounts}
-                />
-              ))}
-            </div>
-          )}
+          <WorkStack>
+            {canManageAccounts ? (
+              <WorkSection
+                kind="form"
+                title="Nueva cuenta"
+                description="Banco, caja o pasarela con saldo inicial opcional."
+                defaultOpen={accounts.length === 0}
+              >
+                <CreateBankAccountForm defaultCutoff={cutoff} embedded />
+              </WorkSection>
+            ) : null}
 
-          {accounts.length > 0 ? (
-            <Card>
-              <h3 className="font-medium">Resumen por tipo</h3>
-              <ul className="mt-3 space-y-1 text-sm text-[var(--muted)]">
-                {(["BANCO", "CAJA", "PASARELA", "OTRO"] as const).map((kind) => {
-                  const count = accounts.filter(
-                    (a) => a.account_kind === kind,
-                  ).length;
-                  if (count === 0) return null;
-                  return (
-                    <li key={kind} className="flex justify-between gap-3">
-                      <span>
-                        {bankKindLabel(kind)} ({count})
-                      </span>
-                      <span className="font-medium text-[var(--ink)]">
-                        {formatCOP(byKind[kind])}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </Card>
-          ) : null}
+            <CashFloatAndTransferPanel
+              cashFloatTarget={cashFloatTarget}
+              accounts={accounts}
+              availableByAccount={Object.fromEntries(availableByAccount)}
+              canManage={canManageAccounts}
+              defaultCutoff={cutoff}
+            />
+
+            <WorkSection
+              kind="list"
+              title="Cuentas registradas"
+              badge={<Badge tone="neutral">{accounts.length}</Badge>}
+              summary={
+                accounts.length === 0
+                  ? "Sin cuentas"
+                  : `${accounts.length} cuentas activas`
+              }
+              defaultOpen
+            >
+              {accounts.length === 0 ? (
+                <EmptyState
+                  title="Sin cuentas registradas"
+                  description="Agregue bancos, caja o pasarelas para construir la liquidez y destinar los cierres diarios."
+                />
+              ) : (
+                <div className="space-y-3">
+                  {accounts.map((account) => (
+                    <BankAccountCard
+                      key={account.id}
+                      account={account}
+                      snapshot={
+                        snapshots.find(
+                          (s) => s.bank_account_id === account.id,
+                        ) ?? null
+                      }
+                      defaultCutoff={cutoff}
+                      availableBalance={availableByAccount.get(account.id)}
+                      movements={movementsByAccount.get(account.id) ?? []}
+                      canManage={canManageAccounts}
+                      cashFloatAtLocal={
+                        account.is_cash_float ? cashFloatTarget : null
+                      }
+                      cashFloatDate={null}
+                    />
+                  ))}
+                </div>
+              )}
+            </WorkSection>
+
+            {accounts.length > 0 ? (
+              <WorkSection
+                kind="tools"
+                title="Resumen por tipo"
+                defaultOpen={false}
+              >
+                <ul className="space-y-1 text-sm text-[var(--muted)]">
+                  {(["BANCO", "CAJA", "PASARELA", "OTRO"] as const).map(
+                    (kind) => {
+                      const count = accounts.filter(
+                        (a) => a.account_kind === kind,
+                      ).length;
+                      if (count === 0) return null;
+                      return (
+                        <li key={kind} className="flex justify-between gap-3">
+                          <span>
+                            {bankKindLabel(kind)} ({count})
+                          </span>
+                          <span className="font-medium text-[var(--ink)]">
+                            {formatCOP(byKind[kind])}
+                          </span>
+                        </li>
+                      );
+                    },
+                  )}
+                </ul>
+              </WorkSection>
+            ) : null}
+          </WorkStack>
         </section>
       </main>
     </>

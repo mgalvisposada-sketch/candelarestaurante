@@ -2,34 +2,35 @@
 
 ## Prioridades
 
-Orden: **confiabilidad del empalme y la deuda** antes que amplitud funcional.
+Orden: **operación diaria del local** (caja, tesorería, costos, pagos, personal) antes que ceremonias de arranque o ampliaciones de gobierno.
+
+Filipo = POS por ahora; Candela absorbe el resto de la operación administrativa.
 
 ---
 
-## FASE MVP 1 — Línea base y empalme
+## FASE MVP 1 — Arranque + operación base
 
-**Objetivo:** Sentarse con socios y responder quiénes somos, qué hay, qué se debe, qué está confirmado, y descargar Acta + Resumen PDF.
+**Objetivo:** Configurar empresa, saldos iniciales y operar liquidez, CxP y socios sin depender de un “empalme” ceremonial.
 
 ### Incluye
 
 - [ ] Login / Auth / RBAC base
-- [ ] Organización (Empresa) + fecha de corte
+- [ ] Organización (Empresa) + fecha de inicio operativo
 - [ ] Socios y composición accionaria (+ advertencia ≠ 100%)
 - [ ] Cuentas socio↔sociedad (entidad separada)
-- [ ] Módulo Empalme (ítems, estados, % , pendientes, cierre, snapshot)
+- [ ] Checklist inicial opcional (ítems, estados, cierre/snapshot) — no bloquea operación
 - [ ] Document Center (upload, metadata, signed URLs)
 - [ ] Bancos / caja / pasarelas + saldos iniciales + evidencia
+- [ ] Cierre de caja + aval en Tesorería
 - [ ] Proveedores
 - [ ] CxP (documentos, saldos, prioridades, aging básico)
 - [ ] Préstamos de socios (alta, desembolsos, KPIs básicos)
 - [ ] Uso del capital (`funding_allocations`) mínimo
-- [ ] Resumen de Empalme
-- [ ] Acta de Empalme PDF + Resumen Línea Base PDF
 - [ ] `audit_logs` base
 - [ ] Migraciones + RLS
 - [ ] Docs de producto/arquitectura
 - [ ] CI lint/typecheck/test/build
-- [ ] Stub `/integrations/filipo`
+- [ ] Stub `/integrations/filipo` (POS → agregados futuros)
 
 ### Definition of Done
 
@@ -55,7 +56,7 @@ Ver `docs/PRODUCT.md` § Definition of Done MVP 1.
 - [ ] SST documental/económico
 - [ ] Contabilidad/Tributario (calendario, obligaciones, dashboard próximos)
 - [ ] Contratos y vencimientos
-- [ ] Activos de empalme
+- [ ] Activos de arranque
 - [ ] Opening inventory summary (categorías, no SKU)
 
 ---
@@ -94,7 +95,7 @@ POS, comandas, recetas, inventario operativo diario, producción, Food Cost oper
 | Scaffold Next.js + Supabase | Inicio MVP 1 |
 | Migraciones + RLS | Antes de UI de datos |
 | CI + Vercel Preview | Con primer PR |
-| Tests unitarios críticos | Con lógica de CxP/préstamos/empalme |
+| Tests unitarios críticos | Con lógica de CxP/préstamos/caja/tesorería |
 | E2E flujos críticos | Antes de cerrar MVP 1 |
 
 ---

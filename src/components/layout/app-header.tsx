@@ -1,3 +1,5 @@
+import { ThemeToggle } from "@/components/theme/theme-toggle";
+
 export function AppHeader({
   title,
   subtitle,
@@ -15,11 +17,14 @@ export function AppHeader({
           <p className="mt-1 truncate text-sm text-[var(--muted)]">{subtitle}</p>
         ) : null}
       </div>
-      <div className="hidden text-right text-xs text-[var(--muted)] sm:block">
-        <div className="font-medium uppercase tracking-[0.14em] text-[var(--accent)]">
-          America/Bogota
+      <div className="flex shrink-0 items-center gap-3">
+        <div className="hidden text-right text-xs text-[var(--muted)] sm:block">
+          <div className="font-medium uppercase tracking-[0.14em] text-[var(--accent)]">
+            America/Bogota
+          </div>
+          <div className="mt-0.5">Moneda: COP</div>
         </div>
-        <div className="mt-0.5">Moneda: COP</div>
+        <ThemeToggle variant="header" className="hidden md:inline-flex" />
       </div>
     </header>
   );

@@ -1,5 +1,6 @@
 import { AppHeader } from "@/components/layout/app-header";
-import { Card, PageIntro } from "@/components/ui/primitives";
+import { Badge, Card, PageIntro } from "@/components/ui/primitives";
+import { WorkSection, WorkStack } from "@/components/ui/work-section";
 import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
 import { resolveEffectivePermissions, ctxCanAccess } from "@/lib/permissions";
@@ -123,71 +124,89 @@ export default async function ConfiguracionPage() {
         title="Configuración"
         subtitle="Usuarios, roles, permisos y parámetros de la organización"
       />
-      <main className="space-y-10 p-8">
-        {canManageUsers ? (
-          <section className="space-y-4">
-            <div className="flex flex-wrap items-end justify-between gap-4">
-              <PageIntro
+      <main className="space-y-6 p-8">
+        <PageIntro
+          title="Configuración"
+          description="Usuarios, roles y permisos de la organización."
+        />
+
+        <WorkStack>
+          {canManageUsers ? (
+            <>
+              <WorkSection
+                kind="form"
+                title="Nuevo usuario"
+                description="Cree accesos y asigne un rol inicial."
+                defaultOpen={users.length === 0}
+              >
+                <CreateSystemUserForm embedded />
+              </WorkSection>
+              <WorkSection
+                kind="list"
                 title="Usuarios del sistema"
-                description="Cree accesos, asigne roles y actualice contraseñas."
-              />
-              <CreateSystemUserForm />
-            </div>
+                description="Roles y contraseñas."
+                badge={<Badge tone="neutral">{users.length}</Badge>}
+                defaultOpen
+              >
+                <SystemUsersTable users={users} currentUserId={ctx.userId} />
+              </WorkSection>
+            </>
+          ) : null}
 
-            <SystemUsersTable users={users} currentUserId={ctx.userId} />
-          </section>
-        ) : null}
-
-        {canManagePermissions ? (
-          <section className="space-y-4">
-            <PageIntro
+          {canManagePermissions ? (
+            <WorkSection
+              kind="tools"
               title="Permisos por módulo"
               description="Define a qué módulos y submódulos puede entrar cada usuario. El super admin siempre tiene acceso total."
-            />
-            <PermissionsManager
-              users={permissionUsers}
-              canGrantPrivilegedConfig={isSuperAdmin(ctx.role)}
-            />
-          </section>
-        ) : null}
+              defaultOpen
+            >
+              <PermissionsManager
+                users={permissionUsers}
+                canGrantPrivilegedConfig={isSuperAdmin(ctx.role)}
+              />
+            </WorkSection>
+          ) : null}
 
-        {!canManageUsers && !canManagePermissions ? (
-          <Card>
-            <h3 className="font-medium">Tu acceso</h3>
-            <p className="mt-2 text-sm text-[var(--muted)]">
-              {ctx.email ?? "Sin correo"} ·{" "}
-              {ctx.role ? ROLE_LABELS[ctx.role] : "Sin rol"}
-            </p>
-            <p className="mt-3 text-sm text-[var(--muted)]">
-              No tienes permisos de administración en este módulo.
-            </p>
-          </Card>
-        ) : null}
+          {!canManageUsers && !canManagePermissions ? (
+            <Card>
+              <h3 className="font-medium">Tu acceso</h3>
+              <p className="mt-2 text-sm text-[var(--muted)]">
+                {ctx.email ?? "Sin correo"} ·{" "}
+                {ctx.role ? ROLE_LABELS[ctx.role] : "Sin rol"}
+              </p>
+              <p className="mt-3 text-sm text-[var(--muted)]">
+                No tienes permisos de administración en este módulo.
+              </p>
+            </Card>
+          ) : null}
 
-        <section className="grid gap-4 md:grid-cols-2">
-          <Card>
-            <h3 className="font-medium">Roles</h3>
-            <ul className="mt-3 space-y-3 text-sm text-[var(--muted)]">
-              {(Object.keys(ROLE_LABELS) as AppRole[]).map((role) => (
-                <li key={role}>
-                  <span className="font-medium text-[var(--ink)]">
-                    {ROLE_LABELS[role]}
-                  </span>
-                  <span> — {ROLE_DESCRIPTIONS[role]}</span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-          <Card>
-            <h3 className="font-medium">Seguridad</h3>
-            <ul className="mt-3 space-y-2 text-sm text-[var(--muted)]">
-              <li>Permisos por módulo y submódulo por usuario</li>
-              <li>Supabase Auth + RLS multi-tenant</li>
-              <li>Cambios de acceso auditados</li>
-              <li>Cierre de sesión en el menú lateral</li>
-            </ul>
-          </Card>
-        </section>
+          <WorkSection kind="tools" title="Roles y seguridad" defaultOpen={false}>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <h4 className="font-medium">Roles</h4>
+                <ul className="mt-3 space-y-3 text-sm text-[var(--muted)]">
+                  {(Object.keys(ROLE_LABELS) as AppRole[]).map((role) => (
+                    <li key={role}>
+                      <span className="font-medium text-[var(--ink)]">
+                        {ROLE_LABELS[role]}
+                      </span>
+                      <span> — {ROLE_DESCRIPTIONS[role]}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-medium">Seguridad</h4>
+                <ul className="mt-3 space-y-2 text-sm text-[var(--muted)]">
+                  <li>Permisos por módulo y submódulo por usuario</li>
+                  <li>Supabase Auth + RLS multi-tenant</li>
+                  <li>Cambios de acceso auditados</li>
+                  <li>Cierre de sesión en el menú lateral</li>
+                </ul>
+              </div>
+            </div>
+          </WorkSection>
+        </WorkStack>
       </main>
     </>
   );

@@ -5,7 +5,14 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess } from "@/lib/permissions";
 import { todayInBogota } from "@/lib/dates";
+import { ensureCashFloatAccount } from "@/lib/cash-float";
 import { resolveCashCloseDestinations } from "@/lib/treasury";
+import {
+  availableBalanceForAccount,
+  type BalanceSnapshotInput,
+  type BankTransactionInput,
+} from "@/lib/treasury-balance";
+import { formatCOP } from "@/lib/money";
 import {
   bankAccountSchema,
   bankBalanceSnapshotSchema,
@@ -14,6 +21,8 @@ import {
   cashDailyCloseApproveSchema,
   cashDailyCloseDraftSchema,
   cashDailyCloseRejectSchema,
+  cashFloatTargetSchema,
+  treasuryTransferSchema,
 } from "@/validations/cash-daily-close";
 import type { ActionResult } from "../empresa/actions";
 
@@ -31,9 +40,46 @@ function parseMoney(raw: string | null | undefined): number | null {
 
 function revalidateTreasuryPaths() {
   revalidatePath("/tesoreria");
+  revalidatePath("/cierre-caja");
   revalidatePath("/inicio");
   revalidatePath("/solicitudes-pago");
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
+}
+
+function canDeclareCashClose(ctx: NonNullable<Awaited<ReturnType<typeof getOrgContext>>>) {
+  return (
+    ctxCanAccess(ctx, "cierre-caja.declarar") ||
+    ctxCanAccess(ctx, "tesoreria.caja.declarar")
+  );
+}
+
+/** Garantiza la cuenta Base/flotante de la org. */
+export async function ensureCashFloatAccountAction(): Promise<
+  ActionResult & { accountId?: string }
+> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (
+    !ctxCanAccess(ctx, "tesoreria.cuentas") &&
+    !canDeclareCashClose(ctx) &&
+    !ctxCanAccess(ctx, "tesoreria.caja")
+  ) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  try {
+    const supabase = await createClient();
+    const accountId = await ensureCashFloatAccount(
+      supabase,
+      ctx.organization.id,
+      ctx.userId,
+    );
+    revalidateTreasuryPaths();
+    return { ok: true, id: accountId, accountId };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Error" };
+  }
 }
 
 type CashCloseStatus = "BORRADOR" | "EN_REVISION" | "AVALADO" | "RECHAZADO";
@@ -46,7 +92,7 @@ async function loadCashClose(
   const { data, error } = await supabase
     .from("cash_daily_closes")
     .select(
-      "id, business_date, status, cash_float, cash_sales, card_sales, transfer_sales, cash_account_id, card_account_id, transfer_account_id, cash_credited, card_credited, transfer_credited",
+      "id, business_date, status, cash_float, cash_sales, card_sales, card_debit_sales, card_credit_sales, transfer_sales, cash_account_id, card_account_id, transfer_account_id, cash_credited, card_credited, transfer_credited",
     )
     .eq("id", closeId)
     .eq("organization_id", orgId)
@@ -60,6 +106,8 @@ async function loadCashClose(
     cash_float: number;
     cash_sales: number;
     card_sales: number;
+    card_debit_sales: number;
+    card_credit_sales: number;
     transfer_sales: number;
     cash_account_id: string | null;
     card_account_id: string | null;
@@ -160,6 +208,7 @@ export async function createBankAccountAction(
   });
 
   revalidatePath("/tesoreria");
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   revalidatePath("/inicio");
   return { ok: true, id: data.id };
@@ -258,6 +307,236 @@ export async function softDeleteBankAccountAction(
   return { ok: true, id: accountId };
 }
 
+export async function updateCashFloatTargetAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "tesoreria.cuentas")) {
+    return { ok: false, error: "Sin permiso para definir la base" };
+  }
+
+  const parsed = cashFloatTargetSchema.safeParse({
+    cash_float_target: formData.get("cash_float_target"),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+    };
+  }
+  const target = parseMoney(parsed.data.cash_float_target);
+  if (target === null) return { ok: false, error: "Base inválida" };
+
+  const supabase = await createClient();
+  try {
+    await ensureCashFloatAccount(
+      supabase,
+      ctx.organization.id,
+      ctx.userId,
+    );
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Error" };
+  }
+
+  const { error } = await supabase
+    .from("organizations")
+    .update({
+      cash_float_target: target,
+      updated_by: ctx.userId,
+    })
+    .eq("id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "UPDATE",
+    entity: "organizations",
+    entity_id: ctx.organization.id,
+    new_values: { cash_float_target: target },
+  });
+
+  revalidateTreasuryPaths();
+  revalidatePath("/empresa");
+  return { ok: true, id: ctx.organization.id };
+}
+
+/**
+ * Traspaso entre cuentas de tesorería (ej. banco → caja para recomponer base).
+ * Crea egreso en origen + ingreso en destino.
+ */
+export async function createTreasuryTransferAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "tesoreria.cuentas")) {
+    return { ok: false, error: "Sin permiso para traspasos" };
+  }
+
+  const parsed = treasuryTransferSchema.safeParse({
+    from_account_id: formData.get("from_account_id"),
+    to_account_id: formData.get("to_account_id"),
+    amount: formData.get("amount"),
+    transfer_date: formData.get("transfer_date") || todayInBogota(),
+    reference: formData.get("reference"),
+    notes: formData.get("notes"),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+    };
+  }
+
+  const amount = parseMoney(parsed.data.amount);
+  if (amount === null || amount <= 0) {
+    return { ok: false, error: "Monto de traspaso inválido" };
+  }
+
+  const supabase = await createClient();
+  const orgId = ctx.organization.id;
+  const fromId = parsed.data.from_account_id;
+  const toId = parsed.data.to_account_id;
+
+  const { data: accounts, error: accError } = await supabase
+    .from("bank_accounts")
+    .select("id, bank_name, is_active")
+    .eq("organization_id", orgId)
+    .in("id", [fromId, toId])
+    .is("deleted_at", null);
+
+  if (accError) return { ok: false, error: accError.message };
+  const fromAcc = (accounts ?? []).find((a) => a.id === fromId);
+  const toAcc = (accounts ?? []).find((a) => a.id === toId);
+  if (!fromAcc?.is_active || !toAcc?.is_active) {
+    return { ok: false, error: "Ambas cuentas deben estar activas" };
+  }
+
+  const orgCutoff = ctx.organization.administrative_cutoff_date;
+  let snapQuery = supabase
+    .from("bank_balance_snapshots")
+    .select(
+      "bank_account_id, cutoff_date, opening_balance, verification_status",
+    )
+    .eq("organization_id", orgId)
+    .eq("bank_account_id", fromId)
+    .is("deleted_at", null);
+  if (orgCutoff) snapQuery = snapQuery.eq("cutoff_date", orgCutoff);
+  const { data: snapRows } = await snapQuery;
+  let snapshots = (snapRows ?? []) as BalanceSnapshotInput[];
+  if (snapshots.length === 0) {
+    const { data: latestSnaps } = await supabase
+      .from("bank_balance_snapshots")
+      .select(
+        "bank_account_id, cutoff_date, opening_balance, verification_status",
+      )
+      .eq("organization_id", orgId)
+      .eq("bank_account_id", fromId)
+      .is("deleted_at", null)
+      .order("cutoff_date", { ascending: false })
+      .limit(1);
+    snapshots = (latestSnaps ?? []) as BalanceSnapshotInput[];
+  }
+
+  const { data: txRows } = await supabase
+    .from("bank_transactions")
+    .select("bank_account_id, transaction_date, debit, credit")
+    .eq("organization_id", orgId)
+    .eq("bank_account_id", fromId)
+    .is("deleted_at", null);
+
+  const available = availableBalanceForAccount({
+    accountId: fromId,
+    snapshots,
+    transactions: (txRows ?? []) as BankTransactionInput[],
+    orgCutoff,
+  });
+  if (available.lt(amount)) {
+    return {
+      ok: false,
+      error: `Fondos insuficientes en ${fromAcc.bank_name}. Disponible ${formatCOP(available)}; traspaso ${formatCOP(amount)}.`,
+    };
+  }
+
+  const ref =
+    emptyToNull(parsed.data.reference) ??
+    `traspaso-${parsed.data.transfer_date}`;
+  const noteBit = emptyToNull(parsed.data.notes);
+  const descOut = `Traspaso a ${toAcc.bank_name}${noteBit ? ` · ${noteBit}` : ""}`;
+  const descIn = `Traspaso desde ${fromAcc.bank_name}${noteBit ? ` · ${noteBit}` : ""}`;
+
+  const { data: outTx, error: outError } = await supabase
+    .from("bank_transactions")
+    .insert({
+      organization_id: orgId,
+      bank_account_id: fromId,
+      transaction_date: parsed.data.transfer_date,
+      description: descOut,
+      reference: ref,
+      debit: amount,
+      credit: 0,
+      origin: "tesoreria.traspaso",
+      category: "TRASPASO",
+      linked_entity_type: "bank_accounts",
+      linked_entity_id: toId,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+  if (outError) return { ok: false, error: outError.message };
+
+  const { data: inTx, error: inError } = await supabase
+    .from("bank_transactions")
+    .insert({
+      organization_id: orgId,
+      bank_account_id: toId,
+      transaction_date: parsed.data.transfer_date,
+      description: descIn,
+      reference: ref,
+      debit: 0,
+      credit: amount,
+      origin: "tesoreria.traspaso",
+      category: "TRASPASO",
+      linked_entity_type: "bank_transactions",
+      linked_entity_id: outTx.id,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+
+  if (inError) {
+    await supabase
+      .from("bank_transactions")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", outTx.id);
+    return { ok: false, error: inError.message };
+  }
+
+  await supabase.from("audit_logs").insert({
+    organization_id: orgId,
+    user_id: ctx.userId,
+    action: "CREATE",
+    entity: "bank_transactions",
+    entity_id: outTx.id,
+    new_values: {
+      kind: "TRASPASO",
+      from_account_id: fromId,
+      to_account_id: toId,
+      amount,
+      in_transaction_id: inTx.id,
+    },
+  });
+
+  revalidateTreasuryPaths();
+  return { ok: true, id: outTx.id };
+}
+
 export async function upsertBankBalanceSnapshotAction(
   accountId: string,
   formData: FormData,
@@ -322,6 +601,7 @@ export async function upsertBankBalanceSnapshotAction(
 
     revalidatePath("/tesoreria");
     revalidatePath("/inicio");
+    revalidatePath("/checklist-inicial");
     revalidatePath("/empalme");
     return { ok: true, id: existing.id };
   }
@@ -357,6 +637,7 @@ export async function upsertBankBalanceSnapshotAction(
 
   revalidatePath("/tesoreria");
   revalidatePath("/inicio");
+  revalidatePath("/checklist-inicial");
   revalidatePath("/empalme");
   return { ok: true, id: data.id };
 }
@@ -366,7 +647,7 @@ export async function upsertCashDailyCloseDraftAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "tesoreria.caja.declarar")) {
+  if (!canDeclareCashClose(ctx)) {
     return { ok: false, error: "Sin permiso para declarar cierre de caja" };
   }
 
@@ -374,8 +655,11 @@ export async function upsertCashDailyCloseDraftAction(
     business_date: formData.get("business_date") || todayInBogota(),
     cash_float: formData.get("cash_float"),
     cash_sales: formData.get("cash_sales"),
-    card_sales: formData.get("card_sales"),
+    card_debit_sales: formData.get("card_debit_sales") || "0",
+    card_credit_sales: formData.get("card_credit_sales") || "0",
     transfer_sales: formData.get("transfer_sales") || "0",
+    card_account_id: formData.get("card_account_id"),
+    transfer_account_id: formData.get("transfer_account_id"),
     comments: formData.get("comments"),
   });
   if (!parsed.success) {
@@ -385,49 +669,61 @@ export async function upsertCashDailyCloseDraftAction(
     };
   }
 
+  /** Restante de base contado en el local (puede diferir del target si hubo gastos). */
   const cashFloat = parseMoney(parsed.data.cash_float);
   const cashSales = parseMoney(parsed.data.cash_sales);
-  const cardSales = parseMoney(parsed.data.card_sales);
+  const cardDebit = parseMoney(parsed.data.card_debit_sales);
+  const cardCredit = parseMoney(parsed.data.card_credit_sales);
   const transferSales = parseMoney(parsed.data.transfer_sales);
   if (
     cashFloat === null ||
     cashSales === null ||
-    cardSales === null ||
+    cardDebit === null ||
+    cardCredit === null ||
     transferSales === null
   ) {
     return { ok: false, error: "Montos inválidos" };
   }
+  const cardSales = cardDebit + cardCredit;
 
   const supabase = await createClient();
   const orgId = ctx.organization.id;
 
+  try {
+    await ensureCashFloatAccount(supabase, orgId, ctx.userId);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Error" };
+  }
+
   const { data: accounts, error: accError } = await supabase
     .from("bank_accounts")
-    .select("id, account_kind, is_active")
+    .select("id, account_kind, is_active, is_cash_float")
     .eq("organization_id", orgId)
     .is("deleted_at", null);
 
   if (accError) return { ok: false, error: accError.message };
 
-  const destinations = resolveCashCloseDestinations(accounts ?? []);
+  const destinations = resolveCashCloseDestinations(accounts ?? [], {
+    cardAccountId: emptyToNull(parsed.data.card_account_id),
+    transferAccountId: emptyToNull(parsed.data.transfer_account_id),
+  });
   if (!destinations.cashAccountId) {
     return {
       ok: false,
       error:
-        "Falta una cuenta de tipo Caja en Tesorería para cargar el efectivo",
+        "Falta una cuenta de tipo Caja en Tesorería para el efectivo del local",
     };
   }
-  if (!destinations.cardAccountId) {
+  if (!destinations.cardAccountId || !destinations.transferAccountId) {
     return {
       ok: false,
       error:
-        "Falta una cuenta Banco o Pasarela en Tesorería para datáfono y transferencias",
+        "Falta una cuenta Banco o Pasarela donde aterrice la adquirencia / transferencias",
     };
   }
   const cashAccountId = destinations.cashAccountId;
   const cardAccountId = destinations.cardAccountId;
-  const transferAccountId =
-    destinations.transferAccountId ?? destinations.cardAccountId;
+  const transferAccountId = destinations.transferAccountId;
 
   const { data: existing } = await supabase
     .from("cash_daily_closes")
@@ -454,6 +750,8 @@ export async function upsertCashDailyCloseDraftAction(
       .update({
         cash_float: cashFloat,
         cash_sales: cashSales,
+        card_debit_sales: cardDebit,
+        card_credit_sales: cardCredit,
         card_sales: cardSales,
         transfer_sales: transferSales,
         cash_account_id: cashAccountId,
@@ -490,6 +788,8 @@ export async function upsertCashDailyCloseDraftAction(
       status: "BORRADOR",
       cash_float: cashFloat,
       cash_sales: cashSales,
+      card_debit_sales: cardDebit,
+      card_credit_sales: cardCredit,
       card_sales: cardSales,
       transfer_sales: transferSales,
       cash_account_id: cashAccountId,
@@ -523,7 +823,7 @@ export async function submitCashDailyCloseAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "tesoreria.caja.declarar")) {
+  if (!canDeclareCashClose(ctx)) {
     return { ok: false, error: "Sin permiso para enviar cierre de caja" };
   }
 

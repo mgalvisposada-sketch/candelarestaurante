@@ -17,10 +17,10 @@ export const NAV_ITEMS = [
     hint: "Resumen ejecutivo",
   },
   {
-    href: "/empalme",
-    label: "Empalme",
+    href: "/checklist-inicial",
+    label: "Checklist inicial",
     mvp: 1,
-    hint: "Cierre y entrega de turno",
+    hint: "Saldos y datos de arranque (opcional)",
   },
   {
     href: "/empresa",
@@ -35,10 +35,16 @@ export const NAV_ITEMS = [
     hint: "Maestro y cuentas de socios",
   },
   {
+    href: "/cierre-caja",
+    label: "Cierre de caja",
+    mvp: 1,
+    hint: "Reporte diario del local",
+  },
+  {
     href: "/tesoreria",
     label: "Tesorería",
     mvp: 1,
-    hint: "Caja diaria, bancos y liquidez",
+    hint: "Bancos, liquidez y aval de cierres",
   },
   {
     href: "/proveedores",
@@ -144,13 +150,13 @@ export type NavItem = (typeof NAV_ITEMS)[number];
 export const NAV_GROUPS = [
   {
     id: "principal",
-    label: "Principal",
-    hrefs: ["/inicio", "/empalme"] as const,
+    label: "Operación",
+    hrefs: ["/inicio", "/cierre-caja", "/tesoreria"] as const,
   },
   {
     id: "caja",
-    label: "Tesorería",
-    hrefs: ["/tesoreria", "/solicitudes-pago", "/presupuesto"] as const,
+    label: "Pagos y presupuesto",
+    hrefs: ["/solicitudes-pago", "/presupuesto"] as const,
   },
   {
     id: "costos",
@@ -180,7 +186,12 @@ export const NAV_GROUPS = [
   {
     id: "sistema",
     label: "Sistema",
-    hrefs: ["/empresa", "/reportes", "/configuracion"] as const,
+    hrefs: [
+      "/empresa",
+      "/checklist-inicial",
+      "/reportes",
+      "/configuracion",
+    ] as const,
   },
 ] as const;
 
