@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess } from "@/lib/permissions";
 import { todayInBogota } from "@/lib/dates";
-import { formatCOP } from "@/lib/money";
+import { formatCOP, hasFundsFor } from "@/lib/money";
 import { ensureCashFloatAccount } from "@/lib/cash-float";
 import {
   availableBalanceForAccount,
@@ -425,7 +425,7 @@ export async function payPaymentRequestAction(
       leg.accountId,
       orgCutoff,
     );
-    if (available.lt(leg.amount)) {
+    if (!hasFundsFor(available, leg.amount)) {
       const name =
         (accountRows ?? []).find((a) => a.id === leg.accountId)?.bank_name ??
         "la cuenta";

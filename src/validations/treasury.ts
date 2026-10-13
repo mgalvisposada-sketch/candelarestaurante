@@ -20,3 +20,8 @@ export const bankBalanceSnapshotSchema = z.object({
   comments: z.string().optional().nullable(),
   source: z.string().optional().nullable(),
 });
+
+/** Corrige la cuenta de un movimiento ya registrado (p. ej. pago con origen equivocado). */
+export const reassignBankTransactionAccountSchema = z.object({
+  bank_account_id: z.string().uuid("Elija la cuenta correcta"),
+});

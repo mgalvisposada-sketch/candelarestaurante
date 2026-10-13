@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import {
   createBankAccountAction,
   createTreasuryTransferAction,
+  reassignBankTransactionAccountAction,
   softDeleteBankAccountAction,
   updateBankAccountAction,
   updateCashFloatTargetAction,
@@ -655,6 +656,7 @@ export function BankAccountCard({
   defaultCutoff,
   availableBalance,
   movements = [],
+  accounts = [],
   canManage = true,
   cashFloatAtLocal = null,
   cashFloatDate = null,
@@ -664,6 +666,7 @@ export function BankAccountCard({
   defaultCutoff: string | null;
   availableBalance?: number | string;
   movements?: BankTransactionRow[];
+  accounts?: BankAccountRow[];
   canManage?: boolean;
   cashFloatAtLocal?: number | null;
   cashFloatDate?: string | null;
@@ -836,7 +839,11 @@ export function BankAccountCard({
           </div>
 
           {showMovements ? (
-            <AccountMovementsList movements={movements} />
+            <AccountMovementsList
+              movements={movements}
+              accounts={accounts}
+              canManage={canManage}
+            />
           ) : null}
 
           {canManage && editing ? (
@@ -980,12 +987,21 @@ export function BankAccountCard({
 
 export function AccountMovementsList({
   movements,
+  accounts = [],
+  canManage = false,
   limit = 20,
 }: {
   movements: BankTransactionRow[];
+  accounts?: BankAccountRow[];
+  canManage?: boolean;
   limit?: number;
 }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
   const rows = movements.slice(0, limit);
+  const activeAccounts = accounts.filter((a) => a.is_active);
+
   if (rows.length === 0) {
     return (
       <div className="mt-4 rounded-lg border border-dashed border-[var(--line)] px-3 py-4 text-sm text-[var(--muted)]">
@@ -994,52 +1010,157 @@ export function AccountMovementsList({
     );
   }
 
+  const canReassign = canManage && activeAccounts.length > 1;
+
   return (
-    <div className="mt-4 overflow-x-auto rounded-lg border border-[var(--line)]">
-      <table className="min-w-full text-left text-sm">
-        <thead className="bg-[var(--surface-muted)] text-xs uppercase tracking-wide text-[var(--muted)]">
-          <tr>
-            <th className="px-3 py-2 font-medium">Fecha</th>
-            <th className="px-3 py-2 font-medium">Concepto</th>
-            <th className="px-3 py-2 font-medium">Ref.</th>
-            <th className="px-3 py-2 text-right font-medium">Ingreso</th>
-            <th className="px-3 py-2 text-right font-medium">Egreso</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-[var(--line)]">
-          {rows.map((tx) => {
-            const credit = Number(tx.credit || 0);
-            const debit = Number(tx.debit || 0);
-            return (
-              <tr key={tx.id}>
-                <td className="whitespace-nowrap px-3 py-2 text-[var(--muted)]">
-                  {formatDateCO(tx.transaction_date)}
-                </td>
-                <td className="px-3 py-2">
-                  <div className="font-medium text-[var(--ink)]">
-                    {movementLabel(tx)}
-                  </div>
-                  {tx.origin ? (
-                    <div className="text-xs text-[var(--muted)]">{tx.origin}</div>
+    <div className="mt-4 space-y-2">
+      <div className="overflow-x-auto rounded-lg border border-[var(--line)]">
+        <table className="min-w-full text-left text-sm">
+          <thead className="bg-[var(--surface-muted)] text-xs uppercase tracking-wide text-[var(--muted)]">
+            <tr>
+              <th className="px-3 py-2 font-medium">Fecha</th>
+              <th className="px-3 py-2 font-medium">Concepto</th>
+              <th className="px-3 py-2 font-medium">Ref.</th>
+              <th className="px-3 py-2 text-right font-medium">Ingreso</th>
+              <th className="px-3 py-2 text-right font-medium">Egreso</th>
+              {canReassign ? (
+                <th className="px-3 py-2 text-right font-medium"> </th>
+              ) : null}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--line)]">
+            {rows.map((tx) => {
+              const credit = Number(tx.credit || 0);
+              const debit = Number(tx.debit || 0);
+              const isTransfer =
+                tx.category === "TRASPASO" || tx.origin === "tesoreria.traspaso";
+              const isEditing = editingId === tx.id;
+              return (
+                <tr key={tx.id} className={cn(isEditing && "bg-[var(--surface-muted)]")}>
+                  <td className="whitespace-nowrap px-3 py-2 align-top text-[var(--muted)]">
+                    {formatDateCO(tx.transaction_date)}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <div className="font-medium text-[var(--ink)]">
+                      {movementLabel(tx)}
+                    </div>
+                    {tx.origin ? (
+                      <div className="text-xs text-[var(--muted)]">
+                        {tx.origin}
+                      </div>
+                    ) : null}
+                    {isEditing ? (
+                      <form
+                        className="mt-2 flex flex-wrap items-end gap-2"
+                        action={(fd) => {
+                          setError(null);
+                          startTransition(async () => {
+                            const result =
+                              await reassignBankTransactionAccountAction(
+                                tx.id,
+                                fd,
+                              );
+                            if (!result.ok) {
+                              setError(result.error ?? "No se pudo corregir");
+                              return;
+                            }
+                            setEditingId(null);
+                          });
+                        }}
+                      >
+                        <label className="min-w-[12rem] flex-1 text-xs">
+                          <span className="mb-1 block text-[var(--muted)]">
+                            Mover a cuenta
+                          </span>
+                          <select
+                            name="bank_account_id"
+                            required
+                            defaultValue=""
+                            className={inputClass}
+                          >
+                            <option value="" disabled>
+                              Elija la cuenta correcta
+                            </option>
+                            {activeAccounts
+                              .filter((a) => a.id !== tx.bank_account_id)
+                              .map((a) => (
+                                <option key={a.id} value={a.id}>
+                                  {a.bank_name}
+                                  {a.masked_number
+                                    ? ` · ${a.masked_number}`
+                                    : ""}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                        <button
+                          type="submit"
+                          disabled={pending}
+                          className="rounded-md bg-[var(--solid)] px-3 py-2 text-xs font-medium text-[var(--on-solid)] disabled:opacity-60"
+                        >
+                          Guardar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={pending}
+                          onClick={() => {
+                            setEditingId(null);
+                            setError(null);
+                          }}
+                          className="rounded-md border border-[var(--line)] px-3 py-2 text-xs font-medium"
+                        >
+                          Cancelar
+                        </button>
+                      </form>
+                    ) : null}
+                  </td>
+                  <td className="px-3 py-2 align-top text-[var(--muted)]">
+                    {tx.reference || "—"}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 align-top text-right text-teal-700">
+                    {credit > 0 ? formatCOP(credit) : "—"}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 align-top text-right text-red-700">
+                    {debit > 0 ? formatCOP(debit) : "—"}
+                  </td>
+                  {canReassign ? (
+                    <td className="whitespace-nowrap px-3 py-2 align-top text-right">
+                      {isTransfer ? (
+                        <span className="text-xs text-[var(--muted)]">—</span>
+                      ) : isEditing ? null : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setError(null);
+                            setEditingId(tx.id);
+                          }}
+                          className="text-xs font-medium text-[var(--accent)] hover:underline"
+                        >
+                          Cambiar cuenta
+                        </button>
+                      )}
+                    </td>
                   ) : null}
-                </td>
-                <td className="px-3 py-2 text-[var(--muted)]">
-                  {tx.reference || "—"}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right text-teal-700">
-                  {credit > 0 ? formatCOP(credit) : "—"}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right text-red-700">
-                  {debit > 0 ? formatCOP(debit) : "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      {movements.length > limit ? (
-        <p className="border-t border-[var(--line)] px-3 py-2 text-xs text-[var(--muted)]">
-          Mostrando los {limit} más recientes de {movements.length}.
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {movements.length > limit ? (
+          <p className="border-t border-[var(--line)] px-3 py-2 text-xs text-[var(--muted)]">
+            Mostrando los {limit} más recientes de {movements.length}.
+          </p>
+        ) : null}
+      </div>
+      {error ? (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error}
+        </p>
+      ) : null}
+      {canReassign ? (
+        <p className="text-xs text-[var(--muted)]">
+          Si cargó un pago a la cuenta equivocada, use «Cambiar cuenta». Los
+          saldos se recalculan al guardar.
         </p>
       ) : null}
     </div>

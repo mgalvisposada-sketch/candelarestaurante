@@ -8,14 +8,30 @@ export function money(value: MoneyInput = 0): Decimal {
   return value instanceof Decimal ? value : new Decimal(value || 0);
 }
 
+/** Pesos enteros con el mismo criterio que se muestra en pantalla. */
+export function copUnits(value: MoneyInput): Decimal {
+  return money(value).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+}
+
 export function formatCOP(value: MoneyInput): string {
-  const n = money(value).toDecimalPlaces(2);
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
     currency: "COP",
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  }).format(n.toNumber());
+  }).format(copUnits(value).toNumber());
+}
+
+/**
+ * ¿Alcanza el disponible para el monto?
+ * Compara en pesos enteros (como formatCOP) para no bloquear cuando
+ * el saldo real tiene centavos que la UI ya redondeó al alza.
+ */
+export function hasFundsFor(
+  available: MoneyInput,
+  amount: MoneyInput,
+): boolean {
+  return copUnits(available).gte(copUnits(amount));
 }
 
 export function addMoney(...values: MoneyInput[]): Decimal {

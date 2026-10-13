@@ -398,6 +398,7 @@ export default async function TesoreriaPage() {
                       defaultCutoff={cutoff}
                       availableBalance={availableByAccount.get(account.id)}
                       movements={movementsByAccount.get(account.id) ?? []}
+                      accounts={accounts}
                       canManage={canManageAccounts}
                       cashFloatAtLocal={
                         account.is_cash_float ? cashFloatTarget : null

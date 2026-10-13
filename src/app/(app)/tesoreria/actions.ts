@@ -12,10 +12,11 @@ import {
   type BalanceSnapshotInput,
   type BankTransactionInput,
 } from "@/lib/treasury-balance";
-import { formatCOP } from "@/lib/money";
+import { formatCOP, hasFundsFor } from "@/lib/money";
 import {
   bankAccountSchema,
   bankBalanceSnapshotSchema,
+  reassignBankTransactionAccountSchema,
 } from "@/validations/treasury";
 import {
   cashDailyCloseApproveSchema,
@@ -486,7 +487,7 @@ export async function createTreasuryTransferAction(
     transactions: (txRows ?? []) as BankTransactionInput[],
     orgCutoff,
   });
-  if (available.lt(amount)) {
+  if (!hasFundsFor(available, amount)) {
     return {
       ok: false,
       error: `Fondos insuficientes en ${fromAcc.bank_name}. Disponible ${formatCOP(available)}; traspaso ${formatCOP(amount)}.`,
@@ -1141,4 +1142,220 @@ export async function rejectCashDailyCloseAction(
 
   revalidateTreasuryPaths();
   return { ok: true, id: closeId };
+}
+
+async function availableBalanceOnAccount(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  accountId: string,
+  orgCutoff: string | null,
+) {
+  let snapQuery = supabase
+    .from("bank_balance_snapshots")
+    .select(
+      "bank_account_id, cutoff_date, opening_balance, verification_status",
+    )
+    .eq("organization_id", orgId)
+    .eq("bank_account_id", accountId)
+    .is("deleted_at", null);
+  if (orgCutoff) snapQuery = snapQuery.eq("cutoff_date", orgCutoff);
+  const { data: snapRows } = await snapQuery;
+  let snapshots = (snapRows ?? []) as BalanceSnapshotInput[];
+  if (snapshots.length === 0) {
+    const { data: latestSnaps } = await supabase
+      .from("bank_balance_snapshots")
+      .select(
+        "bank_account_id, cutoff_date, opening_balance, verification_status",
+      )
+      .eq("organization_id", orgId)
+      .eq("bank_account_id", accountId)
+      .is("deleted_at", null)
+      .order("cutoff_date", { ascending: false })
+      .limit(1);
+    snapshots = (latestSnaps ?? []) as BalanceSnapshotInput[];
+  }
+
+  const { data: txRows } = await supabase
+    .from("bank_transactions")
+    .select("bank_account_id, transaction_date, debit, credit")
+    .eq("organization_id", orgId)
+    .eq("bank_account_id", accountId)
+    .is("deleted_at", null);
+
+  return availableBalanceForAccount({
+    accountId,
+    snapshots,
+    transactions: (txRows ?? []) as BankTransactionInput[],
+    orgCutoff,
+  });
+}
+
+/**
+ * Corrige la cuenta de un movimiento (p. ej. un pago cargado a la cuenta equivocada).
+ * No aplica a traspasos entre cuentas (tienen dos piernas).
+ */
+export async function reassignBankTransactionAccountAction(
+  transactionId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "tesoreria.cuentas")) {
+    return { ok: false, error: "Sin permiso para corregir movimientos" };
+  }
+
+  const parsed = reassignBankTransactionAccountSchema.safeParse({
+    bank_account_id: formData.get("bank_account_id"),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+    };
+  }
+
+  const newAccountId = parsed.data.bank_account_id;
+  const supabase = await createClient();
+  const orgId = ctx.organization.id;
+
+  const { data: tx, error: txError } = await supabase
+    .from("bank_transactions")
+    .select(
+      "id, bank_account_id, transaction_date, debit, credit, origin, category, linked_entity_type, linked_entity_id, description, reference",
+    )
+    .eq("id", transactionId)
+    .eq("organization_id", orgId)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (txError) return { ok: false, error: txError.message };
+  if (!tx) return { ok: false, error: "Movimiento no encontrado" };
+
+  if (tx.category === "TRASPASO" || tx.origin === "tesoreria.traspaso") {
+    return {
+      ok: false,
+      error:
+        "Los traspasos no se editan aquí: haga un traspaso inverso o cree uno nuevo.",
+    };
+  }
+
+  if (tx.bank_account_id === newAccountId) {
+    return { ok: true, id: transactionId };
+  }
+
+  const { data: newAccount, error: accError } = await supabase
+    .from("bank_accounts")
+    .select("id, bank_name, is_active")
+    .eq("id", newAccountId)
+    .eq("organization_id", orgId)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (accError) return { ok: false, error: accError.message };
+  if (!newAccount?.is_active) {
+    return { ok: false, error: "La cuenta destino no está activa" };
+  }
+
+  const debit = Number(tx.debit || 0);
+  if (debit > 0) {
+    const available = await availableBalanceOnAccount(
+      supabase,
+      orgId,
+      newAccountId,
+      ctx.organization.administrative_cutoff_date,
+    );
+    if (!hasFundsFor(available, debit)) {
+      return {
+        ok: false,
+        error: `Fondos insuficientes en ${newAccount.bank_name}. Disponible ${formatCOP(available)}; egreso ${formatCOP(debit)}.`,
+      };
+    }
+  }
+
+  const { error: updateError } = await supabase
+    .from("bank_transactions")
+    .update({
+      bank_account_id: newAccountId,
+      updated_by: ctx.userId,
+    })
+    .eq("id", transactionId)
+    .eq("organization_id", orgId);
+
+  if (updateError) return { ok: false, error: updateError.message };
+
+  if (tx.linked_entity_type === "payment_requests" && tx.linked_entity_id) {
+    await supabase
+      .from("payment_requests")
+      .update({
+        bank_account_id: newAccountId,
+        updated_by: ctx.userId,
+      })
+      .eq("id", tx.linked_entity_id)
+      .eq("organization_id", orgId)
+      .eq("bank_transaction_id", transactionId);
+
+    const { data: payReq } = await supabase
+      .from("payment_requests")
+      .select("expense_id")
+      .eq("id", tx.linked_entity_id)
+      .eq("organization_id", orgId)
+      .maybeSingle();
+
+    if (payReq?.expense_id) {
+      await supabase
+        .from("expenses")
+        .update({
+          bank_account_id: newAccountId,
+          updated_by: ctx.userId,
+        })
+        .eq("id", payReq.expense_id)
+        .eq("organization_id", orgId);
+    }
+  }
+
+  await supabase
+    .from("accounts_payable_payments")
+    .update({
+      bank_account_id: newAccountId,
+      updated_by: ctx.userId,
+    })
+    .eq("bank_transaction_id", transactionId)
+    .eq("organization_id", orgId);
+
+  if (tx.linked_entity_type === "cash_daily_close" && tx.linked_entity_id) {
+    const closePatch: Record<string, string> = { updated_by: ctx.userId };
+    if (tx.category === "INGRESO_CAJA") {
+      closePatch.cash_account_id = newAccountId;
+    } else if (tx.category === "INGRESO_ADQUIRENCIA") {
+      closePatch.card_account_id = newAccountId;
+    } else if (tx.category === "INGRESO_TRANSFERENCIA") {
+      closePatch.transfer_account_id = newAccountId;
+    }
+    if (Object.keys(closePatch).length > 1) {
+      await supabase
+        .from("cash_daily_closes")
+        .update(closePatch)
+        .eq("id", tx.linked_entity_id)
+        .eq("organization_id", orgId);
+    }
+  }
+
+  await supabase.from("audit_logs").insert({
+    organization_id: orgId,
+    user_id: ctx.userId,
+    action: "UPDATE",
+    entity: "bank_transactions",
+    entity_id: transactionId,
+    old_values: { bank_account_id: tx.bank_account_id },
+    new_values: {
+      bank_account_id: newAccountId,
+      kind: "REASSIGN_ACCOUNT",
+      description: tx.description,
+      debit,
+      credit: Number(tx.credit || 0),
+    },
+  });
+
+  revalidateTreasuryPaths();
+  return { ok: true, id: transactionId };
 }
