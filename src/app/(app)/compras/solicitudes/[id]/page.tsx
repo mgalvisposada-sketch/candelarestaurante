@@ -150,7 +150,10 @@ export default async function CompraSolicitudDetailPage({
 
   return (
     <>
-      <AppHeader title="Compras" subtitle="Detalle de solicitud" />
+      <AppHeader
+        title="Compras"
+        subtitle="Siga el paso actual de la solicitud"
+      />
       <main className="space-y-6 p-8">
         <ComprasNav
           permissions={ctx.permissions}
