@@ -4,7 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
+  useLayoutEffect,
   useState,
   type ReactNode,
 } from "react";
@@ -26,7 +26,9 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>("light");
 
-  useEffect(() => {
+  // useLayoutEffect: aplica el tema antes del paint, sin <script> en layout
+  // (React 19 / Next 16 lo marcan como error en desarrollo).
+  useLayoutEffect(() => {
     const initial = resolveInitialTheme();
     setThemeState(initial);
     applyTheme(initial);
