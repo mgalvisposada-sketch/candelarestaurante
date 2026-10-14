@@ -13,8 +13,14 @@ import {
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
+  reconstructBilledQty,
+} from "@/lib/purchases/payment-invoice-detail";
+import { roundMoney } from "@/lib/purchases/invoice-charges";
+import { roundPurchaseQty } from "@/lib/purchases/qty";
+import {
   PaymentRequestQueues,
   type BankAccountOption,
+  type PaymentInvoiceDetail,
   type PaymentRequestRow,
   type SupplierOption,
 } from "./payment-requests-client";
@@ -59,7 +65,7 @@ export default async function SolicitudesPagoPage() {
       supabase
         .from("payment_requests")
         .select(
-          "id, source, status, priority, concept, amount, requested_at, due_date, supplier_id, document_number, document_type, notes, rejection_reason, paid_at, payment_reference",
+          "id, source, status, priority, concept, amount, requested_at, due_date, supplier_id, document_number, document_type, notes, rejection_reason, paid_at, payment_reference, payment_proof_document_id",
         )
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
@@ -168,6 +174,93 @@ export default async function SolicitudesPagoPage() {
 
   const canApprove = ctxCanAccess(ctx, "solicitudes-pago.aprobar");
   const canPay = ctxCanAccess(ctx, "solicitudes-pago.pagar");
+  const canCorrectPurchaseInvoice =
+    canApprove || ctxCanAccess(ctx, "compras.solicitudes.facturar");
+
+  const purchasePayIds = requests
+    .filter((r) => r.source === "FACTURA_PROVEEDOR")
+    .map((r) => r.id);
+  const invoiceDetailByRequestId: Record<string, PaymentInvoiceDetail> = {};
+
+  if (purchasePayIds.length > 0) {
+    const { data: invoiceItemRows } = await supabase
+      .from("purchase_request_items")
+      .select(
+        "id, purchase_request_id, product_id, unit, quantity_approved, quantity_requested, quantity_received, unit_cost_estimate, supplier_invoice_label, invoice_payment_request_id",
+      )
+      .eq("organization_id", ctx.organization.id)
+      .is("deleted_at", null)
+      .in("invoice_payment_request_id", purchasePayIds);
+
+    const productIds = [
+      ...new Set((invoiceItemRows ?? []).map((i) => i.product_id as string)),
+    ];
+    const purchaseIds = [
+      ...new Set(
+        (invoiceItemRows ?? []).map((i) => i.purchase_request_id as string),
+      ),
+    ];
+    const [{ data: productRows }, { data: purchaseRows }] = await Promise.all([
+      productIds.length
+        ? supabase
+            .from("products")
+            .select("id, name")
+            .eq("organization_id", ctx.organization.id)
+            .in("id", productIds)
+        : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+      purchaseIds.length
+        ? supabase
+            .from("purchase_requests")
+            .select("id, title")
+            .eq("organization_id", ctx.organization.id)
+            .in("id", purchaseIds)
+        : Promise.resolve({ data: [] as { id: string; title: string }[] }),
+    ]);
+    const productNameById = new Map(
+      (productRows ?? []).map((p) => [p.id, p.name]),
+    );
+    const purchaseTitleById = new Map(
+      (purchaseRows ?? []).map((p) => [p.id, p.title]),
+    );
+
+    for (const payId of purchasePayIds) {
+      const rows = (invoiceItemRows ?? []).filter(
+        (i) => i.invoice_payment_request_id === payId,
+      );
+      if (rows.length === 0) continue;
+      const purchaseRequestId = rows[0].purchase_request_id as string;
+      const lines = rows.map((item) => {
+        const billedQty = reconstructBilledQty({
+          quantityApproved: item.quantity_approved,
+          quantityRequested: item.quantity_requested,
+          quantityReceived: item.quantity_received,
+        });
+        const unitCost = Number(item.unit_cost_estimate || 0);
+        return {
+          id: item.id as string,
+          productName:
+            productNameById.get(item.product_id as string) ??
+            (item.product_id as string),
+          supplierInvoiceLabel: (item.supplier_invoice_label as string | null) ?? null,
+          unit: (item.unit as string) || "",
+          quantityOrdered: roundPurchaseQty(
+            Number(item.quantity_approved ?? item.quantity_requested ?? 0),
+          ),
+          quantityReceived: roundPurchaseQty(
+            Number(item.quantity_received || 0),
+          ),
+          billedQty,
+          unitCost,
+          lineTotal: roundMoney(billedQty * unitCost),
+        };
+      });
+      invoiceDetailByRequestId[payId] = {
+        purchaseRequestId,
+        purchaseTitle: purchaseTitleById.get(purchaseRequestId) ?? null,
+        lines,
+      };
+    }
+  }
 
   return (
     <>
@@ -239,8 +332,10 @@ export default async function SolicitudesPagoPage() {
             history={history}
             suppliers={suppliers}
             bankAccounts={bankAccounts}
+            invoiceDetailByRequestId={invoiceDetailByRequestId}
             canApprove={canApprove}
             canPay={canPay}
+            canCorrectPurchaseInvoice={canCorrectPurchaseInvoice}
           />
         )}
       </main>

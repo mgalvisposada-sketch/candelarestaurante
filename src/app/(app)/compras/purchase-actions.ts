@@ -27,10 +27,15 @@ import {
   roundMoney,
   type InvoiceCharge,
 } from "@/lib/purchases/invoice-charges";
+import { buildInvoiceNotesPayload } from "@/lib/purchases/payment-invoice-detail";
 import {
   isPrepagoTerms,
   PREPAGO_CREDIT_NOTE_TODO,
 } from "@/lib/purchases/payment-terms";
+import {
+  aggregatePurchaseRequestStatus,
+  deriveSupplierOrderStatus,
+} from "@/lib/purchases/supplier-order-status";
 import type { ActionResult } from "../empresa/actions";
 
 function parseInvoiceChargesFromForm(formData: FormData): InvoiceCharge[] {
@@ -144,7 +149,9 @@ async function assignPurchaseSupplierOrderNumbers({
         supplier_id: supplierId,
         order_seq: orderSeq,
         order_number: orderNumber,
+        status: "POR_PEDIR",
         created_by: userId,
+        updated_by: userId,
       });
 
     if (insertError) {
@@ -155,6 +162,247 @@ async function assignPurchaseSupplierOrderNumbers({
   }
 
   return null;
+}
+
+type SyncSupabase = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * Recalcula estado de cada OC de la solicitud y agrega el status de cabecera.
+ * Fuente de verdad operativa = purchase_supplier_orders.
+ */
+async function syncPurchaseSupplierOrdersForRequest({
+  supabase,
+  organizationId,
+  requestId,
+  userId,
+  stamp,
+}: {
+  supabase: SyncSupabase;
+  organizationId: string;
+  requestId: string;
+  userId: string;
+  stamp?: {
+    supplierId: string;
+    paymentRequestId?: string | null;
+    apDocumentId?: string | null;
+  };
+}): Promise<string | null> {
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .eq("organization_id", organizationId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!request) return "Solicitud no encontrada";
+
+  if (["BORRADOR", "ENVIADA", "RECHAZADA", "ANULADA"].includes(request.status)) {
+    return null;
+  }
+
+  const [{ data: items }, { data: orders }] = await Promise.all([
+    supabase
+      .from("purchase_request_items")
+      .select(
+        "id, status, quantity_requested, quantity_approved, quantity_received, quantity_invoiced, approved_supplier_id, suggested_supplier_id, invoice_payment_request_id, invoice_ap_document_id",
+      )
+      .eq("purchase_request_id", requestId)
+      .eq("organization_id", organizationId)
+      .is("deleted_at", null),
+    supabase
+      .from("purchase_supplier_orders")
+      .select(
+        "id, supplier_id, status, ordered_at, invoiced_at, paid_at, received_at, closed_at, payment_request_id, ap_document_id",
+      )
+      .eq("purchase_request_id", requestId)
+      .eq("organization_id", organizationId)
+      .is("deleted_at", null),
+  ]);
+
+  const payReqIds = [
+    ...new Set(
+      (items ?? [])
+        .map((i) => i.invoice_payment_request_id)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+  const { data: payRows } = payReqIds.length
+    ? await supabase.from("payment_requests").select("id, status").in("id", payReqIds)
+    : { data: [] as { id: string; status: string }[] };
+  const paymentStatusById = new Map(
+    (payRows ?? []).map((p) => [p.id as string, p.status as string]),
+  );
+
+  type SyncItem = NonNullable<typeof items>[number];
+  const itemsBySupplier = new Map<string, SyncItem[]>();
+  for (const item of items ?? []) {
+    const sid = item.approved_supplier_id ?? item.suggested_supplier_id;
+    if (!sid) continue;
+    const list = itemsBySupplier.get(sid) ?? [];
+    list.push(item);
+    itemsBySupplier.set(sid, list);
+  }
+
+  const orderStatuses: string[] = [];
+  const now = new Date().toISOString();
+
+  for (const order of orders ?? []) {
+    const supplierId = order.supplier_id as string;
+    const supplierItems = itemsBySupplier.get(supplierId) ?? [];
+    const nextStatus = deriveSupplierOrderStatus({
+      items: supplierItems,
+      paymentStatusById,
+      wasMarkedOrdered: Boolean(order.ordered_at) || order.status !== "POR_PEDIR",
+    });
+    orderStatuses.push(nextStatus);
+
+    const latestPay = supplierItems.find((i) => i.invoice_payment_request_id);
+    const latestAp = supplierItems.find((i) => i.invoice_ap_document_id);
+    const stampThis = stamp?.supplierId === supplierId ? stamp : null;
+
+    const patch: Record<string, unknown> = {
+      status: nextStatus,
+      updated_by: userId,
+      payment_request_id:
+        stampThis?.paymentRequestId ??
+        order.payment_request_id ??
+        latestPay?.invoice_payment_request_id ??
+        null,
+      ap_document_id:
+        stampThis?.apDocumentId ??
+        order.ap_document_id ??
+        latestAp?.invoice_ap_document_id ??
+        null,
+    };
+
+    if (
+      nextStatus !== "POR_PEDIR" &&
+      nextStatus !== "ANULADA" &&
+      !order.ordered_at
+    ) {
+      patch.ordered_at = now;
+    }
+    if (
+      ["FACTURADA", "PAGADA", "RECIBIDA_PARCIAL", "RECIBIDA", "CERRADA"].includes(
+        nextStatus,
+      ) &&
+      !order.invoiced_at &&
+      (patch.payment_request_id || latestPay?.invoice_payment_request_id)
+    ) {
+      patch.invoiced_at = order.invoiced_at ?? now;
+    }
+    if (
+      ["PAGADA", "RECIBIDA_PARCIAL", "RECIBIDA", "CERRADA"].includes(nextStatus) &&
+      !order.paid_at
+    ) {
+      const paid = supplierItems.some((i) => {
+        const id = i.invoice_payment_request_id;
+        return id ? paymentStatusById.get(id) === "PAGADA" : false;
+      });
+      if (paid) patch.paid_at = now;
+    }
+    if (
+      ["RECIBIDA", "CERRADA"].includes(nextStatus) &&
+      !order.received_at
+    ) {
+      patch.received_at = now;
+    }
+    if (nextStatus === "CERRADA" && !order.closed_at) {
+      patch.closed_at = now;
+    }
+
+    const { error } = await supabase
+      .from("purchase_supplier_orders")
+      .update(patch)
+      .eq("id", order.id)
+      .eq("organization_id", organizationId);
+    if (error) return error.message;
+  }
+
+  // Proveedores con ítems pero sin fila OC (datos viejos): crear y sincronizar en siguiente pass.
+  const missingSupplierIds = [...itemsBySupplier.keys()].filter(
+    (sid) => !(orders ?? []).some((o) => o.supplier_id === sid),
+  );
+  if (missingSupplierIds.length > 0) {
+    const assignError = await assignPurchaseSupplierOrderNumbers({
+      supabase,
+      organizationId,
+      requestId,
+      supplierIds: missingSupplierIds,
+      userId,
+    });
+    if (assignError) return assignError;
+    return syncPurchaseSupplierOrdersForRequest({
+      supabase,
+      organizationId,
+      requestId,
+      userId,
+      stamp,
+    });
+  }
+
+  const nextRequestStatus = aggregatePurchaseRequestStatus({
+    currentStatus: request.status,
+    orderStatuses,
+  });
+
+  if (nextRequestStatus !== request.status) {
+    const requestPatch: Record<string, unknown> = {
+      status: nextRequestStatus,
+      updated_by: userId,
+    };
+    if (nextRequestStatus === "PEDIDA" || orderStatuses.some((s) => s !== "POR_PEDIR")) {
+      requestPatch.ordered_at = now;
+    }
+    if (["RECIBIDA", "FACTURA_ACEPTADA"].includes(nextRequestStatus)) {
+      requestPatch.received_at = now;
+    }
+    if (nextRequestStatus === "FACTURA_ACEPTADA") {
+      requestPatch.invoice_accepted_at = now;
+    }
+
+    const { error } = await supabase
+      .from("purchase_requests")
+      .update(requestPatch)
+      .eq("id", requestId)
+      .eq("organization_id", organizationId);
+    if (error) return error.message;
+  }
+
+  return null;
+}
+
+/** Exportada para que pagos (solicitudes-pago) refresquen la OC. */
+export async function syncPurchaseOrdersAfterPayment(
+  paymentRequestId: string,
+): Promise<void> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return;
+  const supabase = await createClient();
+
+  const { data: item } = await supabase
+    .from("purchase_request_items")
+    .select("purchase_request_id, approved_supplier_id, suggested_supplier_id")
+    .eq("organization_id", ctx.organization.id)
+    .eq("invoice_payment_request_id", paymentRequestId)
+    .is("deleted_at", null)
+    .limit(1)
+    .maybeSingle();
+  if (!item?.purchase_request_id) return;
+
+  const supplierId =
+    item.approved_supplier_id ?? item.suggested_supplier_id ?? undefined;
+
+  await syncPurchaseSupplierOrdersForRequest({
+    supabase,
+    organizationId: ctx.organization.id,
+    requestId: item.purchase_request_id,
+    userId: ctx.userId,
+    stamp: supplierId
+      ? { supplierId, paymentRequestId }
+      : undefined,
+  });
+  revalidateCompras(item.purchase_request_id);
 }
 
 async function ensureAccountsPayable(
@@ -970,17 +1218,21 @@ export async function approvePurchaseRequestAction(
 }
 
 /**
- * Tras autorización: el local o tesorería marca que ya se pidió/compró al proveedor.
- * Sin autorización (APROBADA) no se puede pedir.
+ * Marca pedida una OC de un proveedor (no toda la solicitud).
+ * Permite pedir A y dejar B pendiente.
  */
 export async function markPurchaseOrderedAction(
   requestId: string,
+  supplierId: string,
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
   if (!ctxCanAccess(ctx, "compras.solicitudes.pedir")) {
     return { ok: false, error: "Sin permiso para marcar pedida / comprar" };
   }
+
+  const sid = String(supplierId ?? "").trim();
+  if (!sid) return { ok: false, error: "Indique el proveedor" };
 
   const supabase = await createClient();
   const { data: request } = await supabase
@@ -992,11 +1244,59 @@ export async function markPurchaseOrderedAction(
     .maybeSingle();
 
   if (!request) return { ok: false, error: "Solicitud no encontrada" };
-  if (request.status !== "APROBADA") {
+  if (
+    !["APROBADA", "PEDIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA", "RECIBIDA"].includes(
+      request.status,
+    )
+  ) {
     return {
       ok: false,
       error:
-        "Solo se puede pedir cuando la compra está autorizada. Espere la autorización.",
+        "Solo se puede pedir cuando la compra está autorizada (o parcialmente en curso).",
+    };
+  }
+
+  const { data: order } = await supabase
+    .from("purchase_supplier_orders")
+    .select("id, status, order_number")
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .eq("supplier_id", sid)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!order) {
+    const assignError = await assignPurchaseSupplierOrderNumbers({
+      supabase,
+      organizationId: ctx.organization.id,
+      requestId,
+      supplierIds: [sid],
+      userId: ctx.userId,
+    });
+    if (assignError) return { ok: false, error: assignError };
+  } else if (order.status !== "POR_PEDIR") {
+    return {
+      ok: false,
+      error: `La orden ${order.order_number ?? ""} ya no está por pedir.`,
+    };
+  }
+
+  const { data: supplierItems } = await supabase
+    .from("purchase_request_items")
+    .select("id, approved_supplier_id, suggested_supplier_id, status")
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  const itemIds = (supplierItems ?? [])
+    .filter((i) => (i.approved_supplier_id ?? i.suggested_supplier_id) === sid)
+    .filter((i) => i.status === "APROBADO")
+    .map((i) => i.id);
+
+  if (itemIds.length === 0) {
+    return {
+      ok: false,
+      error: "No hay ítems autorizados pendientes de pedir para este proveedor",
     };
   }
 
@@ -1006,32 +1306,41 @@ export async function markPurchaseOrderedAction(
       status: "PEDIDO",
       updated_by: ctx.userId,
     })
-    .eq("purchase_request_id", requestId)
     .eq("organization_id", ctx.organization.id)
-    .eq("status", "APROBADO")
-    .is("deleted_at", null);
+    .in("id", itemIds);
 
   if (itemsError) return { ok: false, error: itemsError.message };
 
-  const { error } = await supabase
-    .from("purchase_requests")
+  const now = new Date().toISOString();
+  const { error: orderError } = await supabase
+    .from("purchase_supplier_orders")
     .update({
       status: "PEDIDA",
-      ordered_at: new Date().toISOString(),
+      ordered_at: now,
       updated_by: ctx.userId,
     })
-    .eq("id", requestId)
+    .eq("purchase_request_id", requestId)
     .eq("organization_id", ctx.organization.id)
-    .eq("status", "APROBADA");
+    .eq("supplier_id", sid)
+    .is("deleted_at", null);
 
-  if (error) return { ok: false, error: error.message };
+  if (orderError) return { ok: false, error: orderError.message };
+
+  const syncError = await syncPurchaseSupplierOrdersForRequest({
+    supabase,
+    organizationId: ctx.organization.id,
+    requestId,
+    userId: ctx.userId,
+  });
+  if (syncError) return { ok: false, error: syncError };
 
   await supabase.from("audit_logs").insert({
     organization_id: ctx.organization.id,
     user_id: ctx.userId,
     action: "ORDER",
-    entity: "purchase_requests",
+    entity: "purchase_supplier_orders",
     entity_id: requestId,
+    new_values: { supplier_id: sid, item_ids: itemIds },
   });
 
   revalidateCompras(requestId);
@@ -1074,16 +1383,38 @@ export async function rejectPurchaseRequestAction(
   return { ok: true, id: requestId };
 }
 
-function isPurchaseItemClosed(item: {
+function receiveTargetQty(item: {
   status: string;
   quantity_approved: number | string | null;
   quantity_requested: number | string;
-  quantity_received: number | string;
-}) {
-  if (item.status === "CANCELADO" || item.status === "RECIBIDO") return true;
-  const target = roundPurchaseQty(
+  quantity_received?: number | string;
+  quantity_invoiced?: number | string | null;
+  invoice_payment_request_id?: string | null;
+}, opts?: { prepago?: boolean }) {
+  const invoiced = roundPurchaseQty(Number(item.quantity_invoiced || 0));
+  // Prepago con factura: se recibe contra lo facturado/pagado, no contra lo pedido.
+  if (opts?.prepago && item.invoice_payment_request_id && invoiced > 0) {
+    return invoiced;
+  }
+  return roundPurchaseQty(
     Number(item.quantity_approved ?? item.quantity_requested),
   );
+}
+
+function isPurchaseItemClosed(
+  item: {
+    status: string;
+    quantity_approved: number | string | null;
+    quantity_requested: number | string;
+    quantity_received: number | string;
+    quantity_invoiced?: number | string | null;
+    invoice_payment_request_id?: string | null;
+  },
+  opts?: { prepago?: boolean },
+) {
+  if (item.status === "CANCELADO" || item.status === "RECIBIDO") return true;
+  const target = receiveTargetQty(item, opts);
+  if (!(target > 0)) return true;
   const received = roundPurchaseQty(Number(item.quantity_received || 0));
   return received >= target;
 }
@@ -1107,9 +1438,15 @@ export async function receivePurchaseItemsAction(
     .maybeSingle();
 
   if (!request) return { ok: false, error: "Solicitud no encontrada" };
-  // FACTURA_ACEPTADA: crédito (remanente) o prepago (tras factura/pago).
+  // Cabecera agregada: APROBADA puede coexistir con OCs ya pedidas/facturadas.
   if (
-    !["PEDIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(request.status)
+    ![
+      "APROBADA",
+      "PEDIDA",
+      "RECIBIDA_PARCIAL",
+      "RECIBIDA",
+      "FACTURA_ACEPTADA",
+    ].includes(request.status)
   ) {
     return { ok: false, error: "La solicitud no está pendiente de recepción" };
   }
@@ -1117,7 +1454,7 @@ export async function receivePurchaseItemsAction(
   const { data: items } = await supabase
     .from("purchase_request_items")
     .select(
-      "id, product_id, quantity_approved, quantity_requested, quantity_received, unit_cost_estimate, status, notes, approved_supplier_id, suggested_supplier_id, invoice_payment_request_id",
+      "id, product_id, quantity_approved, quantity_requested, quantity_received, quantity_invoiced, unit_cost_estimate, status, notes, approved_supplier_id, suggested_supplier_id, invoice_payment_request_id",
     )
     .eq("purchase_request_id", requestId)
     .eq("organization_id", ctx.organization.id)
@@ -1132,17 +1469,30 @@ export async function receivePurchaseItemsAction(
         .filter((id): id is string => !!id),
     ),
   ];
-  const { data: supplierRows } = supplierIds.length
-    ? await supabase
-        .from("suppliers")
-        .select("id, purchase_payment_terms")
-        .in("id", supplierIds)
-    : { data: [] as { id: string; purchase_payment_terms: string | null }[] };
+  const [{ data: supplierRows }, { data: orderRows }] = await Promise.all([
+    supplierIds.length
+      ? supabase
+          .from("suppliers")
+          .select("id, purchase_payment_terms")
+          .in("id", supplierIds)
+      : Promise.resolve({
+          data: [] as { id: string; purchase_payment_terms: string | null }[],
+        }),
+    supabase
+      .from("purchase_supplier_orders")
+      .select("supplier_id, status")
+      .eq("purchase_request_id", requestId)
+      .eq("organization_id", ctx.organization.id)
+      .is("deleted_at", null),
+  ]);
   const termsBySupplier = new Map(
     (supplierRows ?? []).map((s) => [
       s.id,
       s.purchase_payment_terms ?? "PREPAGO",
     ]),
+  );
+  const orderStatusBySupplier = new Map(
+    (orderRows ?? []).map((o) => [o.supplier_id as string, o.status as string]),
   );
 
   const payReqIds = [
@@ -1163,7 +1513,13 @@ export async function receivePurchaseItemsAction(
   let touched = 0;
 
   for (const item of items) {
-    if (isPurchaseItemClosed(item)) continue;
+    const supplierId =
+      item.approved_supplier_id ?? item.suggested_supplier_id ?? null;
+    const terms = supplierId
+      ? termsBySupplier.get(supplierId) ?? "PREPAGO"
+      : "PREPAGO";
+    const prepago = isPrepagoTerms(terms);
+    if (isPurchaseItemClosed(item, { prepago })) continue;
 
     const disposition = String(
       formData.get(`item_${item.id}_disposition`) ?? "pendiente",
@@ -1171,18 +1527,23 @@ export async function receivePurchaseItemsAction(
 
     if (disposition === "pendiente" || disposition === "") continue;
 
-    const supplierId =
-      item.approved_supplier_id ?? item.suggested_supplier_id ?? null;
-    const terms = supplierId
-      ? termsBySupplier.get(supplierId) ?? "PREPAGO"
-      : "PREPAGO";
+    const ocStatus = supplierId
+      ? orderStatusBySupplier.get(supplierId) ?? "POR_PEDIR"
+      : "POR_PEDIR";
+
+    if (disposition === "llego" || disposition === "no_llegara") {
+      if (!prepago && ocStatus === "POR_PEDIR") {
+        return {
+          ok: false,
+          error:
+            "Crédito: marque «Ya pedí» en la orden de ese proveedor antes de recibir.",
+        };
+      }
+    }
 
     // Prepago: no recibir hasta factura pagada (comprobante listo para el proveedor).
     // Futuro: faltantes ya pagados → nota crédito (PREPAGO_CREDIT_NOTE_TODO).
-    if (
-      disposition === "llego" &&
-      isPrepagoTerms(terms)
-    ) {
+    if (disposition === "llego" && prepago) {
       void PREPAGO_CREDIT_NOTE_TODO;
       const payId = item.invoice_payment_request_id;
       const payStatus = payId ? payStatusById.get(payId) : null;
@@ -1191,6 +1552,14 @@ export async function receivePurchaseItemsAction(
           ok: false,
           error:
             "Proveedor prepago: primero debe cargarse la factura y estar PAGADA en Solicitudes de pago. Después sí puede recibir.",
+        };
+      }
+      const invoiced = roundPurchaseQty(Number(item.quantity_invoiced || 0));
+      if (!(invoiced > 0)) {
+        return {
+          ok: false,
+          error:
+            "Prepago: falta la cantidad facturada del ítem. Vuelva a cargar la factura o contacte soporte.",
         };
       }
     }
@@ -1247,9 +1616,13 @@ export async function receivePurchaseItemsAction(
 
     const previous = roundPurchaseQty(Number(item.quantity_received || 0));
     const totalReceived = roundPurchaseQty(previous + receivedNow);
-    const target = roundPurchaseQty(
-      Number(item.quantity_approved ?? item.quantity_requested),
-    );
+    const target = receiveTargetQty(item, { prepago });
+    if (prepago && totalReceived > target + 1e-9) {
+      return {
+        ok: false,
+        error: `Prepago: no puede recibir más de lo facturado/pagado (${target}). Pedido original aparte; si llegó de más, agréguelo como extra.`,
+      };
+    }
     const status =
       totalReceived >= target ? "RECIBIDO" : "RECIBIDO_PARCIAL";
 
@@ -1330,36 +1703,13 @@ export async function receivePurchaseItemsAction(
     };
   }
 
-  const { data: refreshed } = await supabase
-    .from("purchase_request_items")
-    .select("quantity_approved, quantity_requested, quantity_received, status")
-    .eq("purchase_request_id", requestId)
-    .eq("organization_id", ctx.organization.id)
-    .is("deleted_at", null);
-
-  const allClosed = (refreshed ?? []).every((i) => isPurchaseItemClosed(i));
-  const anyReceived = (refreshed ?? []).some(
-    (i) => Number(i.quantity_received || 0) > 0,
-  );
-  const alreadyInvoiced = Boolean(request.payment_request_id);
-
-  const nextStatus = allClosed
-    ? alreadyInvoiced
-      ? "FACTURA_ACEPTADA"
-      : "RECIBIDA"
-    : anyReceived
-      ? "RECIBIDA_PARCIAL"
-      : request.status;
-
-  await supabase
-    .from("purchase_requests")
-    .update({
-      status: nextStatus,
-      received_at: allClosed ? new Date().toISOString() : null,
-      updated_by: ctx.userId,
-    })
-    .eq("id", requestId)
-    .eq("organization_id", ctx.organization.id);
+  const syncError = await syncPurchaseSupplierOrdersForRequest({
+    supabase,
+    organizationId: ctx.organization.id,
+    requestId,
+    userId: ctx.userId,
+  });
+  if (syncError) return { ok: false, error: syncError };
 
   revalidateCompras(requestId);
   return { ok: true, id: requestId };
@@ -1389,9 +1739,13 @@ export async function undoReceivePurchaseItemAction(
 
   if (!request) return { ok: false, error: "Solicitud no encontrada" };
   if (
-    !["PEDIDA", "RECIBIDA_PARCIAL", "RECIBIDA", "FACTURA_ACEPTADA"].includes(
-      request.status,
-    )
+    ![
+      "APROBADA",
+      "PEDIDA",
+      "RECIBIDA_PARCIAL",
+      "RECIBIDA",
+      "FACTURA_ACEPTADA",
+    ].includes(request.status)
   ) {
     return {
       ok: false,
@@ -1402,7 +1756,7 @@ export async function undoReceivePurchaseItemAction(
   const { data: item } = await supabase
     .from("purchase_request_items")
     .select(
-      "id, product_id, quantity_received, status, invoice_payment_request_id, notes",
+      "id, product_id, quantity_received, status, invoice_payment_request_id, notes, approved_supplier_id, suggested_supplier_id",
     )
     .eq("id", itemId)
     .eq("purchase_request_id", requestId)
@@ -1510,7 +1864,7 @@ export async function undoReceivePurchaseItemAction(
     .from("purchase_request_items")
     .update({
       quantity_received: 0,
-      status: "APROBADO",
+      status: "PEDIDO",
       notes: cleanedNotes || null,
       updated_by: ctx.userId,
     })
@@ -1518,37 +1872,13 @@ export async function undoReceivePurchaseItemAction(
     .eq("organization_id", ctx.organization.id);
   if (itemError) return { ok: false, error: itemError.message };
 
-  const { data: refreshed } = await supabase
-    .from("purchase_request_items")
-    .select("quantity_approved, quantity_requested, quantity_received, status")
-    .eq("purchase_request_id", requestId)
-    .eq("organization_id", ctx.organization.id)
-    .is("deleted_at", null);
-
-  const allClosed = (refreshed ?? []).every((i) => isPurchaseItemClosed(i));
-  const anyReceived = (refreshed ?? []).some(
-    (i) => Number(i.quantity_received || 0) > 0,
-  );
-  const alreadyInvoiced = Boolean(request.payment_request_id);
-
-  let nextStatus = request.status;
-  if (allClosed) {
-    nextStatus = alreadyInvoiced ? "FACTURA_ACEPTADA" : "RECIBIDA";
-  } else if (anyReceived) {
-    nextStatus = "RECIBIDA_PARCIAL";
-  } else {
-    nextStatus = "PEDIDA";
-  }
-
-  await supabase
-    .from("purchase_requests")
-    .update({
-      status: nextStatus,
-      received_at: allClosed ? new Date().toISOString() : null,
-      updated_by: ctx.userId,
-    })
-    .eq("id", requestId)
-    .eq("organization_id", ctx.organization.id);
+  const syncError = await syncPurchaseSupplierOrdersForRequest({
+    supabase,
+    organizationId: ctx.organization.id,
+    requestId,
+    userId: ctx.userId,
+  });
+  if (syncError) return { ok: false, error: syncError };
 
   revalidateCompras(requestId);
   return { ok: true, id: itemId };
@@ -1596,13 +1926,33 @@ export async function addSupplierPendingItemAction(
 
   if (!request) return { ok: false, error: "Solicitud no encontrada" };
   if (
-    !["PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
-      request.status,
-    )
+    ![
+      "APROBADA",
+      "PEDIDA",
+      "RECIBIDA",
+      "RECIBIDA_PARCIAL",
+      "FACTURA_ACEPTADA",
+    ].includes(request.status)
   ) {
     return {
       ok: false,
       error: "Solo se pueden agregar productos cuando el pedido ya está en recepción",
+    };
+  }
+
+  const { data: ocForExtra } = await supabase
+    .from("purchase_supplier_orders")
+    .select("status")
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .eq("supplier_id", parsed.data.supplier_id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!ocForExtra || ocForExtra.status === "POR_PEDIR") {
+    return {
+      ok: false,
+      error:
+        "Primero marque «Ya pedí» (o avance la OC) de este proveedor antes de agregar extras.",
     };
   }
 
@@ -1719,7 +2069,7 @@ export async function addSupplierPendingItemAction(
         suggested_supplier_id: parsed.data.supplier_id,
         approved_supplier_id: parsed.data.supplier_id,
         unit_cost_estimate: unitCostIn || null,
-        status: "APROBADO",
+        status: "PEDIDO",
         notes: note,
         sort_order: (maxSort?.sort_order ?? 0) + 1,
         created_by: ctx.userId,
@@ -1744,6 +2094,14 @@ export async function addSupplierPendingItemAction(
       quantity: qty,
     },
   });
+
+  const syncExtraError = await syncPurchaseSupplierOrdersForRequest({
+    supabase,
+    organizationId: ctx.organization.id,
+    requestId,
+    userId: ctx.userId,
+  });
+  if (syncExtraError) return { ok: false, error: syncExtraError };
 
   revalidateCompras(requestId);
   return { ok: true, id: itemId };
@@ -1813,7 +2171,13 @@ export async function acceptPurchaseInvoiceAction(
   const prepago = isPrepagoTerms(supplierMeta.purchase_payment_terms);
   const allowedStatuses = prepago
     ? ["APROBADA", "PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"]
-    : ["PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"];
+    : [
+        "APROBADA",
+        "PEDIDA",
+        "RECIBIDA",
+        "RECIBIDA_PARCIAL",
+        "FACTURA_ACEPTADA",
+      ];
   if (!allowedStatuses.includes(request.status)) {
     return {
       ok: false,
@@ -1823,10 +2187,27 @@ export async function acceptPurchaseInvoiceAction(
     };
   }
 
+  const { data: ocRow } = await supabase
+    .from("purchase_supplier_orders")
+    .select("id, status")
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .eq("supplier_id", supplierId)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!prepago && (!ocRow || ocRow.status === "POR_PEDIR")) {
+    return {
+      ok: false,
+      error:
+        "Crédito: marque «Ya pedí» en la orden de este proveedor (o reciba) antes de facturar.",
+    };
+  }
+
   const { data: itemRows } = await supabase
     .from("purchase_request_items")
     .select(
-      "id, product_id, quantity_approved, quantity_requested, quantity_received, unit_cost_estimate, status, approved_supplier_id, suggested_supplier_id, invoice_payment_request_id",
+      "id, product_id, quantity_approved, quantity_requested, quantity_received, quantity_invoiced, unit_cost_estimate, status, approved_supplier_id, suggested_supplier_id, invoice_payment_request_id",
     )
     .eq("purchase_request_id", requestId)
     .eq("organization_id", ctx.organization.id)
@@ -1881,9 +2262,26 @@ export async function acceptPurchaseInvoiceAction(
     const orderedQty = roundPurchaseQty(
       Number(item.quantity_approved ?? item.quantity_requested),
     );
-    const qty = prepago
+    const defaultQty = prepago
       ? Math.max(orderedQty, alreadyReceivedQty)
       : alreadyReceivedQty;
+    const qtyFromForm = parseNumber(
+      String(formData.get(`item_${item.id}_invoice_qty`) ?? ""),
+    );
+    const qty =
+      qtyFromForm != null && qtyFromForm > 0
+        ? roundPurchaseQty(qtyFromForm)
+        : defaultQty;
+    if (!(qty > 0)) {
+      return {
+        ok: false,
+        error: "Indique la cantidad facturada de cada producto (> 0).",
+      };
+    }
+    if (prepago && qty > orderedQty + 1e-9 && alreadyReceivedQty <= orderedQty) {
+      // Permite facturar un poco más solo si ya hubo recepción mayor; si no, avisa.
+      // Casos normales: factura ≤ pedido.
+    }
     const lineTotal = parseNumber(
       String(formData.get(`item_${item.id}_invoice_line_total`) ?? ""),
     );
@@ -1921,6 +2319,7 @@ export async function acceptPurchaseInvoiceAction(
       .update({
         unit_cost_estimate: unitCost,
         supplier_invoice_label: label,
+        quantity_invoiced: qty,
         updated_by: ctx.userId,
       })
       .eq("id", item.id)
@@ -1970,19 +2369,6 @@ export async function acceptPurchaseInvoiceAction(
     return { ok: false, error: e instanceof Error ? e.message : "Error CxP" };
   }
 
-  const chargeSummary =
-    charges.length > 0
-      ? charges
-          .map((c) => {
-            const sign = c.kind === "descuento" ? "−" : "+";
-            const tag = c.kind === "descuento" ? "descuento" : "cargo";
-            return `${tag} ${c.concept}: ${sign}${c.amount}${
-              c.affectsCost ? " (→ costo)" : ""
-            }`;
-          })
-          .join("; ")
-      : null;
-
   const concept =
     emptyToNull(parsed.data.concept) ||
     `Compra: ${request.title} · proveedor`;
@@ -2014,13 +2400,32 @@ export async function acceptPurchaseInvoiceAction(
 
   if (docError) return { ok: false, error: docError.message };
 
-  const payNotes = [
-    `Desde compra ${requestId} · proveedor ${supplierId}`,
-    `Mercancía ${merchandise}`,
-    chargeSummary ? `Ajustes: ${chargeSummary}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const productIds = [...new Set(priced.map((p) => p.product_id))];
+  const { data: productNameRows } = productIds.length
+    ? await supabase
+        .from("products")
+        .select("id, name")
+        .eq("organization_id", ctx.organization.id)
+        .in("id", productIds)
+    : { data: [] as { id: string; name: string }[] };
+  const productNames = new Map(
+    (productNameRows ?? []).map((p) => [p.id, p.name]),
+  );
+
+  const payNotes = buildInvoiceNotesPayload({
+    purchaseRequestId: requestId,
+    supplierId,
+    merchandise,
+    charges,
+    lines: priced.map((p) => ({
+      label:
+        p.supplierLabel ||
+        productNames.get(p.product_id) ||
+        p.product_id.slice(0, 8),
+      qty: p.billedQty,
+      unitCost: p.unitCost,
+    })),
+  });
 
   const { data: payReq, error: payError } = await supabase
     .from("payment_requests")
@@ -2100,63 +2505,36 @@ export async function acceptPurchaseInvoiceAction(
       .eq("organization_id", ctx.organization.id);
   }
 
-  const stampIds = toInvoice.map((i) => i.id);
-  const { error: stampError } = await supabase
-    .from("purchase_request_items")
-    .update({
-      invoice_payment_request_id: payReq.id,
-      invoice_ap_document_id: doc.id,
-      updated_by: ctx.userId,
-    })
-    .eq("organization_id", ctx.organization.id)
-    .in("id", stampIds);
-  if (stampError) return { ok: false, error: stampError.message };
+  for (const row of priced) {
+    const { error: stampError } = await supabase
+      .from("purchase_request_items")
+      .update({
+        invoice_payment_request_id: payReq.id,
+        invoice_ap_document_id: doc.id,
+        quantity_invoiced: row.billedQty,
+        updated_by: ctx.userId,
+      })
+      .eq("id", row.id)
+      .eq("organization_id", ctx.organization.id);
+    if (stampError) return { ok: false, error: stampError.message };
+  }
+  const stampIds = priced.map((p) => p.id);
 
-  const { data: refreshed } = await supabase
-    .from("purchase_request_items")
-    .select(
-      "quantity_approved, quantity_requested, quantity_received, status, invoice_payment_request_id",
-    )
-    .eq("purchase_request_id", requestId)
-    .eq("organization_id", ctx.organization.id)
-    .is("deleted_at", null);
-
-  const allClosed = (refreshed ?? []).every((i) => isPurchaseItemClosed(i));
-  const anyUninvoicedReceived = (refreshed ?? []).some(
-    (i) =>
-      Number(i.quantity_received || 0) > 0 && !i.invoice_payment_request_id,
-  );
-  const anyReceived = (refreshed ?? []).some(
-    (i) => Number(i.quantity_received || 0) > 0,
-  );
-  const anyUninvoicedOrdered = (refreshed ?? []).some((i) => {
-    if (i.invoice_payment_request_id) return false;
-    if (i.status === "CANCELADO" && Number(i.quantity_received || 0) <= 0) {
-      return false;
-    }
-    return (
-      roundPurchaseQty(Number(i.quantity_approved ?? i.quantity_requested)) > 0
-    );
-  });
-
-  // Prepago pre-recepción: deja la solicitud en FACTURA_ACEPTADA (cola de pago).
-  // Crédito: cierra cuando todo recibido+facturado; si no, parcial.
-  let nextStatus = request.status;
-  if (prepago && preReceiveInvoice) {
-    nextStatus = anyUninvoicedOrdered ? request.status : "FACTURA_ACEPTADA";
-    if (request.status === "APROBADA") {
-      nextStatus = "FACTURA_ACEPTADA";
-    }
-  } else if (allClosed && !anyUninvoicedReceived) {
-    nextStatus = "FACTURA_ACEPTADA";
-  } else if (anyReceived) {
-    nextStatus = "RECIBIDA_PARCIAL";
+  // Asegura OC del proveedor y sella factura en la orden.
+  if (!ocRow) {
+    const assignError = await assignPurchaseSupplierOrderNumbers({
+      supabase,
+      organizationId: ctx.organization.id,
+      requestId,
+      supplierIds: [supplierId],
+      userId: ctx.userId,
+    });
+    if (assignError) return { ok: false, error: assignError };
   }
 
-  const { error } = await supabase
+  await supabase
     .from("purchase_requests")
     .update({
-      status: nextStatus,
       invoice_accepted_at: new Date().toISOString(),
       ordered_at: request.ordered_at ?? new Date().toISOString(),
       ap_document_id: doc.id,
@@ -2166,13 +2544,24 @@ export async function acceptPurchaseInvoiceAction(
     .eq("id", requestId)
     .eq("organization_id", ctx.organization.id);
 
-  if (error) return { ok: false, error: error.message };
+  const syncError = await syncPurchaseSupplierOrdersForRequest({
+    supabase,
+    organizationId: ctx.organization.id,
+    requestId,
+    userId: ctx.userId,
+    stamp: {
+      supplierId,
+      paymentRequestId: payReq.id,
+      apDocumentId: doc.id,
+    },
+  });
+  if (syncError) return { ok: false, error: syncError };
 
   await supabase.from("audit_logs").insert({
     organization_id: ctx.organization.id,
     user_id: ctx.userId,
     action: "INVOICE_ACCEPT",
-    entity: "purchase_requests",
+    entity: "purchase_supplier_orders",
     entity_id: requestId,
     new_values: {
       ap_document_id: doc.id,
@@ -2184,7 +2573,6 @@ export async function acceptPurchaseInvoiceAction(
       charges,
       prepago,
       pre_receive_invoice: preReceiveInvoice,
-      // Futuro: si no llega lo pagado → nota crédito.
       credit_note_todo: prepago ? PREPAGO_CREDIT_NOTE_TODO : null,
       allocations: allocations.map((a) => ({
         item_id: a.itemId,
@@ -2192,7 +2580,6 @@ export async function acceptPurchaseInvoiceAction(
         allocated_extra: a.allocatedExtra,
         landed_unit_cost: a.landedUnitCost,
       })),
-      closed: allClosed && !anyUninvoicedReceived,
     },
   });
 

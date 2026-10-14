@@ -37,6 +37,12 @@ import {
   type SupplierTermsMix,
 } from "@/lib/purchases/payment-terms";
 import {
+  purchaseSupplierOrderStatusLabel,
+  supplierOrderAllowsInvoice,
+  supplierOrderAllowsMarkOrdered,
+  supplierOrderAllowsReceive,
+} from "@/lib/purchases/supplier-order-status";
+import {
   createProductCategoryAction,
   createProductFromRequestAction,
 } from "../../inventory-actions";
@@ -107,6 +113,7 @@ export type ItemRow = {
   quantity_requested: number | string;
   quantity_approved: number | string | null;
   quantity_received: number | string;
+  quantity_invoiced?: number | string | null;
   unit: string;
   suggested_supplier_id: string | null;
   approved_supplier_id: string | null;
@@ -986,19 +993,19 @@ function NextActionGuide({
     }
   } else if (status === "APROBADA") {
     if (canMarkOrdered) {
-      title = "Pedir al proveedor";
+      title = "Pedir por proveedor";
       body = supplierMix.hasPrepago
-        ? "1) Descargue el PDF · 2) Compre o envíe el pedido · 3) Marque «Ya pedí». Si hay prepago, puede facturar ese proveedor abajo antes de recibir."
-        : "1) Descargue el PDF · 2) Compre o envíe el pedido · 3) Marque «Ya pedí». Después recibirá y facturará por proveedor.";
+        ? "Cada proveedor es una OC. Descargue el PDF, envíe el pedido y marque «Ya pedí» solo en ese. Prepago puede facturar abajo sin marcar pedido."
+        : "Cada proveedor es una OC. Descargue el PDF, envíe el pedido y marque «Ya pedí» solo en ese; los demás pueden seguir pendientes.";
     } else if (canAcceptInvoice && supplierMix.hasPrepago) {
       title = "Prepago: facturar";
       body =
-        "Puede cargar la factura de proveedores prepago. Quien compre marcará el pedido cuando lo envíe.";
+        "Puede cargar la factura de proveedores prepago. Quien compre marcará «Ya pedí» en cada OC cuando la envíe.";
       tone = "amber";
     } else {
       title = "Compra autorizada";
       body =
-        "Falta que quien compre genere el PDF y marque «Ya pedí / compré».";
+        "Falta que quien compre genere el PDF y marque «Ya pedí» en cada orden de proveedor.";
       tone = "amber";
     }
   } else if (
@@ -1006,22 +1013,22 @@ function NextActionGuide({
       status,
     )
   ) {
-    title = "Cerrar por proveedor";
+    title = "Cerrar por orden de proveedor";
     if (supplierMix.isMixed) {
       body =
-        "Hay prepago y crédito juntos. Abra cada proveedor y haga solo el paso marcado como «Ahora».";
+        "Hay prepago y crédito juntos. Cada OC avanza sola: abra el proveedor y haga solo el paso «Ahora».";
       tone = "amber";
     } else if (supplierMix.hasPrepago) {
       body =
         canAcceptInvoice || canReceive
-          ? "Orden prepago: Facturar → Pagar → Recibir. Siga el cartel «Ahora» de cada proveedor."
-          : "Orden prepago: Facturar → Pagar → Recibir. Si no ve acciones, puede faltar permiso o un pago pendiente.";
+          ? "OC prepago: Facturar → Pagar → Recibir. Si aún hay proveedores por pedir, márquelos arriba."
+          : "OC prepago: Facturar → Pagar → Recibir. Si no ve acciones, puede faltar permiso o un pago pendiente.";
       tone = "amber";
     } else {
       body =
         canReceive || canAcceptInvoice
-          ? "Orden a crédito: Recibir → Facturar. Siga el cartel «Ahora» de cada proveedor."
-          : "Orden a crédito: Recibir → Facturar. Si no ve acciones, puede faltar permiso.";
+          ? "OC a crédito: Pedir → Recibir → Facturar. Cada proveedor tiene su propio estado."
+          : "OC a crédito: Pedir → Recibir → Facturar. Si no ve acciones, puede faltar permiso.";
       tone = "emerald";
     }
   }
@@ -1162,12 +1169,22 @@ function SupplierOrdersPanel({
   items,
   supplierMap,
   orderNumberBySupplier = {},
+  orderStatusBySupplier = {},
+  canMarkOrdered = false,
+  pending = false,
+  startTransition,
+  setError,
   compact = false,
 }: {
   requestId: string;
   items: ItemRow[];
   supplierMap: Map<string, string>;
   orderNumberBySupplier?: Record<string, string>;
+  orderStatusBySupplier?: Record<string, string>;
+  canMarkOrdered?: boolean;
+  pending?: boolean;
+  startTransition?: TransitionStartFunction;
+  setError?: Dispatch<SetStateAction<string | null>>;
   /** En recepción/factura: solo acceso al PDF, sin tablas grandes. */
   compact?: boolean;
 }) {
@@ -1198,10 +1215,10 @@ function SupplierOrdersPanel({
     <section className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h3 className="font-medium">Pedidos para enviar (PDF)</h3>
+          <h3 className="font-medium">Órdenes por proveedor (OC)</h3>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Lo que pedimos a cada proveedor. Después, la recepción y la factura
-            se hacen aparte, proveedor por proveedor.
+            Cada proveedor tiene su propio pedido. Marque «Ya pedí» solo en el
+            que ya envió; los demás pueden seguir pendientes.
           </p>
         </div>
         <Link
@@ -1222,34 +1239,75 @@ function SupplierOrdersPanel({
             const orderNo = group.supplierId
               ? orderNumberBySupplier[group.supplierId]
               : undefined;
+            const ocStatus = group.supplierId
+              ? orderStatusBySupplier[group.supplierId] ?? "POR_PEDIR"
+              : "POR_PEDIR";
+            const canMark = Boolean(
+              canMarkOrdered &&
+                group.supplierId &&
+                supplierOrderAllowsMarkOrdered(ocStatus) &&
+                startTransition &&
+                setError,
+            );
             return (
-            <article
+            <details
               key={group.supplierId ?? "sin"}
-              className="overflow-hidden rounded-xl border border-[var(--line)] bg-white"
+              className="overflow-hidden rounded-xl border border-[var(--line)] bg-white open:shadow-sm"
+              open={canMark}
             >
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] bg-neutral-50 px-4 py-3">
-                <div>
-                  <h4 className="font-medium">
-                    {orderNo ? `${orderNo} · ` : ""}
-                    {group.supplierName}
-                  </h4>
-                  <p className="text-sm text-[var(--muted)]">
-                    {group.items.length} producto
-                    {group.items.length === 1 ? "" : "s"}
-                  </p>
+              <summary className="cursor-pointer list-none bg-neutral-50 px-4 py-3 marker:content-none [&::-webkit-details-marker]:hidden">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-medium">
+                      {orderNo ? `${orderNo} · ` : ""}
+                      {group.supplierName}
+                    </h4>
+                    <p className="text-sm text-[var(--muted)]">
+                      {group.items.length} producto
+                      {group.items.length === 1 ? "" : "s"}
+                      {" · "}
+                      {purchaseSupplierOrderStatusLabel(ocStatus)}
+                      <span className="ml-1 text-xs">· expandir / colapsar</span>
+                    </p>
+                  </div>
+                  <div
+                    className="flex flex-wrap items-center gap-2"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <Link
+                      href={
+                        group.supplierId
+                          ? `${pedidoHref}?supplier=${group.supplierId}`
+                          : pedidoHref
+                      }
+                      className="text-sm text-[var(--accent)]"
+                    >
+                      Imprimir
+                    </Link>
+                    {canMark && startTransition && setError ? (
+                      <button
+                        type="button"
+                        disabled={pending}
+                        className="rounded-lg bg-[var(--solid)] px-3 py-1.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
+                        onClick={() =>
+                          startTransition(async () => {
+                            setError(null);
+                            const r = await markPurchaseOrderedAction(
+                              requestId,
+                              group.supplierId!,
+                            );
+                            if (!r.ok) setError(r.error ?? "Error");
+                          })
+                        }
+                      >
+                        Ya pedí / compré
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-                <Link
-                  href={
-                    group.supplierId
-                      ? `${pedidoHref}?supplier=${group.supplierId}`
-                      : pedidoHref
-                  }
-                  className="text-sm text-[var(--accent)]"
-                >
-                  Imprimir este pedido
-                </Link>
-              </div>
-              <table className="w-full text-sm">
+              </summary>
+              <table className="w-full border-t border-[var(--line)] text-sm">
                 <thead>
                   <tr className="border-b border-[var(--line)] text-left text-[var(--muted)]">
                     <th className="px-4 py-2 font-medium">Producto</th>
@@ -1291,7 +1349,7 @@ function SupplierOrdersPanel({
                   ))}
                 </tbody>
               </table>
-            </article>
+            </details>
             );
           })}
         </div>
@@ -1501,9 +1559,20 @@ function itemOrderedQty(item: ItemRow) {
   return roundPurchaseQty(Number(item.quantity_approved ?? item.quantity_requested));
 }
 
+function itemInvoicedQty(item: ItemRow) {
+  return roundPurchaseQty(Number(item.quantity_invoiced || 0));
+}
+
+/** Meta de recepción: en prepago facturado se cierra contra lo facturado/pagado. */
+function itemReceiveTargetQty(item: ItemRow) {
+  const invoiced = itemInvoicedQty(item);
+  if (item.invoice_payment_request_id && invoiced > 0) return invoiced;
+  return itemOrderedQty(item);
+}
+
 function itemPendingQty(item: ItemRow) {
   const pending = roundPurchaseQty(
-    itemOrderedQty(item) - Number(item.quantity_received || 0),
+    itemReceiveTargetQty(item) - Number(item.quantity_received || 0),
   );
   return Math.max(pending, 0);
 }
@@ -1587,6 +1656,11 @@ function ReceiveItemRow({
     "pendiente",
   );
   const ordered = itemOrderedQty(item);
+  const invoiced = itemInvoicedQty(item);
+  const target = itemReceiveTargetQty(item);
+  const againstInvoice = Boolean(
+    item.invoice_payment_request_id && invoiced > 0,
+  );
   const received = roundPurchaseQty(Number(item.quantity_received || 0));
   const pendingQty = itemPendingQty(item);
   const closed = isItemClosed(item);
@@ -1614,8 +1688,11 @@ function ReceiveItemRow({
           <div>
             <p className="font-medium">{item.product_name}</p>
             <p className="text-[var(--muted)]">
-              Pedido {formatPurchaseQty(ordered)} · recibido{" "}
-              {formatPurchaseQty(received)} {item.unit}
+              Pedido {formatPurchaseQty(ordered)}
+              {againstInvoice
+                ? ` · facturado ${formatPurchaseQty(invoiced)}`
+                : ""}{" "}
+              · recibido {formatPurchaseQty(received)} {item.unit}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1630,9 +1707,11 @@ function ReceiveItemRow({
                   : "No llegará"
                 : isReceiveExtraItem(item)
                   ? "Agregado en recepción"
-                  : received > ordered
-                    ? "Recibido (+extra)"
-                    : "Recibido completo"}
+                  : againstInvoice && received >= target
+                    ? "Recibido vs factura"
+                    : received > ordered
+                      ? "Recibido (+extra)"
+                      : "Recibido completo"}
             </Badge>
             {undoControls}
           </div>
@@ -1660,8 +1739,11 @@ function ReceiveItemRow({
             ) : null}
           </div>
           <p className="text-[var(--muted)]">
-            Pedido {formatPurchaseQty(ordered)} · ya recibido{" "}
-            {formatPurchaseQty(received)} · falta{" "}
+            Pedido {formatPurchaseQty(ordered)}
+            {againstInvoice
+              ? ` · facturado/pagado ${formatPurchaseQty(invoiced)}`
+              : ""}{" "}
+            · ya recibido {formatPurchaseQty(received)} · falta{" "}
             <span className="font-medium text-[var(--ink)]">
               {formatPurchaseQty(pendingQty)} {item.unit}
             </span>
@@ -1669,6 +1751,12 @@ function ReceiveItemRow({
               ? ` · est. ${formatDateCO(item.expected_delivery_date)}`
               : ""}
           </p>
+          {againstInvoice && invoiced < ordered ? (
+            <p className="mt-1 text-xs text-amber-900">
+              La factura es menor al pedido ({formatPurchaseQty(invoiced)} de{" "}
+              {formatPurchaseQty(ordered)}). Reciba contra lo facturado.
+            </p>
+          ) : null}
         </div>
         {undoControls}
       </div>
@@ -1824,6 +1912,17 @@ function SupplierInvoiceForm({
     }
     return Number(i.quantity_received || 0) > 0;
   });
+  const [billedQtys, setBilledQtys] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const item of billable) {
+      const qty =
+        billingMode === "ordered"
+          ? itemOrderedQty(item)
+          : roundPurchaseQty(Number(item.quantity_received || 0));
+      init[item.id] = formatPurchaseQty(qty);
+    }
+    return init;
+  });
   const [lineTotals, setLineTotals] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     for (const item of billable) {
@@ -1849,10 +1948,13 @@ function SupplierInvoiceForm({
   const [charges, setCharges] = useState<ChargeDraft[]>([]);
 
   const billableLines = billable.map((item) => {
-    const billedQty =
+    const fallback =
       billingMode === "ordered"
         ? itemOrderedQty(item)
         : roundPurchaseQty(Number(item.quantity_received || 0));
+    const fromForm = parseBulkNumber(billedQtys[item.id] ?? "");
+    const billedQty =
+      fromForm != null && fromForm > 0 ? roundPurchaseQty(fromForm) : fallback;
     const lineTotal = parseBulkNumber(lineTotals[item.id] ?? "");
     const unitCost =
       lineTotal != null && lineTotal > 0 && billedQty > 0
@@ -1931,8 +2033,9 @@ function SupplierInvoiceForm({
         <p className="mt-1 text-xs text-[var(--muted)]">
           {billingMode === "ordered" ? (
             <>
-              Prepago: factura <strong>antes</strong> de recibir → pagar en
-              Solicitudes de pago → luego recibir.
+              Prepago: ajuste la <strong>cant. facturada</strong> si el
+              proveedor cobró distinto al pedido → pagar → recibir contra esa
+              cantidad.
             </>
           ) : (
             <>
@@ -1945,11 +2048,12 @@ function SupplierInvoiceForm({
 
       <ul className="space-y-3 rounded-lg bg-neutral-50 px-3 py-3 text-sm">
         {billable.map((item) => {
-          const billed =
-            billingMode === "ordered"
-              ? itemOrderedQty(item)
-              : roundPurchaseQty(Number(item.quantity_received || 0));
+          const ordered = itemOrderedQty(item);
+          const receivedQty = roundPurchaseQty(
+            Number(item.quantity_received || 0),
+          );
           const line = billableLines.find((l) => l.itemId === item.id);
+          const billed = line?.receivedQty ?? ordered;
           const alloc = allocByItem.get(item.id);
           const lineBase = roundMoney(billed * (line?.unitCost ?? 0));
           return (
@@ -1961,9 +2065,11 @@ function SupplierInvoiceForm({
                 <div>
                   <p className="font-medium">{item.product_name}</p>
                   <p className="text-xs text-[var(--muted)]">
-                    {billingMode === "ordered" ? "Pedido" : "Recibido"}{" "}
-                    {formatPurchaseQty(billed)} {item.unit} · nombre interno
-                    Candela
+                    Pedido {formatPurchaseQty(ordered)} {item.unit}
+                    {billingMode === "received"
+                      ? ` · recibido ${formatPurchaseQty(receivedQty)}`
+                      : ""}{" "}
+                    · nombre interno Candela
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1981,10 +2087,28 @@ function SupplierInvoiceForm({
                   ) : null}
                 </div>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-3">
                 <label className="block text-sm">
                   <span className="mb-1 block text-[var(--muted)]">
-                    Como aparece en factura (opcional)
+                    Cant. en factura * ({item.unit})
+                  </span>
+                  <input
+                    name={`item_${item.id}_invoice_qty`}
+                    value={billedQtys[item.id] ?? ""}
+                    onChange={(e) =>
+                      setBilledQtys((prev) => ({
+                        ...prev,
+                        [item.id]: e.target.value,
+                      }))
+                    }
+                    className={inputClass}
+                    inputMode="decimal"
+                    required
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="mb-1 block text-[var(--muted)]">
+                    Como aparece en factura
                   </span>
                   <input
                     name={`item_${item.id}_supplier_invoice_label`}
@@ -2561,7 +2685,8 @@ function SupplierReceiveForm({
     >
       <p className="text-sm font-medium">Recibir de {supplierName}</p>
       <p className="text-xs text-[var(--muted)]">
-        Marque «Llegó ahora» en lo que llegó. Lo pendiente espera otra entrega.
+        Marque «Llegó ahora» en lo que llegó. Si hay factura prepago, la meta es
+        lo facturado/pagado (no el pedido original).
       </p>
       {openItems.map((item) => (
         <ReceiveItemRow
@@ -2587,7 +2712,6 @@ function SupplierReceiveForm({
 
 function SupplierOperationsPanel({
   requestId,
-  requestStatus,
   items,
   products,
   categories,
@@ -2595,6 +2719,8 @@ function SupplierOperationsPanel({
   links,
   supplierMap,
   supplierTerms,
+  orderNumberBySupplier,
+  orderStatusBySupplier,
   paymentStatusById,
   canReceive,
   canReceiveExtras,
@@ -2605,7 +2731,6 @@ function SupplierOperationsPanel({
   setError,
 }: {
   requestId: string;
-  requestStatus: string;
   items: ItemRow[];
   products: ProductOption[];
   categories: CategoryOption[];
@@ -2613,6 +2738,8 @@ function SupplierOperationsPanel({
   links: CategorySupplierLink[];
   supplierMap: Map<string, string>;
   supplierTerms: Map<string, string>;
+  orderNumberBySupplier: Record<string, string>;
+  orderStatusBySupplier: Record<string, string>;
   paymentStatusById: Map<string, string>;
   canReceive: boolean;
   canReceiveExtras: boolean;
@@ -2642,14 +2769,22 @@ function SupplierOperationsPanel({
     prepago: boolean;
     billingMode: "ordered" | "received";
     payGateLabel: string | null;
+    ocStatus: string;
+    orderNumber: string | undefined;
   };
 
-  const views: GroupView[] = groups
-    .map((group) => {
+  const views = groups
+    .map((group): GroupView | null => {
       const terms = group.supplierId
         ? supplierTerms.get(group.supplierId) ?? "PREPAGO"
         : "PREPAGO";
       const prepago = isPrepagoTerms(terms);
+      const ocStatus = group.supplierId
+        ? orderStatusBySupplier[group.supplierId] ?? "POR_PEDIR"
+        : "POR_PEDIR";
+      const orderNumber = group.supplierId
+        ? orderNumberBySupplier[group.supplierId]
+        : undefined;
       const billingMode: "ordered" | "received" = prepago
         ? "ordered"
         : "received";
@@ -2679,46 +2814,49 @@ function SupplierOperationsPanel({
         openItems.length > 0;
 
       const isSettled =
-        openItems.length === 0 &&
-        uninvoiced.length === 0 &&
-        invoiced.length > 0;
+        ocStatus === "CERRADA" ||
+        (openItems.length === 0 &&
+          uninvoiced.length === 0 &&
+          invoiced.length > 0);
 
       const canShowInvoice =
         canAcceptInvoice &&
         Boolean(group.supplierId) &&
         uninvoiced.length > 0 &&
-        ["APROBADA", "PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
-          requestStatus,
-        ) &&
-        (prepago ||
-          ["PEDIDA", "RECIBIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
-            requestStatus,
-          ));
+        supplierOrderAllowsInvoice({ status: ocStatus, terms });
 
-      // Prepago: recibir solo con factura pagada. Crédito: tras pedir.
       const canShowReceive =
         canReceive &&
         openItems.length > 0 &&
-        ["PEDIDA", "RECIBIDA_PARCIAL", "FACTURA_ACEPTADA"].includes(
-          requestStatus,
-        ) &&
-        (!prepago || allInvoicedPaid);
+        supplierOrderAllowsReceive({
+          status: ocStatus,
+          terms,
+          allInvoicesPaid: allInvoicedPaid,
+        });
 
       const canShowExtra =
         canReceiveExtras &&
         Boolean(group.supplierId) &&
         !isSettled &&
+        ocStatus !== "POR_PEDIR" &&
         (!prepago || allInvoicedPaid || canShowReceive);
 
       let payGateLabel: string | null = null;
       if (prepago && openItems.length > 0 && !canShowReceive) {
-        if (uninvoiced.length > 0) {
+        if (uninvoiced.length > 0 && ocStatus !== "ANULADA") {
           payGateLabel =
             "Prepago: cargue la factura y págala antes de recibir.";
         } else if (awaitingPay) {
           payGateLabel =
             "Factura en cola: pague en Solicitudes de pago y notifique el comprobante al proveedor. Luego podrá recibir.";
         }
+      } else if (
+        !prepago &&
+        ocStatus === "POR_PEDIR" &&
+        openItems.length > 0
+      ) {
+        payGateLabel =
+          "Crédito: marque «Ya pedí» en la orden de este proveedor antes de recibir o facturar.";
       }
 
       const nextStep = canShowInvoice
@@ -2729,11 +2867,15 @@ function SupplierOperationsPanel({
             ? "Siguiente: recibir"
             : isSettled
               ? "Listo"
-              : invoiced.length > 0
-                ? "Factura en cola"
-                : payGateLabel
-                  ? "Siguiente: facturar"
-                  : "Sin acción aún";
+              : ocStatus === "POR_PEDIR"
+                ? "Siguiente: pedir"
+                : invoiced.length > 0
+                  ? "Factura en cola"
+                  : payGateLabel
+                    ? prepago
+                      ? "Siguiente: facturar"
+                      : "Siguiente: pedir"
+                    : "Sin acción aún";
 
       if (
         !canShowReceive &&
@@ -2741,7 +2883,8 @@ function SupplierOperationsPanel({
         !canShowExtra &&
         !payGateLabel &&
         invoiced.length === 0 &&
-        closedItems.length === 0
+        closedItems.length === 0 &&
+        ocStatus === "POR_PEDIR"
       ) {
         return null;
       }
@@ -2760,6 +2903,8 @@ function SupplierOperationsPanel({
         prepago,
         billingMode,
         payGateLabel,
+        ocStatus,
+        orderNumber,
       };
     })
     .filter((v): v is GroupView => v != null);
@@ -2767,7 +2912,10 @@ function SupplierOperationsPanel({
   const activeViews = views.filter((v) => !v.isSettled);
   const settledViews = views.filter((v) => v.isSettled);
 
-  function renderSupplierCard(view: GroupView, opts?: { settled?: boolean }) {
+  function renderSupplierCard(
+    view: GroupView,
+    opts?: { settled?: boolean; defaultOpen?: boolean },
+  ) {
     const {
       group,
       openItems,
@@ -2780,6 +2928,8 @@ function SupplierOperationsPanel({
       prepago,
       billingMode,
       payGateLabel,
+      ocStatus,
+      orderNumber,
     } = view;
     const settled = Boolean(opts?.settled);
     const actionLabel = nextStep.replace(/^Siguiente:\s*/i, "Ahora: ");
@@ -2795,6 +2945,7 @@ function SupplierOperationsPanel({
     const needsAction = Boolean(
       canShowInvoice || payGateLabel || canShowReceive,
     );
+    const defaultOpen = Boolean(opts?.defaultOpen);
 
     const invoiceBlock =
       canShowInvoice && group.supplierId ? (
@@ -2846,16 +2997,21 @@ function SupplierOperationsPanel({
               ? "border-[var(--ink)] shadow-sm"
               : "border-[var(--line)]"
         }`}
-        open={!settled && needsAction}
+        open={defaultOpen}
       >
         <summary className="cursor-pointer list-none bg-neutral-50 px-4 py-3 marker:content-none [&::-webkit-details-marker]:hidden">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <p className="font-medium">{group.supplierName}</p>
+              <p className="font-medium">
+                {orderNumber ? `${orderNumber} · ` : ""}
+                {group.supplierName}
+              </p>
               <p className="text-sm text-[var(--muted)]">
                 {group.items.length} producto
                 {group.items.length === 1 ? "" : "s"} ·{" "}
-                {prepago ? "Prepago" : "Crédito"}
+                {prepago ? "Prepago" : "Crédito"} ·{" "}
+                {purchaseSupplierOrderStatusLabel(ocStatus)}
+                <span className="ml-1 text-xs">· tocar para expandir</span>
               </p>
               {!settled ? (
                 <SupplierFlowChips prepago={prepago} nextStep={nextStep} />
@@ -2972,9 +3128,9 @@ function SupplierOperationsPanel({
       <div className="rounded-xl border border-[var(--line)] bg-white p-4">
         <h3 className="font-medium">Trabajo por proveedor</h3>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Cada proveedor tiene su propio orden. Abra la tarjeta y haga solo la
-          acción marcada como <strong>Ahora</strong>. Recibir = cantidades;
-          Facturar = precios y cola de pago.
+          Cada OC está colapsada para no saturar la pantalla. Expanda un
+          proveedor y haga solo la acción <strong>Ahora</strong>. Recibir =
+          cantidades; Facturar = precios y cola de pago.
         </p>
         {opsMixed ? (
           <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
@@ -3000,7 +3156,16 @@ function SupplierOperationsPanel({
               Facturar → Pagar → Recibir
             </p>
           </div>
-          {prepagoActive.map((view) => renderSupplierCard(view))}
+          {prepagoActive.map((view, index) => {
+            const needs =
+              view.canShowInvoice || view.canShowReceive || Boolean(view.payGateLabel);
+            const firstNeeds = prepagoActive.findIndex(
+              (v) => v.canShowInvoice || v.canShowReceive || Boolean(v.payGateLabel),
+            );
+            return renderSupplierCard(view, {
+              defaultOpen: needs && index === firstNeeds,
+            });
+          })}
         </div>
       ) : null}
 
@@ -3014,7 +3179,16 @@ function SupplierOperationsPanel({
               Recibir → Facturar
             </p>
           </div>
-          {creditoActive.map((view) => renderSupplierCard(view))}
+          {creditoActive.map((view, index) => {
+            const needs =
+              view.canShowInvoice || view.canShowReceive || Boolean(view.payGateLabel);
+            const firstNeeds = creditoActive.findIndex(
+              (v) => v.canShowInvoice || v.canShowReceive || Boolean(v.payGateLabel),
+            );
+            return renderSupplierCard(view, {
+              defaultOpen: needs && index === firstNeeds,
+            });
+          })}
         </div>
       ) : null}
 
@@ -3147,6 +3321,7 @@ export function RequestDetailClient({
   suppliers,
   links,
   orderNumberBySupplier = {},
+  orderStatusBySupplier = {},
   paymentStatusById = {},
   canCreate,
   canCreateProduct,
@@ -3164,6 +3339,7 @@ export function RequestDetailClient({
   suppliers: SupplierOption[];
   links: CategorySupplierLink[];
   orderNumberBySupplier?: Record<string, string>;
+  orderStatusBySupplier?: Record<string, string>;
   paymentStatusById?: Record<string, string>;
   canCreate: boolean;
   canCreateProduct: boolean;
@@ -3206,20 +3382,45 @@ export function RequestDetailClient({
     return classifySuppliersByTerms(entries);
   }, [items, supplierMap, supplierTerms]);
   const existingProductIds = new Set(items.map((i) => i.product_id));
-  // PDF compact en recepción/factura (APROBADA ya muestra el panel completo arriba).
-  const showSupplierOrders = [
-    "PEDIDA",
-    "RECIBIDA_PARCIAL",
-    "RECIBIDA",
-    "FACTURA_ACEPTADA",
-  ].includes(request.status);
-  const showOpsPanel = [
-    "APROBADA",
-    "PEDIDA",
-    "RECIBIDA",
-    "RECIBIDA_PARCIAL",
-    "FACTURA_ACEPTADA",
-  ].includes(request.status);
+  const supplierIdsInRequest = useMemo(() => {
+    const ids = new Set<string>();
+    for (const item of items) {
+      const sid = item.approved_supplier_id ?? item.suggested_supplier_id;
+      if (sid) ids.add(sid);
+    }
+    return [...ids];
+  }, [items]);
+  const hasPendingOrders = supplierIdsInRequest.some((sid) =>
+    supplierOrderAllowsMarkOrdered(orderStatusBySupplier[sid] ?? "POR_PEDIR"),
+  );
+  const hasActiveOrders = supplierIdsInRequest.some((sid) => {
+    const st = orderStatusBySupplier[sid] ?? "POR_PEDIR";
+    return st !== "POR_PEDIR" && st !== "ANULADA";
+  });
+  // Pedir: mientras quede alguna OC por pedir (aunque otras ya avancen).
+  const showOrderPanel =
+    hasPendingOrders &&
+    ["APROBADA", "PEDIDA", "RECIBIDA_PARCIAL", "RECIBIDA", "FACTURA_ACEPTADA"].includes(
+      request.status,
+    );
+  // PDF compact cuando ya no hay panel de pedir completo.
+  const showSupplierOrders =
+    !showOrderPanel &&
+    [
+      "PEDIDA",
+      "RECIBIDA_PARCIAL",
+      "RECIBIDA",
+      "FACTURA_ACEPTADA",
+    ].includes(request.status);
+  const showOpsPanel =
+    (hasActiveOrders || supplierMix.hasPrepago) &&
+    [
+      "APROBADA",
+      "PEDIDA",
+      "RECIBIDA",
+      "RECIBIDA_PARCIAL",
+      "FACTURA_ACEPTADA",
+    ].includes(request.status);
   const approveGroups = useMemo(
     () =>
       groupPurchaseItemsBySupplier(items, supplierMap, {
@@ -3338,6 +3539,7 @@ export function RequestDetailClient({
             items={items}
             supplierMap={supplierMap}
             orderNumberBySupplier={orderNumberBySupplier}
+            orderStatusBySupplier={orderStatusBySupplier}
           />
         )
       ) : null}
@@ -3521,30 +3723,37 @@ export function RequestDetailClient({
             items={items}
             supplierMap={supplierMap}
             orderNumberBySupplier={orderNumberBySupplier}
+            orderStatusBySupplier={orderStatusBySupplier}
             compact
           />
         </div>
       ) : null}
 
-      {request.status === "APROBADA" ? (
+      {showOrderPanel ? (
         <div className="space-y-4 rounded-xl border-2 border-[var(--ink)] bg-white p-5">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
               Paso actual
             </p>
-            <h3 className="mt-1 font-medium">Pedir al proveedor</h3>
+            <h3 className="mt-1 font-medium">Pedir por proveedor</h3>
             <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-[var(--muted)]">
-              <li>Descargue o imprima el PDF por proveedor.</li>
-              <li>Envíe el pedido o compre.</li>
+              <li>Descargue o imprima el PDF de cada proveedor.</li>
+              <li>Envíe el pedido o compre a ese proveedor.</li>
               <li>
                 Marque <strong className="text-[var(--ink)]">Ya pedí / compré</strong>{" "}
-                cuando quede hecho.
+                solo en esa orden. Las demás pueden seguir pendientes.
               </li>
             </ol>
             {supplierMix.hasPrepago ? (
               <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-                Si hay proveedores prepago, puede facturarlos más abajo aunque
-                aún no marque el pedido.
+                Prepago: puede facturar ese proveedor más abajo aunque aún no
+                marque el pedido.
+              </p>
+            ) : null}
+            {!canMarkOrdered ? (
+              <p className="mt-3 text-sm text-amber-800">
+                No tiene permiso para marcar pedida. Quien compre debe tener
+                «Pedir / comprar al proveedor».
               </p>
             ) : null}
           </div>
@@ -3553,28 +3762,12 @@ export function RequestDetailClient({
             items={items}
             supplierMap={supplierMap}
             orderNumberBySupplier={orderNumberBySupplier}
+            orderStatusBySupplier={orderStatusBySupplier}
+            canMarkOrdered={canMarkOrdered}
+            pending={pending}
+            startTransition={startTransition}
+            setError={setError}
           />
-          {canMarkOrdered ? (
-            <button
-              type="button"
-              disabled={pending}
-              className="rounded-lg bg-[var(--solid)] px-5 py-2.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
-              onClick={() =>
-                startTransition(async () => {
-                  setError(null);
-                  const r = await markPurchaseOrderedAction(request.id);
-                  if (!r.ok) setError(r.error ?? "Error");
-                })
-              }
-            >
-              Ya pedí / compré al proveedor
-            </button>
-          ) : (
-            <p className="text-sm text-amber-800">
-              No tiene permiso para marcar pedida. Quien compre debe tener
-              «Pedir / comprar al proveedor».
-            </p>
-          )}
         </div>
       ) : null}
 
@@ -3606,7 +3799,6 @@ export function RequestDetailClient({
       (canReceive || canAcceptInvoice || canReceiveExtras) ? (
         <SupplierOperationsPanel
           requestId={request.id}
-          requestStatus={request.status}
           items={items}
           products={products}
           categories={categories}
@@ -3614,6 +3806,8 @@ export function RequestDetailClient({
           links={links}
           supplierMap={supplierMap}
           supplierTerms={supplierTerms}
+          orderNumberBySupplier={orderNumberBySupplier}
+          orderStatusBySupplier={orderStatusBySupplier}
           paymentStatusById={new Map(Object.entries(paymentStatusById))}
           canReceive={canReceive}
           canReceiveExtras={canReceiveExtras}
@@ -3636,6 +3830,7 @@ export function RequestDetailClient({
               items={items}
               supplierMap={supplierMap}
               orderNumberBySupplier={orderNumberBySupplier}
+              orderStatusBySupplier={orderStatusBySupplier}
               compact
             />
           </div>

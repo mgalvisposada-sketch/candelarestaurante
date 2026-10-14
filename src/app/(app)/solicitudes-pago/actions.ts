@@ -17,6 +17,7 @@ import {
   rejectPaymentRequestSchema,
 } from "@/validations/payment-requests";
 import type { ActionResult } from "../empresa/actions";
+import { syncPurchaseOrdersAfterPayment } from "../compras/purchase-actions";
 
 type PaymentRequestStatus =
   | "BORRADOR"
@@ -519,6 +520,46 @@ export async function payPaymentRequestAction(
     .filter(Boolean)
     .join(" · ");
 
+  // Comprobante opcional (PDF/imagen) para enviar al proveedor.
+  let proofDocumentId: string | null = null;
+  const proofFile = formData.get("payment_proof");
+  if (proofFile instanceof File && proofFile.size > 0) {
+    const maxBytes = 20 * 1024 * 1024;
+    if (proofFile.size > maxBytes) {
+      return { ok: false, error: "El comprobante supera 20 MB" };
+    }
+    const safeName = proofFile.name.replace(/[^\w.\-]+/g, "_");
+    const storagePath = `${orgId}/payment-proofs/${crypto.randomUUID()}-${safeName}`;
+    const { error: uploadError } = await supabase.storage
+      .from("documents")
+      .upload(storagePath, proofFile, {
+        contentType: proofFile.type || "application/octet-stream",
+        upsert: false,
+      });
+    if (uploadError) return { ok: false, error: uploadError.message };
+
+    const { data: docRow, error: docError } = await supabase
+      .from("documents")
+      .insert({
+        organization_id: orgId,
+        name: `Comprobante pago · ${req.concept}`.slice(0, 200),
+        document_type: "COMPROBANTE_PAGO",
+        file_size: proofFile.size,
+        mime_type: proofFile.type || null,
+        storage_path: storagePath,
+        entity_type: "payment_requests",
+        entity_id: requestId,
+        uploaded_by: ctx.userId,
+      })
+      .select("id")
+      .single();
+    if (docError) {
+      await supabase.storage.from("documents").remove([storagePath]);
+      return { ok: false, error: docError.message };
+    }
+    proofDocumentId = docRow.id as string;
+  }
+
   const { error } = await supabase
     .from("payment_requests")
     .update({
@@ -528,6 +569,7 @@ export async function payPaymentRequestAction(
       paid_amount: payAmount,
       paid_at: new Date().toISOString(),
       payment_reference: emptyToNull(parsed.data.payment_reference),
+      payment_proof_document_id: proofDocumentId,
       notes: notesMerged || null,
       updated_by: ctx.userId,
     })
@@ -546,12 +588,211 @@ export async function payPaymentRequestAction(
       amount: payAmount,
       legs,
       bank_transaction_ids: txIds,
+      payment_proof_document_id: proofDocumentId,
     },
   });
+
+  if (req.source === "FACTURA_PROVEEDOR") {
+    try {
+      await syncPurchaseOrdersAfterPayment(requestId);
+    } catch {
+      /* la OC se puede resincronizar al abrir la solicitud */
+    }
+  }
 
   revalidatePaymentPaths();
   revalidatePath("/cierre-caja");
   return { ok: true, id: requestId };
+}
+
+async function unlockPurchaseItemsFromPaymentRequest(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  userId: string,
+  requestId: string,
+  apDocumentId: string | null,
+) {
+  // Libera ítems de compra para poder volver a facturar.
+  await supabase
+    .from("purchase_request_items")
+    .update({
+      invoice_ap_document_id: null,
+      invoice_payment_request_id: null,
+      quantity_invoiced: null,
+      updated_by: userId,
+    })
+    .eq("organization_id", orgId)
+    .eq("invoice_payment_request_id", requestId)
+    .is("deleted_at", null);
+
+  if (apDocumentId) {
+    await supabase
+      .from("purchase_request_items")
+      .update({
+        invoice_ap_document_id: null,
+        invoice_payment_request_id: null,
+        quantity_invoiced: null,
+        updated_by: userId,
+      })
+      .eq("organization_id", orgId)
+      .eq("invoice_ap_document_id", apDocumentId)
+      .is("deleted_at", null);
+  }
+}
+
+async function resolvePurchaseRequestIdForPayment(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  requestId: string,
+  notes: string | null,
+): Promise<string | null> {
+  const { data: item } = await supabase
+    .from("purchase_request_items")
+    .select("purchase_request_id")
+    .eq("organization_id", orgId)
+    .eq("invoice_payment_request_id", requestId)
+    .is("deleted_at", null)
+    .limit(1)
+    .maybeSingle();
+  if (item?.purchase_request_id) return item.purchase_request_id as string;
+
+  const match = notes?.match(/Desde compra\s+([0-9a-f-]{36})/i);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Anula la solicitud de pago de una factura de compra (sin pagar),
+ * elimina la CxP vinculada si no tiene pagos, y libera los ítems
+ * para corregir y volver a facturar en Compras.
+ */
+export async function correctPurchaseInvoicePaymentRequestAction(
+  requestId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  const can =
+    ctxCanAccess(ctx, "solicitudes-pago.aprobar") ||
+    ctxCanAccess(ctx, "compras.solicitudes.facturar");
+  if (!can) {
+    return {
+      ok: false,
+      error: "Sin permiso para corregir esta factura",
+    };
+  }
+
+  const supabase = await createClient();
+  const orgId = ctx.organization.id;
+  let req;
+  try {
+    req = await getWritableRequest(supabase, orgId, requestId);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Error" };
+  }
+  if (!req) return { ok: false, error: "Solicitud no encontrada" };
+  if (req.source !== "FACTURA_PROVEEDOR") {
+    return {
+      ok: false,
+      error: "Solo aplica a facturas de compra / CxP",
+    };
+  }
+  if (req.status === "PAGADA") {
+    return {
+      ok: false,
+      error: "Ya está pagada. No se puede corregir desde aquí.",
+    };
+  }
+  if (req.status === "ANULADA") {
+    return { ok: false, error: "Esta solicitud ya está anulada" };
+  }
+
+  const purchaseRequestId = await resolvePurchaseRequestIdForPayment(
+    supabase,
+    orgId,
+    requestId,
+    req.notes,
+  );
+
+  if (req.ap_document_id) {
+    const { data: doc } = await supabase
+      .from("accounts_payable_documents")
+      .select("id, paid_amount, deleted_at")
+      .eq("id", req.ap_document_id)
+      .eq("organization_id", orgId)
+      .maybeSingle();
+
+    if (doc && !doc.deleted_at && Number(doc.paid_amount || 0) > 0) {
+      return {
+        ok: false,
+        error:
+          "La CxP ya tiene pagos. No se puede corregir hasta revertir esos pagos.",
+      };
+    }
+
+    if (doc && !doc.deleted_at) {
+      const now = new Date().toISOString();
+      await supabase
+        .from("accounts_payable_payments")
+        .update({
+          deleted_at: now,
+          updated_by: ctx.userId,
+        })
+        .eq("accounts_payable_document_id", doc.id)
+        .eq("organization_id", orgId)
+        .is("deleted_at", null);
+
+      const { error: docError } = await supabase
+        .from("accounts_payable_documents")
+        .update({
+          deleted_at: now,
+          status: "ANULADA",
+          updated_by: ctx.userId,
+        })
+        .eq("id", doc.id)
+        .eq("organization_id", orgId)
+        .is("deleted_at", null);
+      if (docError) return { ok: false, error: docError.message };
+    }
+  }
+
+  await unlockPurchaseItemsFromPaymentRequest(
+    supabase,
+    orgId,
+    ctx.userId,
+    requestId,
+    req.ap_document_id,
+  );
+
+  const { error } = await supabase
+    .from("payment_requests")
+    .update({
+      status: "ANULADA",
+      deleted_at: new Date().toISOString(),
+      updated_by: ctx.userId,
+    })
+    .eq("id", requestId)
+    .eq("organization_id", orgId);
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: orgId,
+    user_id: ctx.userId,
+    action: "UPDATE",
+    entity: "payment_requests",
+    entity_id: requestId,
+    new_values: {
+      corrected: true,
+      document_number: req.document_number,
+      purchase_request_id: purchaseRequestId,
+    },
+  });
+
+  revalidatePaymentPaths();
+  revalidatePath("/compras/solicitudes");
+  if (purchaseRequestId) {
+    revalidatePath(`/compras/solicitudes/${purchaseRequestId}`);
+  }
+  return { ok: true, id: purchaseRequestId ?? requestId };
 }
 
 export async function softDeletePaymentRequestAction(
@@ -573,6 +814,11 @@ export async function softDeletePaymentRequestAction(
   if (!req) return { ok: false, error: "Solicitud no encontrada" };
   if (req.status === "PAGADA") {
     return { ok: false, error: "No se puede anular una solicitud ya pagada" };
+  }
+
+  // Facturas de compra: al anular, liberar ítems (si no, no se puede refacturar).
+  if (req.source === "FACTURA_PROVEEDOR") {
+    return correctPurchaseInvoicePaymentRequestAction(requestId);
   }
 
   const { error } = await supabase

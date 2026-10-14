@@ -54,7 +54,7 @@ export default async function CompraSolicitudDetailPage({
       supabase
         .from("purchase_request_items")
         .select(
-          "id, product_id, category_id, quantity_requested, quantity_approved, quantity_received, unit, suggested_supplier_id, approved_supplier_id, unit_cost_estimate, expected_delivery_date, status, notes, invoice_payment_request_id, invoice_ap_document_id, supplier_invoice_label",
+          "id, product_id, category_id, quantity_requested, quantity_approved, quantity_received, quantity_invoiced, unit, suggested_supplier_id, approved_supplier_id, unit_cost_estimate, expected_delivery_date, status, notes, invoice_payment_request_id, invoice_ap_document_id, supplier_invoice_label",
         )
         .eq("purchase_request_id", id)
         .eq("organization_id", ctx.organization.id)
@@ -97,7 +97,7 @@ export default async function CompraSolicitudDetailPage({
         .order("code"),
       supabase
         .from("purchase_supplier_orders")
-        .select("supplier_id, order_number")
+        .select("supplier_id, order_number, status")
         .eq("purchase_request_id", id)
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null),
@@ -105,6 +105,12 @@ export default async function CompraSolicitudDetailPage({
 
   const orderNumberBySupplier = Object.fromEntries(
     (orderRows ?? []).map((r) => [r.supplier_id as string, r.order_number as string]),
+  );
+  const orderStatusBySupplier = Object.fromEntries(
+    (orderRows ?? []).map((r) => [
+      r.supplier_id as string,
+      (r.status as string) ?? "POR_PEDIR",
+    ]),
   );
 
   const categories = new Map((categoryRows ?? []).map((c) => [c.id, c.name]));
@@ -190,6 +196,7 @@ export default async function CompraSolicitudDetailPage({
           suppliers={purchaseSuppliers}
           links={(linkRows ?? []) as CategorySupplierLink[]}
           orderNumberBySupplier={orderNumberBySupplier}
+          orderStatusBySupplier={orderStatusBySupplier}
           canCreate={ctxCanAccess(ctx, "compras.solicitudes.crear")}
           canCreateProduct={
             ctxCanAccess(ctx, "inventario.maestro") ||

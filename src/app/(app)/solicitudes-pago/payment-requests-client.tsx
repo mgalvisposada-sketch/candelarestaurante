@@ -4,10 +4,12 @@ import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import {
   approvePaymentRequestAction,
+  correctPurchaseInvoicePaymentRequestAction,
   payPaymentRequestAction,
   rejectPaymentRequestAction,
   softDeletePaymentRequestAction,
 } from "./actions";
+import { getSignedDocumentUrlAction } from "../documentos/actions";
 import { notifyPendingActionsChanged } from "@/components/layout/pending-actions-inbox";
 import { Badge } from "@/components/ui/primitives";
 import {
@@ -18,6 +20,11 @@ import {
 import { quickCreateBankAccountAction } from "../tesoreria/actions";
 import { formatCOP, money } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
+import { roundMoney } from "@/lib/purchases/invoice-charges";
+import {
+  parsePaymentInvoiceNotes,
+} from "@/lib/purchases/payment-invoice-detail";
+import { formatPurchaseQty } from "@/lib/purchases/qty";
 import { cn } from "@/lib/utils";
 
 export type SupplierOption = { id: string; name: string };
@@ -46,6 +53,25 @@ export type PaymentRequestRow = {
   rejection_reason: string | null;
   paid_at: string | null;
   payment_reference: string | null;
+  payment_proof_document_id?: string | null;
+};
+
+export type PaymentInvoiceLine = {
+  id: string;
+  productName: string;
+  supplierInvoiceLabel: string | null;
+  unit: string;
+  quantityOrdered: number;
+  quantityReceived: number;
+  billedQty: number;
+  unitCost: number;
+  lineTotal: number;
+};
+
+export type PaymentInvoiceDetail = {
+  purchaseRequestId: string;
+  purchaseTitle: string | null;
+  lines: PaymentInvoiceLine[];
 };
 
 const inputClass =
@@ -324,12 +350,23 @@ function PayForm({
         </>
       ) : null}
 
-      <label className="block text-sm md:col-span-8">
+      <label className="block text-sm md:col-span-5">
         <span className="mb-1 block text-[var(--muted)]">Referencia</span>
         <input
           name="payment_reference"
-          placeholder="Nº transferencia o comprobante"
+          placeholder="Nº transferencia"
           className={inputClass}
+        />
+      </label>
+      <label className="block text-sm md:col-span-3">
+        <span className="mb-1 block text-[var(--muted)]">
+          Comprobante (PDF/img)
+        </span>
+        <input
+          name="payment_proof"
+          type="file"
+          accept="image/*,.pdf,application/pdf"
+          className="w-full text-sm file:mr-2 file:rounded-md file:border-0 file:bg-neutral-100 file:px-2 file:py-1.5"
         />
       </label>
       <div className="flex items-end md:col-span-4">
@@ -425,19 +462,239 @@ function RejectForm({ requestId }: { requestId: string }) {
   );
 }
 
+function InvoiceDetailPanel({
+  request,
+  detail,
+}: {
+  request: PaymentRequestRow;
+  detail?: PaymentInvoiceDetail;
+}) {
+  const parsed = parsePaymentInvoiceNotes(request.notes);
+  const purchaseRequestId =
+    detail?.purchaseRequestId ?? parsed.purchaseRequestId;
+  const payAmount = roundMoney(Number(request.amount) || 0);
+
+  const noteLines = parsed.noteLines;
+  const useNoteLines = noteLines.length > 0;
+  const lines = useNoteLines
+    ? noteLines.map((l, idx) => ({
+        id: `note-${idx}`,
+        label: l.label,
+        qty: l.qty,
+        unit: "",
+        unitCost: l.unitCost,
+        lineTotal: l.lineTotal,
+        hint: null as string | null,
+      }))
+    : (detail?.lines ?? []).map((l) => ({
+        id: l.id,
+        label: l.supplierInvoiceLabel
+          ? `${l.productName} (${l.supplierInvoiceLabel})`
+          : l.productName,
+        qty: l.billedQty,
+        unit: l.unit,
+        unitCost: l.unitCost,
+        lineTotal: l.lineTotal,
+        hint:
+          l.quantityOrdered !== l.quantityReceived
+            ? `Pedida ${formatPurchaseQty(l.quantityOrdered)} · recibida ${formatPurchaseQty(l.quantityReceived)}`
+            : null,
+      }));
+
+  const linesSubtotal = roundMoney(
+    lines.reduce((acc, l) => acc + l.lineTotal, 0),
+  );
+  const merchandise = parsed.merchandise;
+  const adjustments = parsed.adjustments;
+  const adjustmentsNet = roundMoney(
+    adjustments.reduce(
+      (acc, a) => acc + (a.kind === "descuento" ? -a.amount : a.amount),
+      0,
+    ),
+  );
+  const expectedFromNotes =
+    merchandise != null
+      ? roundMoney(merchandise + adjustmentsNet)
+      : lines.length > 0
+        ? roundMoney(linesSubtotal + adjustmentsNet)
+        : null;
+  const delta =
+    expectedFromNotes != null
+      ? roundMoney(payAmount - expectedFromNotes)
+      : lines.length > 0
+        ? roundMoney(payAmount - linesSubtotal)
+        : null;
+
+  if (!purchaseRequestId && lines.length === 0 && !merchandise) {
+    return null;
+  }
+
+  return (
+    <details className="mt-3 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/60">
+      <summary className="cursor-pointer px-3 py-2.5 text-sm font-medium text-[var(--ink)]">
+        Ver detalle de factura / compra
+        {merchandise != null ? (
+          <span className="ml-2 font-normal text-[var(--muted)]">
+            · mercancía {formatCOP(merchandise)}
+            {adjustmentsNet !== 0
+              ? ` · ajustes ${formatCOP(adjustmentsNet)}`
+              : ""}
+          </span>
+        ) : null}
+      </summary>
+      <div className="space-y-3 border-t border-[var(--line)] px-3 py-3">
+        {purchaseRequestId ? (
+          <p className="text-sm text-[var(--muted)]">
+            Origen:{" "}
+            <Link
+              href={`/compras/solicitudes/${purchaseRequestId}`}
+              className="font-medium text-[var(--accent)] underline"
+            >
+              {detail?.purchaseTitle
+                ? detail.purchaseTitle
+                : "Solicitud de compra"}
+            </Link>
+          </p>
+        ) : null}
+
+        {lines.length > 0 ? (
+          <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-[var(--surface)]">
+            <table className="w-full min-w-[28rem] text-sm">
+              <thead>
+                <tr className="border-b border-[var(--line)] text-left text-[var(--muted)]">
+                  <th className="px-3 py-2 font-medium">Producto</th>
+                  <th className="px-3 py-2 text-right font-medium">Cant.</th>
+                  <th className="px-3 py-2 text-right font-medium">Unitario</th>
+                  <th className="px-3 py-2 text-right font-medium">Línea</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((line) => (
+                  <tr
+                    key={line.id}
+                    className="border-b border-[var(--line)] last:border-b-0"
+                  >
+                    <td className="px-3 py-2">
+                      <p className="font-medium">{line.label}</p>
+                      {line.hint ? (
+                        <p className="text-xs text-[var(--muted)]">{line.hint}</p>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatPurchaseQty(line.qty)}
+                      {line.unit ? ` ${line.unit}` : ""}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatCOP(line.unitCost)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums font-medium">
+                      {formatCOP(line.lineTotal)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--muted)]">
+            No hay líneas ligadas a esta solicitud. Use el enlace a la compra o
+            el resumen de notas.
+          </p>
+        )}
+
+        <dl className="grid gap-1 text-sm sm:grid-cols-2">
+          {merchandise != null ? (
+            <div className="flex justify-between gap-3 sm:col-span-2">
+              <dt className="text-[var(--muted)]">Mercancía (al facturar)</dt>
+              <dd className="tabular-nums font-medium">{formatCOP(merchandise)}</dd>
+            </div>
+          ) : lines.length > 0 ? (
+            <div className="flex justify-between gap-3 sm:col-span-2">
+              <dt className="text-[var(--muted)]">
+                Suma de líneas{useNoteLines ? "" : " (reconstruida)"}
+              </dt>
+              <dd className="tabular-nums font-medium">
+                {formatCOP(linesSubtotal)}
+              </dd>
+            </div>
+          ) : null}
+
+          {adjustments.map((adj, idx) => (
+            <div
+              key={`${adj.concept}-${idx}`}
+              className="flex justify-between gap-3 sm:col-span-2"
+            >
+              <dt className="text-[var(--muted)]">
+                {adj.kind === "descuento" ? "Descuento" : "Cargo"} ·{" "}
+                {adj.concept}
+                {adj.affectsCost ? " → costo" : " (gasto)"}
+              </dt>
+              <dd className="tabular-nums">
+                {adj.kind === "descuento" ? "−" : "+"}
+                {formatCOP(adj.amount)}
+              </dd>
+            </div>
+          ))}
+
+          <div className="flex justify-between gap-3 border-t border-[var(--line)] pt-1 sm:col-span-2">
+            <dt className="font-medium">Total a pagar</dt>
+            <dd className="tabular-nums font-semibold">{formatCOP(payAmount)}</dd>
+          </div>
+        </dl>
+
+        {delta != null && Math.abs(delta) >= 0.01 ? (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-sm text-amber-950">
+            Hay una diferencia de {formatCOP(delta)} entre el total a pagar y
+            mercancía
+            {adjustments.length > 0 ? " + ajustes" : ""}
+            {merchandise == null && !useNoteLines
+              ? " (las líneas reconstruidas pueden incluir cargos ya prorrateados al costo unitario)"
+              : ""}
+            . Revise cargos/descuentos o el digitado en la factura de compra.
+          </p>
+        ) : merchandise != null || lines.length > 0 ? (
+          <p className="text-xs text-[var(--muted)]">
+            El total cuadra con el desglose disponible.
+          </p>
+        ) : null}
+
+        {!useNoteLines && detail?.lines.length ? (
+          <p className="text-xs text-[var(--muted)]">
+            Factura anterior al desglose en notas: las cantidades/unitarios se
+            reconstruyen desde los ítems de la compra (el unitario puede ya
+            incluir cargos prorrateados al costo).
+          </p>
+        ) : null}
+
+        <p className="text-xs text-[var(--muted)]">
+          Para cambiar precios o el total, use{" "}
+          <strong className="font-medium text-[var(--ink)]">
+            Corregir factura
+          </strong>{" "}
+          en esta tarjeta: se libera la compra para volver a cargar la factura.
+        </p>
+      </div>
+    </details>
+  );
+}
+
 function RequestCard({
   request,
   supplierName,
   bankAccounts,
+  invoiceDetail,
   canApprove,
   canPay,
+  canCorrectPurchaseInvoice,
   queue,
 }: {
   request: PaymentRequestRow;
   supplierName?: string;
   bankAccounts: BankAccountOption[];
+  invoiceDetail?: PaymentInvoiceDetail;
   canApprove: boolean;
   canPay: boolean;
+  canCorrectPurchaseInvoice: boolean;
   queue: QueueKey;
 }) {
   const [pending, startTransition] = useTransition();
@@ -447,6 +704,46 @@ function RequestCard({
   const overdue = isOverdue(request.due_date, request.status);
   const inReview = queue === "review";
   const inPayQueue = queue === "pay";
+  const parsedNotes = parsePaymentInvoiceNotes(request.notes);
+  const purchaseRequestId =
+    invoiceDetail?.purchaseRequestId ?? parsedNotes.purchaseRequestId;
+  const purchaseHref = purchaseRequestId
+    ? `/compras/solicitudes/${purchaseRequestId}`
+    : source.href;
+  const canCorrectThis =
+    canCorrectPurchaseInvoice &&
+    request.source === "FACTURA_PROVEEDOR" &&
+    !["PAGADA", "ANULADA", "RECHAZADA"].includes(request.status);
+
+  function runCorrectInvoice() {
+    const doc =
+      request.document_number != null
+        ? `${request.document_type ?? "Factura"} ${request.document_number}`
+        : "esta factura";
+    if (
+      !confirm(
+        `¿Corregir ${doc}?\n\nSe anula esta solicitud de pago y la CxP (si no tiene pagos), se liberan los productos en la compra y podrá volver a cargar la factura con los valores correctos.`,
+      )
+    ) {
+      return;
+    }
+    setActionError(null);
+    startTransition(async () => {
+      const r = await correctPurchaseInvoicePaymentRequestAction(request.id);
+      if (!r.ok) {
+        setActionError(r.error ?? "Error");
+        return;
+      }
+      notifyPendingActionsChanged();
+      if (r.id && r.id !== request.id) {
+        window.location.href = `/compras/solicitudes/${r.id}`;
+      } else if (purchaseRequestId) {
+        window.location.href = `/compras/solicitudes/${purchaseRequestId}`;
+      } else {
+        window.location.href = "/solicitudes-pago";
+      }
+    });
+  }
 
   return (
     <article
@@ -500,20 +797,36 @@ function RequestCard({
               </div>
             ) : null}
           </dl>
-          {request.notes ? (
-            <p className="text-sm text-[var(--muted)]">{request.notes}</p>
-          ) : null}
           {request.rejection_reason ? (
             <p className="rounded-md bg-[var(--accent-soft)] px-2.5 py-1.5 text-sm text-[var(--danger)]">
               Rechazo: {request.rejection_reason}
             </p>
           ) : null}
           {request.paid_at ? (
-            <p className="text-sm text-[var(--muted)]">
-              Pagada {formatDateCO(request.paid_at)}
-              {request.payment_reference
-                ? ` · ref. ${request.payment_reference}`
-                : ""}
+            <p className="flex flex-wrap items-center gap-2 text-sm text-[var(--muted)]">
+              <span>
+                Pagada {formatDateCO(request.paid_at)}
+                {request.payment_reference
+                  ? ` · ref. ${request.payment_reference}`
+                  : ""}
+              </span>
+              {request.payment_proof_document_id ? (
+                <button
+                  type="button"
+                  className="rounded-md border border-[var(--line)] px-2 py-0.5 text-xs text-[var(--ink)]"
+                  onClick={() => {
+                    void (async () => {
+                      const r = await getSignedDocumentUrlAction(
+                        request.payment_proof_document_id!,
+                      );
+                      if (r.ok && r.url) window.open(r.url, "_blank");
+                      else alert(r.error ?? "No se pudo abrir el comprobante");
+                    })();
+                  }}
+                >
+                  Ver comprobante
+                </button>
+              ) : null}
             </p>
           ) : null}
         </div>
@@ -521,16 +834,24 @@ function RequestCard({
           <p className="font-display text-2xl font-semibold tracking-tight">
             {formatCOP(request.amount)}
           </p>
-          {source.href ? (
+          {purchaseHref ? (
             <Link
-              href={source.href}
+              href={purchaseHref}
               className="mt-1 inline-block text-xs text-[var(--accent)] underline"
             >
-              Ver origen
+              {invoiceDetail || parsedNotes.purchaseRequestId
+                ? "Ir a la compra"
+                : "Ver origen"}
             </Link>
           ) : null}
         </div>
       </div>
+
+      {request.source === "FACTURA_PROVEEDOR" ? (
+        <InvoiceDetailPanel request={request} detail={invoiceDetail} />
+      ) : request.notes ? (
+        <p className="mt-3 text-sm text-[var(--muted)]">{request.notes}</p>
+      ) : null}
 
       {inReview && canApprove ? (
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-3">
@@ -550,54 +871,96 @@ function RequestCard({
             Aprobar → cola de pago
           </button>
           <RejectForm requestId={request.id} />
-          <button
-            type="button"
-            disabled={pending}
-            className="rounded-lg px-3 py-2 text-sm text-[var(--muted)] hover:text-[var(--danger)] disabled:opacity-60"
-            onClick={() => {
-              if (!confirm("¿Anular esta solicitud?")) return;
-              setActionError(null);
-              startTransition(async () => {
-                const r = await softDeletePaymentRequestAction(request.id);
-                if (!r.ok) setActionError(r.error ?? "Error");
-                else notifyPendingActionsChanged();
-              });
-            }}
-          >
-            Anular
-          </button>
+          {canCorrectThis ? (
+            <button
+              type="button"
+              disabled={pending}
+              className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-60"
+              onClick={runCorrectInvoice}
+            >
+              Corregir factura
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={pending}
+              className="rounded-lg px-3 py-2 text-sm text-[var(--muted)] hover:text-[var(--danger)] disabled:opacity-60"
+              onClick={() => {
+                if (!confirm("¿Anular esta solicitud?")) return;
+                setActionError(null);
+                startTransition(async () => {
+                  const r = await softDeletePaymentRequestAction(request.id);
+                  if (!r.ok) setActionError(r.error ?? "Error");
+                  else notifyPendingActionsChanged();
+                });
+              }}
+            >
+              Anular
+            </button>
+          )}
           {actionError ? (
             <p className="w-full text-sm text-[var(--danger)]">{actionError}</p>
           ) : null}
         </div>
       ) : null}
 
-      {inPayQueue && canPay ? (
-        <div className="mt-4 border-t border-[var(--line)] pt-3">
-          {!payOpen ? (
-            <button
-              type="button"
-              className="rounded-lg bg-[var(--accent)] px-3.5 py-2 text-sm font-medium text-[var(--on-solid)] hover:bg-[var(--accent-hover)]"
-              onClick={() => setPayOpen(true)}
-            >
-              Pagar
-            </button>
-          ) : (
-            <>
+      {inPayQueue ? (
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-3">
+          {canPay ? (
+            !payOpen ? (
               <button
                 type="button"
-                className="mb-1 text-xs text-[var(--muted)] underline"
-                onClick={() => setPayOpen(false)}
+                className="rounded-lg bg-[var(--accent)] px-3.5 py-2 text-sm font-medium text-[var(--on-solid)] hover:bg-[var(--accent-hover)]"
+                onClick={() => setPayOpen(true)}
               >
-                Cancelar pago
+                Pagar
               </button>
-              <PayForm
-                requestId={request.id}
-                defaultAmount={request.amount}
-                bankAccounts={bankAccounts}
-              />
-            </>
-          )}
+            ) : (
+              <div className="w-full">
+                <button
+                  type="button"
+                  className="mb-1 text-xs text-[var(--muted)] underline"
+                  onClick={() => setPayOpen(false)}
+                >
+                  Cancelar pago
+                </button>
+                <PayForm
+                  requestId={request.id}
+                  defaultAmount={request.amount}
+                  bankAccounts={bankAccounts}
+                />
+              </div>
+            )
+          ) : null}
+          {canCorrectThis && !payOpen ? (
+            <button
+              type="button"
+              disabled={pending}
+              className="rounded-lg border border-[var(--line)] px-3.5 py-2 text-sm hover:bg-neutral-50 disabled:opacity-60"
+              onClick={runCorrectInvoice}
+            >
+              Corregir factura
+            </button>
+          ) : null}
+          {actionError ? (
+            <p className="w-full text-sm text-[var(--danger)]">{actionError}</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!inReview && !inPayQueue && canCorrectThis ? (
+        <div className="mt-4 border-t border-[var(--line)] pt-3">
+          <button
+            type="button"
+            disabled={pending}
+            className="rounded-lg border border-[var(--line)] px-3.5 py-2 text-sm hover:bg-neutral-50 disabled:opacity-60"
+            onClick={runCorrectInvoice}
+          >
+            Corregir factura
+          </button>
+          {actionError ? (
+            <p className="mt-2 text-sm text-[var(--danger)]">{actionError}</p>
+          ) : null}
         </div>
       ) : null}
     </article>
@@ -610,16 +973,20 @@ export function PaymentRequestQueues({
   history,
   suppliers,
   bankAccounts,
+  invoiceDetailByRequestId = {},
   canApprove,
   canPay,
+  canCorrectPurchaseInvoice = false,
 }: {
   review: PaymentRequestRow[];
   payQueue: PaymentRequestRow[];
   history: PaymentRequestRow[];
   suppliers: SupplierOption[];
   bankAccounts: BankAccountOption[];
+  invoiceDetailByRequestId?: Record<string, PaymentInvoiceDetail>;
   canApprove: boolean;
   canPay: boolean;
+  canCorrectPurchaseInvoice?: boolean;
 }) {
   const supplierMap = new Map(suppliers.map((s) => [s.id, s.name]));
   const defaultTab: QueueKey =
@@ -727,8 +1094,10 @@ export function PaymentRequestQueues({
                   r.supplier_id ? supplierMap.get(r.supplier_id) : undefined
                 }
                 bankAccounts={bankAccounts}
+                invoiceDetail={invoiceDetailByRequestId[r.id]}
                 canApprove={canApprove}
                 canPay={canPay}
+                canCorrectPurchaseInvoice={canCorrectPurchaseInvoice}
                 queue={active.key}
               />
             ))}
