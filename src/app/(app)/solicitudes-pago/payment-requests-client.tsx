@@ -18,7 +18,7 @@ import {
   QuickCreateSelectField,
 } from "@/components/ui/quick-create";
 import { quickCreateBankAccountAction } from "../tesoreria/actions";
-import { formatCOP, money } from "@/lib/money";
+import { formatCOP, money, toMoneyString } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
 import { roundMoney } from "@/lib/purchases/invoice-charges";
 import {
@@ -173,7 +173,9 @@ function PayForm({
 
   const [split, setSplit] = useState(false);
   const [primaryId, setPrimaryId] = useState(defaultPrimary);
-  const [primaryAmt, setPrimaryAmt] = useState(String(total || ""));
+  const [primaryAmt, setPrimaryAmt] = useState(
+    total > 0 ? toMoneyString(total) : "",
+  );
   const [secondaryAmt, setSecondaryAmt] = useState("");
 
   const primaryN = Number(String(primaryAmt).replace(/,/g, "")) || 0;

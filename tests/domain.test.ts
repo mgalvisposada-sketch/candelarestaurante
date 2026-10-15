@@ -277,13 +277,12 @@ describe("treasury", () => {
     expect(available.toFixed(2)).toBe("110000.00");
   });
 
-  it("permite pagar cuando el disponible redondea al mismo peso que el monto", async () => {
+  it("formatea y valida fondos con 2 decimales", async () => {
     const { hasFundsFor, formatCOP } = await import("../src/lib/money");
-    // Saldo real con centavos; en pantalla ambos se ven como $ 301.321
-    expect(formatCOP(301320.5)).toBe(formatCOP(301321));
-    expect(hasFundsFor(301320.5, 301321)).toBe(true);
-    expect(hasFundsFor(301320.49, 301321)).toBe(false);
-    expect(hasFundsFor(301321, 301321)).toBe(true);
+    expect(formatCOP(130545.5)).toMatch(/130\.545,50/);
+    expect(hasFundsFor(130545.5, 130545.5)).toBe(true);
+    expect(hasFundsFor(130545.49, 130545.5)).toBe(false);
+    expect(hasFundsFor(301321, 301320.5)).toBe(true);
   });
 });
 
