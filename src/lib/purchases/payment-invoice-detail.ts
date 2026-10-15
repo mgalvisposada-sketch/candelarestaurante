@@ -119,6 +119,8 @@ export function buildInvoiceNotesPayload(opts: {
     label: string;
     qty: number;
     unitCost: number;
+    /** Total de línea digitado; si falta se recalcula qty × unitCost. */
+    lineTotal?: number;
   }>;
 }): string {
   const chargeSummary =
@@ -138,8 +140,12 @@ export function buildInvoiceNotesPayload(opts: {
     opts.lines.length > 0
       ? opts.lines
           .map((l) => {
-            const total = roundMoney(l.qty * l.unitCost);
-            return `${l.label}: ${formatPurchaseQty(l.qty)} × ${l.unitCost} = ${total}`;
+            const total =
+              l.lineTotal != null && Number.isFinite(l.lineTotal)
+                ? roundMoney(l.lineTotal)
+                : roundMoney(l.qty * l.unitCost);
+            const unitDisplay = roundMoney(l.unitCost);
+            return `${l.label}: ${formatPurchaseQty(l.qty)} × ${unitDisplay} = ${total}`;
           })
           .join(" | ")
       : null;

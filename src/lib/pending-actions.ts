@@ -6,6 +6,7 @@ import { formatDateCO } from "@/lib/dates";
 
 export type PendingActionKind =
   | "compra_autorizar"
+  | "compra_recibir"
   | "novedad_aprobar"
   | "pago_aprobar"
   | "pago_ejecutar"
@@ -51,11 +52,12 @@ const NOVELTY_TYPE_LABELS: Record<string, string> = {
 
 const KIND_ORDER: Record<PendingActionKind, number> = {
   compra_autorizar: 0,
-  novedad_aprobar: 1,
-  caja_avalar: 2,
-  pago_aprobar: 3,
-  pago_ejecutar: 4,
-  inventario_revisar: 5,
+  compra_recibir: 1,
+  novedad_aprobar: 2,
+  caja_avalar: 3,
+  pago_aprobar: 4,
+  pago_ejecutar: 5,
+  inventario_revisar: 6,
 };
 
 /**
@@ -81,6 +83,7 @@ export async function fetchPendingActions(
 
   const orgId = ctx.organization.id;
   const canApprovePurchase = ctxCanAccess(ctx, "compras.solicitudes.aprobar");
+  const canReceivePurchase = ctxCanAccess(ctx, "compras.solicitudes.recibir");
   const canApproveNovelty = ctxCanAccess(ctx, "personal.novedades.aprobar");
   const canApprovePayment = ctxCanAccess(ctx, "solicitudes-pago.aprobar");
   const canPay = ctxCanAccess(ctx, "solicitudes-pago.pagar");
@@ -89,6 +92,7 @@ export async function fetchPendingActions(
 
   if (
     !canApprovePurchase &&
+    !canReceivePurchase &&
     !canApproveNovelty &&
     !canApprovePayment &&
     !canPay &&
@@ -103,6 +107,7 @@ export async function fetchPendingActions(
 
   const [
     purchasesRes,
+    receiveOrdersRes,
     noveltiesRes,
     paymentsReviewRes,
     paymentsPayRes,
@@ -117,6 +122,18 @@ export async function fetchPendingActions(
             .eq("status", "ENVIADA")
             .is("deleted_at", null)
             .order("requested_at", { ascending: true })
+            .limit(50)
+        : Promise.resolve({ data: null as null }),
+      canReceivePurchase
+        ? supabase
+            .from("purchase_supplier_orders")
+            .select(
+              "id, purchase_request_id, order_number, status, updated_at, created_at",
+            )
+            .eq("organization_id", orgId)
+            .in("status", ["PAGADA", "RECIBIDA_PARCIAL"])
+            .is("deleted_at", null)
+            .order("updated_at", { ascending: true })
             .limit(50)
         : Promise.resolve({ data: null as null }),
       canApproveNovelty
@@ -211,6 +228,58 @@ export async function fetchPendingActions(
     });
   }
 
+  const receiveRequestIds = [
+    ...new Set(
+      (receiveOrdersRes.data ?? [])
+        .map((r) => r.purchase_request_id as string)
+        .filter(Boolean),
+    ),
+  ];
+  const receiveRequestById = new Map<
+    string,
+    { title: string; location_label: string | null; is_urgent: boolean | null }
+  >();
+  if (receiveRequestIds.length > 0) {
+    const { data: receiveReqs } = await supabase
+      .from("purchase_requests")
+      .select("id, title, location_label, is_urgent")
+      .eq("organization_id", orgId)
+      .in("id", receiveRequestIds)
+      .is("deleted_at", null);
+    for (const r of receiveReqs ?? []) {
+      receiveRequestById.set(r.id as string, {
+        title: (r.title as string) || "Solicitud",
+        location_label: (r.location_label as string | null) ?? null,
+        is_urgent: (r.is_urgent as boolean | null) ?? null,
+      });
+    }
+  }
+
+  // Una notificación por solicitud (no por cada OC), para no saturar la campana.
+  const seenReceiveRequests = new Set<string>();
+  for (const row of receiveOrdersRes.data ?? []) {
+    const requestId = row.purchase_request_id as string;
+    if (!requestId || seenReceiveRequests.has(requestId)) continue;
+    const req = receiveRequestById.get(requestId);
+    if (!req) continue;
+    seenReceiveRequests.add(requestId);
+    const where = req.location_label ? ` · ${req.location_label}` : "";
+    const oc = row.order_number ? ` · ${row.order_number}` : "";
+    const partial = row.status === "RECIBIDA_PARCIAL";
+    items.push({
+      id: `compra-recibir:${requestId}`,
+      kind: "compra_recibir",
+      title: partial ? "Completar recepción de compra" : "Recibir compra pagada",
+      body: `${req.title}${where}${oc}`,
+      href: `/compras/solicitudes/${requestId}`,
+      createdAt:
+        (row.updated_at as string | null) ??
+        (row.created_at as string) ??
+        new Date().toISOString(),
+      urgent: Boolean(req.is_urgent) || partial,
+    });
+  }
+
   for (const row of noveltiesRes.data ?? []) {
     const empName =
       employeeNameById.get(row.employee_id as string) ?? "Empleado";
@@ -291,7 +360,9 @@ export async function fetchPendingActions(
 
   const counts: PendingActionCounts = {
     total: items.length,
-    compras: items.filter((i) => i.kind === "compra_autorizar").length,
+    compras: items.filter(
+      (i) => i.kind === "compra_autorizar" || i.kind === "compra_recibir",
+    ).length,
     personal: items.filter((i) => i.kind === "novedad_aprobar").length,
     pagos: items.filter(
       (i) => i.kind === "pago_aprobar" || i.kind === "pago_ejecutar",

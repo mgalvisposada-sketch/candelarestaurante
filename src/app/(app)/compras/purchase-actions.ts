@@ -19,11 +19,13 @@ import {
   suggestedPurchaseQty,
   weightedAverageUnitCost,
 } from "@/lib/inventory/cost";
-import { roundPurchaseQty } from "@/lib/purchases/qty";
+import {
+  parsePurchaseQtyInput,
+  roundPurchaseQty,
+} from "@/lib/purchases/qty";
 import {
   allocateInvoiceCharges,
   chargesTotal,
-  merchandiseSubtotal,
   roundMoney,
   type InvoiceCharge,
 } from "@/lib/purchases/invoice-charges";
@@ -1392,10 +1394,12 @@ function receiveTargetQty(item: {
   invoice_payment_request_id?: string | null;
 }, opts?: { prepago?: boolean }) {
   const invoiced = roundPurchaseQty(Number(item.quantity_invoiced || 0));
-  // Prepago con factura: se recibe contra lo facturado/pagado, no contra lo pedido.
-  if (opts?.prepago && item.invoice_payment_request_id && invoiced > 0) {
+  // Con factura ligada: la meta es lo facturado/pagado, NUNCA el pedido.
+  // (Prepago factura antes de recibir; si hay quantity_invoiced, manda la factura.)
+  if (item.invoice_payment_request_id && invoiced > 0) {
     return invoiced;
   }
+  void opts?.prepago;
   return roundPurchaseQty(
     Number(item.quantity_approved ?? item.quantity_requested),
   );
@@ -1894,10 +1898,13 @@ export async function addSupplierPendingItemAction(
 ): Promise<ActionResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (!ctxCanAccess(ctx, "compras.solicitudes.recibir.extras")) {
+  const canExtras =
+    ctxCanAccess(ctx, "compras.solicitudes.recibir.extras") ||
+    ctxCanAccess(ctx, "compras.solicitudes.facturar");
+  if (!canExtras) {
     return {
       ok: false,
-      error: "Sin permiso para agregar productos al pedido en recepción",
+      error: "Sin permiso para agregar productos al pedido / factura",
     };
   }
 
@@ -1915,6 +1922,7 @@ export async function addSupplierPendingItemAction(
 
   const qty = parseNumber(parsed.data.quantity);
   if (qty === null || qty <= 0) return { ok: false, error: "Cantidad inválida" };
+  const fromInvoice = String(formData.get("source") ?? "").trim() === "invoice";
 
   const supabase = await createClient();
   const { data: request } = await supabase
@@ -1936,9 +1944,21 @@ export async function addSupplierPendingItemAction(
   ) {
     return {
       ok: false,
-      error: "Solo se pueden agregar productos cuando el pedido ya está en recepción",
+      error:
+        "Solo se pueden agregar productos cuando la compra ya está autorizada",
     };
   }
+
+  const { data: supplier } = await supabase
+    .from("suppliers")
+    .select("id, purchase_payment_terms")
+    .eq("id", parsed.data.supplier_id)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .eq("is_purchase_supplier", true)
+    .maybeSingle();
+  if (!supplier) return { ok: false, error: "Proveedor de insumos inválido" };
+  const prepago = isPrepagoTerms(supplier.purchase_payment_terms);
 
   const { data: ocForExtra } = await supabase
     .from("purchase_supplier_orders")
@@ -1948,7 +1968,15 @@ export async function addSupplierPendingItemAction(
     .eq("supplier_id", parsed.data.supplier_id)
     .is("deleted_at", null)
     .maybeSingle();
-  if (!ocForExtra || ocForExtra.status === "POR_PEDIR") {
+  if (ocForExtra && ["ANULADA", "CERRADA"].includes(ocForExtra.status)) {
+    return {
+      ok: false,
+      error: "La orden de este proveedor ya está cerrada o anulada.",
+    };
+  }
+  // Crédito: hay que haber pedido. Prepago: se puede agregar al facturar aunque
+  // la OC siga en POR_PEDIR (mismo criterio que facturar).
+  if (!prepago && (!ocForExtra || ocForExtra.status === "POR_PEDIR")) {
     return {
       ok: false,
       error:
@@ -1964,16 +1992,6 @@ export async function addSupplierPendingItemAction(
     .is("deleted_at", null)
     .maybeSingle();
   if (!product) return { ok: false, error: "Producto no encontrado" };
-
-  const { data: supplier } = await supabase
-    .from("suppliers")
-    .select("id")
-    .eq("id", parsed.data.supplier_id)
-    .eq("organization_id", ctx.organization.id)
-    .is("deleted_at", null)
-    .eq("is_purchase_supplier", true)
-    .maybeSingle();
-  if (!supplier) return { ok: false, error: "Proveedor de insumos inválido" };
 
   const { data: categoryLink } = await supabase
     .from("supplier_product_categories")
@@ -1997,7 +2015,9 @@ export async function addSupplierPendingItemAction(
     Number(product.unit_cost || 0);
   const note =
     emptyToNull(parsed.data.notes) ||
-    "Agregado al pedido en recepción (no estaba en el original)";
+    (fromInvoice
+      ? "Agregado al facturar (no estaba en el pedido original)"
+      : "Agregado al pedido en recepción (no estaba en el original)");
 
   const { data: existingItems } = await supabase
     .from("purchase_request_items")
@@ -2245,13 +2265,17 @@ export async function acceptPurchaseInvoiceAction(
   }
 
   // Precios reales de factura (nuestro producto; el nombre del proveedor es solo ayuda).
+  // El total de línea digitado es la fuente de verdad del monto a pagar. No se debe
+  // redondear el unitario y volver a multiplicar por qty (eso mueve 1 peso, p. ej. IRM).
   const priced: {
     id: string;
     product_id: string;
     billedQty: number;
     alreadyReceivedQty: number;
     prevUnitCost: number;
+    /** Unitario que reproduce exactamente lineAmount / qty (puede tener más de 2 decimales). */
     unitCost: number;
+    lineAmount: number;
     supplierLabel: string | null;
   }[] = [];
 
@@ -2265,7 +2289,7 @@ export async function acceptPurchaseInvoiceAction(
     const defaultQty = prepago
       ? Math.max(orderedQty, alreadyReceivedQty)
       : alreadyReceivedQty;
-    const qtyFromForm = parseNumber(
+    const qtyFromForm = parsePurchaseQtyInput(
       String(formData.get(`item_${item.id}_invoice_qty`) ?? ""),
     );
     const qty =
@@ -2289,12 +2313,20 @@ export async function acceptPurchaseInvoiceAction(
       String(formData.get(`item_${item.id}_invoice_unit_cost`) ?? ""),
     );
     let unitCost: number | null = null;
+    let lineAmount: number | null = null;
     if (lineTotal != null && lineTotal > 0 && qty > 0) {
-      unitCost = roundMoney(lineTotal / qty);
+      lineAmount = roundMoney(lineTotal);
+      unitCost = lineAmount / qty;
     } else if (unitFromForm != null && unitFromForm > 0) {
       unitCost = unitFromForm;
+      lineAmount = roundMoney(qty * unitCost);
     }
-    if (unitCost === null || unitCost <= 0) {
+    if (
+      unitCost === null ||
+      unitCost <= 0 ||
+      lineAmount === null ||
+      lineAmount <= 0
+    ) {
       return {
         ok: false,
         error:
@@ -2311,6 +2343,7 @@ export async function acceptPurchaseInvoiceAction(
       alreadyReceivedQty,
       prevUnitCost: Number(item.unit_cost_estimate || 0),
       unitCost,
+      lineAmount,
       supplierLabel: label,
     });
 
@@ -2334,7 +2367,9 @@ export async function acceptPurchaseInvoiceAction(
     receivedQty: i.billedQty,
     unitCost: i.unitCost,
   }));
-  const merchandise = merchandiseSubtotal(billableLines);
+  const merchandise = roundMoney(
+    priced.reduce((acc, i) => acc + i.lineAmount, 0),
+  );
   const preReceiveInvoice = priced.every((p) => p.alreadyReceivedQty <= 0);
   const extras = chargesTotal(charges);
   const computedTotal = roundMoney(merchandise + extras);
@@ -2424,6 +2459,7 @@ export async function acceptPurchaseInvoiceAction(
         p.product_id.slice(0, 8),
       qty: p.billedQty,
       unitCost: p.unitCost,
+      lineTotal: p.lineAmount,
     })),
   });
 

@@ -7,6 +7,7 @@ import {
   createProductAction,
   createProductCategoryAction,
   createProductUnitAction,
+  getProductInventoryMovementsAction,
   indexProductUnitCostsAction,
   softDeleteProductAction,
   softDeleteProductCategoryAction,
@@ -16,9 +17,12 @@ import {
   updateProductMinStockAction,
   updateProductUnitAction,
   updateProductUnitCostAction,
+  type ProductInventoryMovementRow,
 } from "../../compras/inventory-actions";
-import { money } from "@/lib/money";
+import { formatDateTimeCO } from "@/lib/dates";
+import { formatCOP, money } from "@/lib/money";
 import { indexUnitCost, suggestedPurchaseQty } from "@/lib/inventory/cost";
+import { inventoryMovementTypeLabel } from "@/lib/inventory/movement-labels";
 import {
   KITCHEN_ITEM_KIND_LABELS,
   type KitchenItemKind,
@@ -750,6 +754,122 @@ function ProductFields({
   );
 }
 
+function formatQtyDelta(value: number | string, unit: string) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return `— ${unit}`;
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n} ${unit}`;
+}
+
+function ProductMovementsPanel({
+  productId,
+  unit,
+  open,
+}: {
+  productId: string;
+  unit: string;
+  open: boolean;
+}) {
+  const [rows, setRows] = useState<ProductInventoryMovementRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (!open) return;
+    setRows(null);
+    setError(null);
+    startTransition(async () => {
+      const r = await getProductInventoryMovementsAction(productId, 50);
+      if (!r.ok) {
+        setError(r.error ?? "No se pudo cargar el historial");
+        setRows([]);
+        return;
+      }
+      setRows(r.movements);
+    });
+  }, [open, productId]);
+
+  if (!open) return null;
+
+  return (
+    <div className="mt-3 border-t border-[var(--line)] pt-3">
+      <p className="text-sm font-medium">Historial de movimientos</p>
+      <p className="mt-0.5 text-xs text-[var(--muted)]">
+        Últimos 50 movimientos (compras, ajustes, cocina…). Más reciente primero.
+      </p>
+      {pending && rows === null ? (
+        <p className="mt-2 text-sm text-[var(--muted)]">Cargando…</p>
+      ) : null}
+      {error ? (
+        <p className="mt-2 text-sm text-red-700">{error}</p>
+      ) : null}
+      {rows && rows.length === 0 && !pending ? (
+        <p className="mt-2 text-sm text-[var(--muted)]">
+          Sin movimientos registrados para este producto.
+        </p>
+      ) : null}
+      {rows && rows.length > 0 ? (
+        <div className="mt-2 overflow-x-auto rounded-lg border border-[var(--line)]">
+          <table className="w-full min-w-[36rem] text-left text-sm">
+            <thead className="bg-neutral-50 text-xs text-[var(--muted)]">
+              <tr>
+                <th className="px-3 py-2 font-medium">Fecha</th>
+                <th className="px-3 py-2 font-medium">Tipo</th>
+                <th className="px-3 py-2 text-right font-medium">Cantidad</th>
+                <th className="px-3 py-2 text-right font-medium">Stock</th>
+                <th className="px-3 py-2 text-right font-medium">Costo</th>
+                <th className="px-3 py-2 font-medium">Nota</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((m) => {
+                const qty = Number(m.quantity);
+                const qtyClass =
+                  qty > 0
+                    ? "text-emerald-800"
+                    : qty < 0
+                      ? "text-red-800"
+                      : undefined;
+                return (
+                  <tr
+                    key={m.id}
+                    className="border-t border-[var(--line)] align-top"
+                  >
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums text-[var(--muted)]">
+                      {formatDateTimeCO(m.created_at)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {inventoryMovementTypeLabel(m.movement_type)}
+                    </td>
+                    <td
+                      className={`px-3 py-2 text-right tabular-nums font-medium ${qtyClass ?? ""}`}
+                    >
+                      {formatQtyDelta(m.quantity, unit)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[var(--muted)]">
+                      {m.stock_before != null && m.stock_after != null
+                        ? `${m.stock_before} → ${m.stock_after}`
+                        : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[var(--muted)]">
+                      {m.unit_cost != null && Number(m.unit_cost) > 0
+                        ? formatCOP(m.unit_cost)
+                        : "—"}
+                    </td>
+                    <td className="max-w-[14rem] px-3 py-2 text-xs text-[var(--muted)]">
+                      {m.notes || "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ProductCard({
   product,
   categories,
@@ -766,6 +886,7 @@ function ProductCard({
   const [editing, setEditing] = useState(false);
   const [editingMin, setEditingMin] = useState(false);
   const [editingCost, setEditingCost] = useState(false);
+  const [showMovements, setShowMovements] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const editable = isEditableInInventario(product);
@@ -829,68 +950,89 @@ function ProductCard({
             {underMin ? ` · sugerido comprar ${suggest}` : ""}
           </p>
         </div>
-        {editable ? (
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
-              onClick={() => {
-                setError(null);
-                setEditing(false);
-                setEditingMin(false);
-                setEditingCost((v) => !v);
-              }}
-            >
-              {editingCost ? "Cerrar costo" : "Costo"}
-            </button>
-            {canEditMinStock ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm"
+            onClick={() => {
+              setError(null);
+              setShowMovements((v) => !v);
+            }}
+          >
+            {showMovements ? "Cerrar historial" : "Historial"}
+          </button>
+          {editable ? (
+            <>
               <button
                 type="button"
                 className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
                 onClick={() => {
                   setError(null);
                   setEditing(false);
-                  setEditingCost(false);
-                  setEditingMin((v) => !v);
+                  setEditingMin(false);
+                  setShowMovements(false);
+                  setEditingCost((v) => !v);
                 }}
               >
-                {editingMin ? "Cerrar mín." : "Stock mín."}
+                {editingCost ? "Cerrar costo" : "Costo"}
               </button>
-            ) : null}
-            <button
-              type="button"
-              className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
-              onClick={() => {
-                setError(null);
-                closeQuickPanels();
-                setEditing((v) => !v);
-              }}
+              {canEditMinStock ? (
+                <button
+                  type="button"
+                  className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
+                  onClick={() => {
+                    setError(null);
+                    setEditing(false);
+                    setEditingCost(false);
+                    setShowMovements(false);
+                    setEditingMin((v) => !v);
+                  }}
+                >
+                  {editingMin ? "Cerrar mín." : "Stock mín."}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm"
+                onClick={() => {
+                  setError(null);
+                  closeQuickPanels();
+                  setShowMovements(false);
+                  setEditing((v) => !v);
+                }}
+              >
+                {editing ? "Cerrar" : "Editar"}
+              </button>
+              <button
+                type="button"
+                disabled={pending}
+                className="text-sm text-red-700"
+                onClick={() => {
+                  if (!confirm("¿Desactivar producto?")) return;
+                  startTransition(async () => {
+                    await softDeleteProductAction(product.id);
+                  });
+                }}
+              >
+                Desactivar
+              </button>
+            </>
+          ) : (
+            <Link
+              href={cocinaHrefForProduct(product)}
+              className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm"
             >
-              {editing ? "Cerrar" : "Editar"}
-            </button>
-            <button
-              type="button"
-              disabled={pending}
-              className="text-sm text-red-700"
-              onClick={() => {
-                if (!confirm("¿Desactivar producto?")) return;
-                startTransition(async () => {
-                  await softDeleteProductAction(product.id);
-                });
-              }}
-            >
-              Desactivar
-            </button>
-          </div>
-        ) : (
-          <Link
-            href={cocinaHrefForProduct(product)}
-            className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm"
-          >
-            Ir a Cocina
-          </Link>
-        )}
+              Ir a Cocina
+            </Link>
+          )}
+        </div>
       </div>
+
+      <ProductMovementsPanel
+        productId={product.id}
+        unit={product.unit}
+        open={showMovements}
+      />
 
       {editable && editingCost ? (
         <form

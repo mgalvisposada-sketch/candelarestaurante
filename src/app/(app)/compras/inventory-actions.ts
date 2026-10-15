@@ -1083,3 +1083,65 @@ export async function softDeleteProductAction(
   revalidatePath("/compras/sugeridos");
   return { ok: true, id: productId };
 }
+
+export type ProductInventoryMovementRow = {
+  id: string;
+  movement_type: string;
+  quantity: number | string;
+  unit_cost: number | string | null;
+  stock_before: number | string | null;
+  stock_after: number | string | null;
+  unit_cost_before: number | string | null;
+  unit_cost_after: number | string | null;
+  notes: string | null;
+  created_at: string;
+  reference_type: string | null;
+  reference_id: string | null;
+};
+
+export type ProductInventoryMovementsResult =
+  | { ok: true; movements: ProductInventoryMovementRow[] }
+  | { ok: false; error: string };
+
+/** Historial de movimientos de un producto (más recientes primero). */
+export async function getProductInventoryMovementsAction(
+  productId: string,
+  limit = 50,
+): Promise<ProductInventoryMovementsResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (
+    !ctxCanAccess(ctx, "inventario.maestro") &&
+    !ctxCanAccess(ctx, "inventario.lista")
+  ) {
+    return { ok: false, error: "Sin permiso" };
+  }
+
+  const supabase = await createClient();
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 50));
+
+  const { data: product } = await supabase
+    .from("products")
+    .select("id")
+    .eq("id", productId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!product) return { ok: false, error: "Producto no encontrado" };
+
+  const { data, error } = await supabase
+    .from("inventory_movements")
+    .select(
+      "id, movement_type, quantity, unit_cost, stock_before, stock_after, unit_cost_before, unit_cost_after, notes, created_at, reference_type, reference_id",
+    )
+    .eq("organization_id", ctx.organization.id)
+    .eq("product_id", productId)
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) return { ok: false, error: error.message };
+  return {
+    ok: true,
+    movements: (data ?? []) as ProductInventoryMovementRow[],
+  };
+}

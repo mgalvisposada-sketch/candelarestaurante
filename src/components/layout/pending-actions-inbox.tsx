@@ -38,6 +38,11 @@ const KIND_META: Record<
     tone: "bg-[var(--accent)]/15 text-[var(--accent)]",
     short: "Compras",
   },
+  compra_recibir: {
+    icon: Package,
+    tone: "bg-[var(--ok)]/15 text-[var(--ok)]",
+    short: "Recibir",
+  },
   novedad_aprobar: {
     icon: UserCog,
     tone: "bg-[var(--info)]/15 text-[var(--info)]",

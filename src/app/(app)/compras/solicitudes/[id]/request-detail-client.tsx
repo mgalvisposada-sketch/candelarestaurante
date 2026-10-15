@@ -64,6 +64,7 @@ import {
 } from "@/lib/purchases/supplier-orders";
 import {
   formatPurchaseQty,
+  parsePurchaseQtyInput,
   roundPurchaseQty,
 } from "@/lib/purchases/qty";
 import {
@@ -1563,7 +1564,11 @@ function itemInvoicedQty(item: ItemRow) {
   return roundPurchaseQty(Number(item.quantity_invoiced || 0));
 }
 
-/** Meta de recepción: en prepago facturado se cierra contra lo facturado/pagado. */
+/**
+ * Meta de recepción.
+ * Prepago con factura: SOLO contra lo facturado/pagado (no el pedido).
+ * Crédito / sin factura: contra lo pedido.
+ */
 function itemReceiveTargetQty(item: ItemRow) {
   const invoiced = itemInvoicedQty(item);
   if (item.invoice_payment_request_id && invoiced > 0) return invoiced;
@@ -1652,9 +1657,6 @@ function ReceiveItemRow({
   startTransition?: TransitionStartFunction;
   setError?: Dispatch<SetStateAction<string | null>>;
 }) {
-  const [disposition, setDisposition] = useState<"pendiente" | "llego" | "no_llegara">(
-    "pendiente",
-  );
   const ordered = itemOrderedQty(item);
   const invoiced = itemInvoicedQty(item);
   const target = itemReceiveTargetQty(item);
@@ -1664,6 +1666,11 @@ function ReceiveItemRow({
   const received = roundPurchaseQty(Number(item.quantity_received || 0));
   const pendingQty = itemPendingQty(item);
   const closed = isItemClosed(item);
+  // Prepago facturado: por defecto «Llegó ahora» con lo que falta vs factura,
+  // para no confrontar de nuevo el pedido ni dejar pendiente por accidente.
+  const [disposition, setDisposition] = useState<
+    "pendiente" | "llego" | "no_llegara"
+  >(againstInvoice && pendingQty > 0 ? "llego" : "pendiente");
   const [qtyRaw, setQtyRaw] = useState(formatPurchaseQty(pendingQty));
 
   const undoControls =
@@ -1688,11 +1695,20 @@ function ReceiveItemRow({
           <div>
             <p className="font-medium">{item.product_name}</p>
             <p className="text-[var(--muted)]">
-              Pedido {formatPurchaseQty(ordered)}
-              {againstInvoice
-                ? ` · facturado ${formatPurchaseQty(invoiced)}`
-                : ""}{" "}
-              · recibido {formatPurchaseQty(received)} {item.unit}
+              {againstInvoice ? (
+                <>
+                  Facturado/pagado {formatPurchaseQty(invoiced)} · recibido{" "}
+                  {formatPurchaseQty(received)} {item.unit}
+                  {ordered !== invoiced
+                    ? ` · pedido original ${formatPurchaseQty(ordered)}`
+                    : ""}
+                </>
+              ) : (
+                <>
+                  Pedido {formatPurchaseQty(ordered)} · recibido{" "}
+                  {formatPurchaseQty(received)} {item.unit}
+                </>
+              )}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1735,28 +1751,47 @@ function ReceiveItemRow({
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium">{item.product_name}</p>
             {isReceiveExtraItem(item) ? (
-              <Badge tone="warn">Agregado al pedido</Badge>
+              <Badge tone="warn">Agregado al facturar</Badge>
+            ) : null}
+            {againstInvoice ? (
+              <Badge tone="ok">Recibir vs factura</Badge>
             ) : null}
           </div>
-          <p className="text-[var(--muted)]">
-            Pedido {formatPurchaseQty(ordered)}
-            {againstInvoice
-              ? ` · facturado/pagado ${formatPurchaseQty(invoiced)}`
-              : ""}{" "}
-            · ya recibido {formatPurchaseQty(received)} · falta{" "}
-            <span className="font-medium text-[var(--ink)]">
-              {formatPurchaseQty(pendingQty)} {item.unit}
-            </span>
-            {item.expected_delivery_date
-              ? ` · est. ${formatDateCO(item.expected_delivery_date)}`
-              : ""}
-          </p>
-          {againstInvoice && invoiced < ordered ? (
-            <p className="mt-1 text-xs text-amber-900">
-              La factura es menor al pedido ({formatPurchaseQty(invoiced)} de{" "}
-              {formatPurchaseQty(ordered)}). Reciba contra lo facturado.
+          {againstInvoice ? (
+            <>
+              <p className="text-[var(--muted)]">
+                Facturado/pagado{" "}
+                <span className="font-medium text-[var(--ink)]">
+                  {formatPurchaseQty(invoiced)} {item.unit}
+                </span>
+                {" · "}
+                ya recibido {formatPurchaseQty(received)} · falta{" "}
+                <span className="font-medium text-[var(--ink)]">
+                  {formatPurchaseQty(pendingQty)} {item.unit}
+                </span>
+                {item.expected_delivery_date
+                  ? ` · est. ${formatDateCO(item.expected_delivery_date)}`
+                  : ""}
+              </p>
+              {ordered !== invoiced ? (
+                <p className="mt-1 text-xs text-[var(--muted)]">
+                  Pedido original {formatPurchaseQty(ordered)} {item.unit} (solo
+                  referencia; la recepción cierra contra la factura).
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-[var(--muted)]">
+              Pedido {formatPurchaseQty(ordered)} · ya recibido{" "}
+              {formatPurchaseQty(received)} · falta{" "}
+              <span className="font-medium text-[var(--ink)]">
+                {formatPurchaseQty(pendingQty)} {item.unit}
+              </span>
+              {item.expected_delivery_date
+                ? ` · est. ${formatDateCO(item.expected_delivery_date)}`
+                : ""}
             </p>
-          ) : null}
+          )}
         </div>
         {undoControls}
       </div>
@@ -1777,7 +1812,9 @@ function ReceiveItemRow({
               "no_llegara",
               received > 0
                 ? `No llegará el resto (${formatPurchaseQty(pendingQty)} ${item.unit})`
-                : "No llegará",
+                : againstInvoice
+                  ? "No llegó lo facturado"
+                  : "No llegará",
             ],
           ] as const
         ).map(([value, label]) => (
@@ -1817,7 +1854,9 @@ function ReceiveItemRow({
             />
           </label>
           <p className="text-xs text-[var(--muted)]">
-            Solo cantidades. Los precios se cargan después en Facturar.
+            {againstInvoice
+              ? `Meta: lo facturado/pagado (${formatPurchaseQty(target)} ${item.unit}). No se usa el pedido original.`
+              : "Solo cantidades. Los precios se cargan después en Facturar."}
           </p>
         </div>
       ) : null}
@@ -1830,20 +1869,27 @@ function ReceiveItemRow({
           <input
             name={`item_${item.id}_close_reason`}
             placeholder={
-              received > 0
-                ? "Ej. solo mandaron 5.4 y no completan"
-                : "Ej. proveedor no tenía stock"
+              againstInvoice
+                ? "Ej. facturaron de más / no vino esa línea"
+                : received > 0
+                  ? "Ej. solo mandaron 5.4 y no completan"
+                  : "Ej. proveedor no tenía stock"
             }
             className={inputClass}
           />
           <p className="mt-1 text-xs text-[var(--muted)]">
-            {received > 0 ? (
+            {againstInvoice ? (
+              <>
+                Cierra el faltante frente a la factura (
+                {formatPurchaseQty(pendingQty)} {item.unit}). El stock no sube
+                por ese faltante.
+              </>
+            ) : received > 0 ? (
               <>
                 Se mantiene lo ya recibido (
-                {formatPurchaseQty(received)} {item.unit} en inventario y
-                factura) y se cierra el faltante de{" "}
-                {formatPurchaseQty(pendingQty)} {item.unit}. No vuelve a pedir
-                ese resto.
+                {formatPurchaseQty(received)} {item.unit} en inventario) y se
+                cierra el faltante de {formatPurchaseQty(pendingQty)}{" "}
+                {item.unit}.
               </>
             ) : (
               <>Se cierra el ítem. El stock no sube.</>
@@ -1854,7 +1900,9 @@ function ReceiveItemRow({
 
       {disposition === "pendiente" ? (
         <p className="text-xs text-[var(--muted)]">
-          No se registra movimiento. Queda esperando otra entrega.
+          {againstInvoice
+            ? "No se registra movimiento. Sigue faltando recibir lo facturado/pagado."
+            : "No se registra movimiento. Queda esperando otra entrega."}
         </p>
       ) : null}
     </div>
@@ -1952,7 +2000,7 @@ function SupplierInvoiceForm({
       billingMode === "ordered"
         ? itemOrderedQty(item)
         : roundPurchaseQty(Number(item.quantity_received || 0));
-    const fromForm = parseBulkNumber(billedQtys[item.id] ?? "");
+    const fromForm = parsePurchaseQtyInput(billedQtys[item.id] ?? "");
     const billedQty =
       fromForm != null && fromForm > 0 ? roundPurchaseQty(fromForm) : fallback;
     const lineTotal = parseBulkNumber(lineTotals[item.id] ?? "");
@@ -2386,6 +2434,7 @@ function AddPendingToSupplierForm({
   pending,
   startTransition,
   setError,
+  mode = "receive",
 }: {
   requestId: string;
   supplierId: string;
@@ -2398,6 +2447,8 @@ function AddPendingToSupplierForm({
   pending: boolean;
   startTransition: TransitionStartFunction;
   setError: Dispatch<SetStateAction<string | null>>;
+  /** invoice = al facturar (prepago/crédito); receive = extras en recepción */
+  mode?: "invoice" | "receive";
 }) {
   const router = useRouter();
   const [productId, setProductId] = useState("");
@@ -2443,11 +2494,24 @@ function AddPendingToSupplierForm({
     <div className="space-y-3 rounded-lg border border-dashed border-[var(--line)] bg-neutral-50 p-3">
       <div>
         <p className="text-sm font-medium">
-          Agregar producto a {supplierName}
+          {mode === "invoice"
+            ? `Producto no pedido · ${supplierName}`
+            : `Agregar producto a ${supplierName}`}
         </p>
         <p className="mt-1 text-xs text-[var(--muted)]">
-          Solo productos de categorías asignadas a este proveedor. Queda
-          pendiente y se recibe con «Llegó ahora».
+          {mode === "invoice" ? (
+            <>
+              Si el proveedor facturó algo que no estaba en el pedido (p. ej.
+              vinos), agréguelo aquí con la cantidad de la factura. Entra a esta
+              factura y queda <strong>pendiente de recibir</strong> después de
+              pagar.
+            </>
+          ) : (
+            <>
+              Solo productos de categorías asignadas a este proveedor. Queda
+              pendiente y se recibe con «Llegó ahora».
+            </>
+          )}
         </p>
       </div>
 
@@ -2605,6 +2669,11 @@ function AddPendingToSupplierForm({
           }}
         >
           <input type="hidden" name="supplier_id" value={supplierId} />
+          <input
+            type="hidden"
+            name="source"
+            value={mode === "invoice" ? "invoice" : "receive"}
+          />
           <label className="block text-sm">
             <span className="mb-1 block text-[var(--muted)]">Producto *</span>
             <select
@@ -2646,7 +2715,11 @@ function AddPendingToSupplierForm({
             disabled={pending || !productId}
             className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)] disabled:opacity-60"
           >
-            {pending ? "Agregando…" : "Agregar al pedido"}
+            {pending
+              ? "Agregando…"
+              : mode === "invoice"
+                ? "Agregar a la factura"
+                : "Agregar al pedido"}
           </button>
         </form>
       ) : null}
@@ -2679,14 +2752,17 @@ function SupplierReceiveForm({
         startTransition(async () => {
           const r = await receivePurchaseItemsAction(requestId, fd);
           if (!r.ok) setError(r.error ?? "Error");
-          else router.refresh();
+          else {
+            notifyPendingActionsChanged();
+            router.refresh();
+          }
         });
       }}
     >
       <p className="text-sm font-medium">Recibir de {supplierName}</p>
       <p className="text-xs text-[var(--muted)]">
-        Marque «Llegó ahora» en lo que llegó. Si hay factura prepago, la meta es
-        lo facturado/pagado (no el pedido original).
+        Prepago pagado: se recibe <strong>solo contra lo facturado</strong>, no
+        contra el pedido. Confirme cantidades y guarde.
       </p>
       {openItems.map((item) => (
         <ReceiveItemRow
@@ -2834,12 +2910,19 @@ function SupplierOperationsPanel({
           allInvoicesPaid: allInvoicedPaid,
         });
 
+      // Extras también al facturar (prepago/crédito): p. ej. vinos que el
+      // proveedor cobró aunque no estuvieran en el pedido. Quedan por recibir.
       const canShowExtra =
-        canReceiveExtras &&
+        (canReceiveExtras || canAcceptInvoice) &&
         Boolean(group.supplierId) &&
         !isSettled &&
-        ocStatus !== "POR_PEDIR" &&
-        (!prepago || allInvoicedPaid || canShowReceive);
+        (prepago
+          ? ocStatus !== "ANULADA" && ocStatus !== "CERRADA"
+          : ocStatus !== "POR_PEDIR") &&
+        (canShowInvoice ||
+          canShowReceive ||
+          !prepago ||
+          allInvoicedPaid);
 
       let payGateLabel: string | null = null;
       if (prepago && openItems.length > 0 && !canShowReceive) {
@@ -2947,6 +3030,24 @@ function SupplierOperationsPanel({
     );
     const defaultOpen = Boolean(opts?.defaultOpen);
 
+    const invoiceExtraBlock =
+      canShowExtra && canShowInvoice && group.supplierId ? (
+        <AddPendingToSupplierForm
+          requestId={requestId}
+          supplierId={group.supplierId}
+          supplierName={group.supplierName}
+          products={products}
+          categories={categories}
+          units={units}
+          links={links}
+          canCreateProduct={canCreateProduct}
+          pending={pending}
+          startTransition={startTransition}
+          setError={setError}
+          mode="invoice"
+        />
+      ) : null;
+
     const invoiceBlock =
       canShowInvoice && group.supplierId ? (
         <div className="space-y-2">
@@ -2955,6 +3056,7 @@ function SupplierOperationsPanel({
               ? "Acción actual · Facturar precios"
               : "También · Facturar precios"}
           </p>
+          {invoiceExtraBlock}
           <SupplierInvoiceForm
             requestId={requestId}
             supplierId={group.supplierId}
@@ -3092,7 +3194,7 @@ function SupplierOperationsPanel({
             </details>
           ) : null}
 
-          {!settled && canShowExtra && group.supplierId ? (
+          {!settled && canShowExtra && group.supplierId && !canShowInvoice ? (
             <details className="rounded-lg border border-dashed border-[var(--line)] px-3 py-2">
               <summary className="cursor-pointer text-sm text-[var(--muted)]">
                 Agregar producto extra a este proveedor
@@ -3110,6 +3212,7 @@ function SupplierOperationsPanel({
                   pending={pending}
                   startTransition={startTransition}
                   setError={setError}
+                  mode="receive"
                 />
               </div>
             </details>

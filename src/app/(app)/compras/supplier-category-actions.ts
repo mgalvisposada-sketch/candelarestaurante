@@ -165,7 +165,16 @@ export async function quickCreatePurchaseSupplierAction(
     })
     .select("id, name")
     .single();
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    if (error.message.toLowerCase().includes("row-level security")) {
+      return {
+        ok: false,
+        error:
+          "No tiene permiso de base de datos para crear proveedores. Si es Admin del local, aplique la migración RLS de proveedores o use un usuario Gestión/Tesorería.",
+      };
+    }
+    return { ok: false, error: error.message };
+  }
 
   const { error: linkError } = await supabase
     .from("supplier_product_categories")

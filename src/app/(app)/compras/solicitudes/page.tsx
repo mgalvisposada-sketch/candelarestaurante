@@ -12,6 +12,7 @@ import {
   PurchaseRequestList,
   type PurchaseRequestListRow,
 } from "./solicitudes-client";
+import { derivePurchaseListNextAction } from "@/lib/purchases/list-next-action";
 
 export default async function ComprasSolicitudesPage() {
   const ctx = await getOrgContext();
@@ -43,12 +44,39 @@ export default async function ComprasSolicitudesPage() {
     .is("deleted_at", null)
     .order("requested_at", { ascending: false });
 
-  const requests = (rows ?? []) as PurchaseRequestListRow[];
-  const enviadas = requests.filter((r) => r.status === "ENVIADA").length;
-  const autorizadas = requests.filter((r) => r.status === "APROBADA").length;
-  const enCurso = requests.filter((r) =>
-    ["PEDIDA", "RECIBIDA_PARCIAL"].includes(r.status),
-  ).length;
+  const baseRows = (rows ?? []) as Omit<PurchaseRequestListRow, "nextAction">[];
+  const requestIds = baseRows.map((r) => r.id);
+
+  const orderStatusesByRequest = new Map<string, string[]>();
+  if (requestIds.length > 0) {
+    const { data: orderRows } = await supabase
+      .from("purchase_supplier_orders")
+      .select("purchase_request_id, status")
+      .eq("organization_id", ctx.organization.id)
+      .in("purchase_request_id", requestIds)
+      .is("deleted_at", null);
+    for (const row of orderRows ?? []) {
+      const rid = row.purchase_request_id as string;
+      const list = orderStatusesByRequest.get(rid) ?? [];
+      list.push((row.status as string) ?? "POR_PEDIR");
+      orderStatusesByRequest.set(rid, list);
+    }
+  }
+
+  const requests: PurchaseRequestListRow[] = baseRows.map((r) => ({
+    ...r,
+    nextAction: derivePurchaseListNextAction({
+      status: r.status,
+      orderStatuses: orderStatusesByRequest.get(r.id) ?? [],
+    }),
+  }));
+
+  const enviadas = requests.filter((r) => r.nextAction?.key === "autorizar")
+    .length;
+  const autorizadas = requests.filter((r) => r.nextAction?.key === "pedir")
+    .length;
+  const porRecibir = requests.filter((r) => r.nextAction?.key === "recibir")
+    .length;
   const canCreate = ctxCanAccess(ctx, "compras.solicitudes.crear");
 
   return (
@@ -69,7 +97,7 @@ export default async function ComprasSolicitudesPage() {
         <div className="grid gap-4 md:grid-cols-4">
           <StatCard label="Por autorizar" value={String(enviadas)} />
           <StatCard label="Autorizadas / por pedir" value={String(autorizadas)} />
-          <StatCard label="En tránsito / parcial" value={String(enCurso)} />
+          <StatCard label="Listas para recibir" value={String(porRecibir)} />
           <StatCard label="Total" value={String(requests.length)} />
         </div>
         {requests.length === 0 ? (

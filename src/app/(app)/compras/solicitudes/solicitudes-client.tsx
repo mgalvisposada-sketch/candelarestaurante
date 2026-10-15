@@ -6,7 +6,10 @@ import { createPurchaseRequestAction } from "../purchase-actions";
 import { Badge } from "@/components/ui/primitives";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
 import { PURCHASE_PAYMENT_MODE_LABELS } from "@/lib/purchases/payment-terms";
-import { purchaseRequestStatusLabel } from "@/lib/purchases/status-labels";
+import type {
+  PurchaseListNextAction,
+  PurchaseListTone,
+} from "@/lib/purchases/list-next-action";
 
 export type PurchaseRequestListRow = {
   id: string;
@@ -17,12 +20,14 @@ export type PurchaseRequestListRow = {
   location_label: string | null;
   is_urgent?: boolean | null;
   payment_mode?: string | null;
+  nextAction?: PurchaseListNextAction;
 };
 
 const inputClass =
   "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
 
-function statusTone(status: string) {
+function toneFromNext(tone: PurchaseListTone | undefined, status: string) {
+  if (tone) return tone;
   if (["APROBADA", "PEDIDA", "RECIBIDA", "FACTURA_ACEPTADA"].includes(status))
     return "ok" as const;
   if (["RECHAZADA", "ANULADA"].includes(status)) return "danger" as const;
@@ -147,8 +152,8 @@ export function PurchaseRequestList({
                   : ""}
               </p>
             </div>
-            <Badge tone={statusTone(r.status)}>
-              {purchaseRequestStatusLabel(r.status)}
+            <Badge tone={toneFromNext(r.nextAction?.tone, r.status)}>
+              {r.nextAction?.label ?? r.status}
             </Badge>
           </div>
         </Link>
