@@ -1064,3 +1064,52 @@ export async function emitPayrollPeriodAction(
   revalidateAll(`/personal/liquidacion/${periodId}`);
   return { ok: true, id: periodId };
 }
+
+/** Deshace la emisión para corregir errores (vuelve a CALCULADA). */
+export async function reopenPayrollPeriodAction(
+  periodId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "personal.liquidacion")) {
+    return { ok: false, error: "Sin permiso de liquidación" };
+  }
+  const supabase = await createClient();
+  const orgId = ctx.organization.id;
+
+  const { data: period } = await supabase
+    .from("payroll_periods")
+    .select("status")
+    .eq("id", periodId)
+    .eq("organization_id", orgId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!period) return { ok: false, error: "Periodo no encontrado" };
+  if (period.status === "CERRADA") {
+    return {
+      ok: false,
+      error: "La liquidación cerrada no se puede reabrir",
+    };
+  }
+  if (period.status !== "EMITIDA") {
+    return {
+      ok: false,
+      error: "Solo se puede reabrir una liquidación emitida",
+    };
+  }
+
+  const { error } = await supabase
+    .from("payroll_periods")
+    .update({
+      status: "CALCULADA",
+      emitted_at: null,
+      emitted_by: null,
+      updated_by: ctx.userId,
+    })
+    .eq("id", periodId)
+    .eq("organization_id", orgId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidateAll(`/personal/liquidacion/${periodId}`);
+  return { ok: true, id: periodId };
+}

@@ -7,6 +7,7 @@ import {
   calculatePayrollPeriodAction,
   createPayrollPeriodAction,
   emitPayrollPeriodAction,
+  reopenPayrollPeriodAction,
 } from "../payroll-ops-actions";
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP } from "@/lib/money";
@@ -17,6 +18,11 @@ import {
   type AttendanceRow,
 } from "./attendance-grid-client";
 import { LiquidationDetailModal } from "./liquidation-detail-modal";
+import {
+  PayrollSlipsSection,
+  type SlipEmployee,
+  type SlipOrg,
+} from "./payroll-slips-client";
 
 const inputClass =
   "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
@@ -163,11 +169,15 @@ export function PeriodDetailClient({
   lines,
   attendanceEmployees,
   attendanceRows,
+  organization,
+  employeesById,
 }: {
   period: PeriodRow;
   lines: LineRow[];
   attendanceEmployees: AttendanceEmployee[];
   attendanceRows: AttendanceRow[];
+  organization: SlipOrg;
+  employeesById: Record<string, SlipEmployee>;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -181,7 +191,7 @@ export function PeriodDetailClient({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="no-print flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link
             href="/personal/liquidacion"
@@ -197,8 +207,8 @@ export function PeriodDetailClient({
             {formatDateCO(period.period_start)} → {formatDateCO(period.period_end)}
           </p>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Flujo: 1) Planilla de asistencia → 2) Novedades de dinero → 3)
-            Calcular / emitir
+            Flujo: 1) Planilla → 2) Novedades → 3) Calcular / emitir → 4)
+            Colillas
           </p>
         </div>
         <Badge tone={STATUS_TONE[period.status] ?? "neutral"}>
@@ -206,14 +216,16 @@ export function PeriodDetailClient({
         </Badge>
       </div>
 
-      <AttendanceGridClient
-        periodId={period.id}
-        locked={locked}
-        employees={attendanceEmployees}
-        rows={attendanceRows}
-      />
+      <div className="no-print">
+        <AttendanceGridClient
+          periodId={period.id}
+          locked={locked}
+          employees={attendanceEmployees}
+          rows={attendanceRows}
+        />
+      </div>
 
-      <section className="rounded-xl border border-[var(--line)] bg-white p-5">
+      <section className="no-print rounded-xl border border-[var(--line)] bg-white p-5">
         <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
           2 · Novedades
         </p>
@@ -230,7 +242,7 @@ export function PeriodDetailClient({
         </p>
       </section>
 
-      <section className="space-y-4">
+      <section className="no-print space-y-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
             3 · Calcular / emitir
@@ -292,7 +304,7 @@ export function PeriodDetailClient({
               onClick={() => {
                 if (
                   !confirm(
-                    "¿Emitir paquete a Contabilidad/RRHH, Tesorería y SST? Quedará inmutable.",
+                    "¿Emitir paquete a Contabilidad/RRHH, Tesorería y SST? Mientras esté emitida no se podrá editar; podrá reabrirla si hay un error.",
                   )
                 )
                   return;
@@ -303,7 +315,7 @@ export function PeriodDetailClient({
                   if (!r.ok) setError(r.error ?? "Error");
                   else
                     setOk(
-                      "Paquete emitido. Listo para control y ejecución departamental.",
+                      "Paquete emitido. Use las colillas abajo; si hay un error, puede reabrir.",
                     );
                 });
               }}
@@ -311,13 +323,41 @@ export function PeriodDetailClient({
               Emitir a departamentos
             </button>
           ) : null}
+          {period.status === "EMITIDA" ? (
+            <button
+              type="button"
+              disabled={pending}
+              className="rounded-lg border border-amber-700 px-4 py-2 text-sm text-amber-900 hover:bg-amber-50"
+              onClick={() => {
+                if (
+                  !confirm(
+                    "¿Reabrir esta liquidación para corregir errores?\n\nVolverá a estado CALCULADA: podrá editar planilla, novedades y recalcular. Las colillas impresas anteriores dejarán de ser válidas hasta volver a emitir.",
+                  )
+                )
+                  return;
+                setError(null);
+                setOk(null);
+                startTransition(async () => {
+                  const r = await reopenPayrollPeriodAction(period.id);
+                  if (!r.ok) setError(r.error ?? "Error");
+                  else
+                    setOk(
+                      "Liquidación reabierta. Corrija, recalcule y vuelva a emitir.",
+                    );
+                });
+              }}
+            >
+              {pending ? "Reabriendo…" : "Reabrir para correcciones"}
+            </button>
+          ) : null}
         </div>
 
         {period.status === "EMITIDA" ? (
           <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
             Paquete emitido
-            {period.emitted_at ? ` el ${formatDateCO(period.emitted_at)}` : ""}.
-            Use este detalle como fuente para Contabilidad/RRHH, Tesorería y SST.
+            {period.emitted_at ? ` el ${formatDateCO(period.emitted_at)}` : ""}
+            . Bloqueada a ediciones; imprima las colillas abajo. Si detecta un
+            error, use «Reabrir para correcciones».
           </p>
         ) : null}
         {error ? (
@@ -385,6 +425,15 @@ export function PeriodDetailClient({
           )}
         </div>
       </section>
+
+      {lines.length > 0 ? (
+        <PayrollSlipsSection
+          organization={organization}
+          period={period}
+          lines={lines}
+          employeesById={employeesById}
+        />
+      ) : null}
 
       {openId
         ? (() => {
