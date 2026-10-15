@@ -210,16 +210,17 @@ export const ROLE_LABELS: Record<AppRole, string> = {
 /** Texto corto para Configuración → Roles (quién hace qué en la operación). */
 export const ROLE_DESCRIPTIONS: Record<AppRole, string> = {
   SUPER_ADMIN:
-    "Auditor y dueño del sistema: autoriza compras, ajusta inventario físico, usuarios y permisos.",
+    "Auditor y dueño del sistema: acceso total, usuarios y permisos. Único rol que crea/edita usuarios.",
   GESTION:
-    "Operación administrativa amplia: puede autorizar, facturar y pagar; sin crear usuarios.",
+    "Operación administrativa amplia: autoriza, factura, paga y puede editar permisos; sin crear usuarios.",
   ADMIN_LOCAL:
-    "Opera el local: solicita reposición, pide tras autorización, recibe mercancía (cantidades). No autoriza ni factura ni paga.",
+    "Opera el local: novedades, inventario/cocina, solicita/pide/recibe. No autoriza, no factura, no paga ni ajusta inventario físico.",
   TESORERIA:
-    "Compras + dinero: carga facturas de proveedores (precios), cola de pago, bancos/caja y CxP.",
-  SOCIO: "Gobierno societario y consulta de capital / estado financiero.",
-  CONTADOR: "Consulta financiera/tributaria y puede ejecutar pagos en la cola.",
-  LECTURA: "Solo consulta de lo expresamente autorizado.",
+    "Compras + dinero: factura proveedores, cola de pago, bancos/caja y CxP. No recibe mercancía ni autoriza como auditor.",
+  SOCIO: "Gobierno societario y consulta de capital / historial de pagos.",
+  CONTADOR:
+    "Consulta financiera/tributaria y puede ejecutar pagos en la cola (sin aprobar).",
+  LECTURA: "Solo consulta de inicio, empresa y documentos (techo fijo).",
 };
 
 export function canWrite(role: AppRole | null | undefined): boolean {

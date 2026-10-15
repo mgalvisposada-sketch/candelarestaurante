@@ -4,6 +4,8 @@ import { useMemo, useState, useTransition } from "react";
 import { saveUserPermissionsAction } from "./actions";
 import {
   APP_MODULES,
+  isPermissionAllowedForRole,
+  NON_GRANTABLE_PERMISSION_KEYS,
   ROLE_DEFAULT_PERMISSIONS,
 } from "@/lib/permissions-catalog";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS, type AppRole } from "@/types/domain";
@@ -34,7 +36,7 @@ export function PermissionsManager({
   canGrantPrivilegedConfig = false,
 }: {
   users: PermissionUserOption[];
-  /** Solo SUPER_ADMIN puede otorgar admin de usuarios/permisos. */
+  /** Solo SUPER_ADMIN puede otorgar admin de permisos. */
   canGrantPrivilegedConfig?: boolean;
 }) {
   const editableUsers = useMemo(
@@ -54,6 +56,11 @@ export function PermissionsManager({
   const [okMsg, setOkMsg] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  const roleDefaults = useMemo(() => {
+    if (!selected || selected.role === "SUPER_ADMIN") return new Set<string>();
+    return new Set(ROLE_DEFAULT_PERMISSIONS[selected.role] ?? []);
+  }, [selected]);
+
   function selectUser(membershipId: string) {
     const user = users.find((u) => u.membership_id === membershipId);
     setSelectedId(membershipId);
@@ -62,10 +69,18 @@ export function PermissionsManager({
     setOkMsg(null);
   }
 
-  function setModule(moduleKey: string, submoduleKeys: string[], on: boolean) {
+  function setModule(
+    moduleKey: string,
+    grantableSubKeys: string[],
+    on: boolean,
+  ) {
+    if (!selected || !isPermissionAllowedForRole(selected.role, moduleKey)) {
+      return;
+    }
     setDraft((prev) => {
       let next = toggleKey(prev, moduleKey, on);
-      for (const sub of submoduleKeys) {
+      for (const sub of grantableSubKeys) {
+        if (!isPermissionAllowedForRole(selected.role, sub)) continue;
         next = toggleKey(next, sub, on);
       }
       return next;
@@ -73,13 +88,20 @@ export function PermissionsManager({
   }
 
   function setSubmodule(moduleKey: string, submoduleKey: string, on: boolean) {
+    if (!selected || !isPermissionAllowedForRole(selected.role, submoduleKey)) {
+      return;
+    }
     setDraft((prev) => {
       let next = toggleKey(prev, submoduleKey, on);
       if (on) {
         next = toggleKey(next, moduleKey, true);
       } else {
         const mod = APP_MODULES.find((m) => m.key === moduleKey);
-        const anySub = mod?.submodules.some((s) => next.has(s.key));
+        const anySub = mod?.submodules.some(
+          (s) =>
+            next.has(s.key) &&
+            isPermissionAllowedForRole(selected.role, s.key),
+        );
         if (!anySub) next = toggleKey(next, moduleKey, false);
       }
       return next;
@@ -131,44 +153,75 @@ export function PermissionsManager({
         ) : null}
       </div>
 
-      {selected?.role === "SUPER_ADMIN" ? (
+      {!selected ? null : selected.role === "SUPER_ADMIN" ? (
         <p className="rounded-lg bg-neutral-50 px-3 py-2 text-sm text-[var(--muted)]">
           Los permisos de un super admin no se restringen. Puede editar otros
           usuarios desde el selector.
         </p>
       ) : (
         <>
+          <p className="text-xs text-[var(--muted)]">
+            Los checkboxes deshabilitados están fuera del techo de este rol.
+            Las claves del default del rol no llevan etiqueta; las excepciones
+            dentro del techo se marcan como «extra».
+          </p>
           <div className="space-y-4">
             {APP_MODULES.filter((m) => m.mvp <= 3 || m.key === "reportes").map(
               (mod) => {
-                const subs = mod.submodules.filter(
-                  (s) =>
-                    canGrantPrivilegedConfig || !PRIVILEGED_KEYS.has(s.key),
+                const role = selected.role;
+                const subs = mod.submodules.filter((s) => {
+                  if (NON_GRANTABLE_PERMISSION_KEYS.has(s.key)) return false;
+                  if (
+                    PRIVILEGED_KEYS.has(s.key) &&
+                    !canGrantPrivilegedConfig
+                  ) {
+                    return false;
+                  }
+                  return true;
+                });
+                const moduleAllowed = isPermissionAllowedForRole(
+                  role,
+                  mod.key,
+                );
+                const grantableSubs = subs.filter((s) =>
+                  isPermissionAllowedForRole(role, s.key),
                 );
                 const moduleOn = draft.has(mod.key);
                 const allSubsOn =
-                  subs.length === 0
+                  grantableSubs.length === 0
                     ? moduleOn
-                    : subs.every((s) => draft.has(s.key));
+                    : grantableSubs.every((s) => draft.has(s.key));
+                const moduleIsDefault = roleDefaults.has(mod.key);
+                const moduleIsExtra =
+                  moduleAllowed && moduleOn && !moduleIsDefault;
+
                 return (
                   <div
                     key={mod.key}
                     className="rounded-lg border border-[var(--line)] p-4"
                   >
-                    <label className="flex items-center gap-3">
+                    <label
+                      className={`flex items-center gap-3 ${
+                        moduleAllowed ? "" : "opacity-50"
+                      }`}
+                    >
                       <input
                         type="checkbox"
-                        checked={moduleOn && allSubsOn}
+                        checked={moduleAllowed && moduleOn && allSubsOn}
+                        disabled={!moduleAllowed}
                         ref={(el) => {
                           if (el) {
                             el.indeterminate =
-                              moduleOn && !allSubsOn && subs.length > 0;
+                              moduleAllowed &&
+                              moduleOn &&
+                              !allSubsOn &&
+                              grantableSubs.length > 0;
                           }
                         }}
                         onChange={(e) =>
                           setModule(
                             mod.key,
-                            subs.map((s) => s.key),
+                            grantableSubs.map((s) => s.key),
                             e.target.checked,
                           )
                         }
@@ -180,32 +233,68 @@ export function PermissionsManager({
                       <span className="text-xs text-[var(--muted)]">
                         {mod.href}
                       </span>
+                      {!moduleAllowed ? (
+                        <span className="text-xs text-[var(--muted)]">
+                          No aplica a este rol
+                        </span>
+                      ) : moduleIsExtra ? (
+                        <span className="text-xs text-[var(--muted)]">
+                          extra
+                        </span>
+                      ) : null}
                     </label>
                     {subs.length > 0 ? (
                       <div className="mt-3 grid gap-2 border-t border-[var(--line)] pt-3 sm:grid-cols-2">
-                        {subs.map((sub) => (
-                          <label
-                            key={sub.key}
-                            className="flex items-start gap-2 text-sm"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={draft.has(sub.key)}
-                              onChange={(e) =>
-                                setSubmodule(mod.key, sub.key, e.target.checked)
-                              }
-                              className="mt-0.5 size-4 accent-[var(--accent)]"
-                            />
-                            <span>
-                              <span className="block">{sub.label}</span>
-                              {sub.description ? (
-                                <span className="mt-0.5 block text-xs text-[var(--muted)]">
-                                  {sub.description}
+                        {subs.map((sub) => {
+                          const allowed = isPermissionAllowedForRole(
+                            role,
+                            sub.key,
+                          );
+                          const isDefault = roleDefaults.has(sub.key);
+                          const isExtra =
+                            allowed && draft.has(sub.key) && !isDefault;
+                          return (
+                            <label
+                              key={sub.key}
+                              className={`flex items-start gap-2 text-sm ${
+                                allowed ? "" : "opacity-50"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={allowed && draft.has(sub.key)}
+                                disabled={!allowed}
+                                onChange={(e) =>
+                                  setSubmodule(
+                                    mod.key,
+                                    sub.key,
+                                    e.target.checked,
+                                  )
+                                }
+                                className="mt-0.5 size-4 accent-[var(--accent)]"
+                              />
+                              <span>
+                                <span className="block">
+                                  {sub.label}
+                                  {!allowed ? (
+                                    <span className="ml-1 text-xs font-normal text-[var(--muted)]">
+                                      · no aplica a este rol
+                                    </span>
+                                  ) : isExtra ? (
+                                    <span className="ml-1 text-xs font-normal text-[var(--muted)]">
+                                      · extra
+                                    </span>
+                                  ) : null}
                                 </span>
-                              ) : null}
-                            </span>
-                          </label>
-                        ))}
+                                {sub.description ? (
+                                  <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                                    {sub.description}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </label>
+                          );
+                        })}
                       </div>
                     ) : null}
                   </div>
@@ -240,7 +329,7 @@ export function PermissionsManager({
                     [...draft],
                   );
                   if (!r.ok) setError(r.error ?? "Error");
-                  else setOkMsg("Permisos guardados");
+                  else setOkMsg(r.error ?? "Permisos guardados");
                 });
               }}
             >

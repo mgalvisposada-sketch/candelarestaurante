@@ -6,10 +6,10 @@ import { createClient } from "@/lib/supabase/server";
 import type { OrgContext } from "@/lib/org-context";
 import { getOrgContext } from "@/lib/org-context";
 import {
+  clampPermissionKeysToRole,
   normalizePermissionKeys,
   ROLE_DEFAULT_PERMISSIONS,
 } from "@/lib/permissions-catalog";
-import { ctxCanAccess } from "@/lib/permissions";
 import { isSuperAdmin, type AppRole } from "@/types/domain";
 import {
   createSystemUserSchema,
@@ -48,10 +48,8 @@ async function requirePermissionsAdmin(): Promise<
   if (!ctx?.organization) {
     return { ok: false, error: "Sin organización" };
   }
-  const canManage =
-    isSuperAdmin(ctx.role) ||
-    ctx.role === "GESTION" ||
-    ctxCanAccess(ctx, "configuracion.permisos");
+  // Solo rol SUPER_ADMIN | GESTION (evita bypass vía service role + clave otorgada por error).
+  const canManage = isSuperAdmin(ctx.role) || ctx.role === "GESTION";
   if (!canManage) {
     return {
       ok: false,
@@ -71,7 +69,10 @@ async function seedMembershipPermissions(opts: {
   actorId: string;
   replace?: boolean;
 }) {
-  const keys = ROLE_DEFAULT_PERMISSIONS[opts.role] ?? [];
+  const keys = clampPermissionKeysToRole(
+    opts.role,
+    ROLE_DEFAULT_PERMISSIONS[opts.role] ?? [],
+  );
   const supabase = await createClient();
 
   if (opts.replace) {
@@ -468,20 +469,26 @@ export async function saveUserPermissionsAction(
     };
   }
 
-  // Solo SUPER_ADMIN puede otorgar administración de usuarios/permisos.
-  let uniqueKeys = [...new Set(parsed.data.permission_keys)];
+  // Techo duro del rol destino + solo SUPER_ADMIN puede otorgar config.permisos.
+  const beforeClamp = [...new Set(parsed.data.permission_keys)];
+  let uniqueKeys = clampPermissionKeysToRole(
+    membership.role as AppRole,
+    beforeClamp,
+  );
   if (!isSuperAdmin(ctx.role)) {
-    const privileged = new Set([
-      "configuracion.usuarios",
-      "configuracion.permisos",
-    ]);
-    uniqueKeys = uniqueKeys.filter((k) => !privileged.has(k));
+    uniqueKeys = uniqueKeys.filter((k) => k !== "configuracion.permisos");
   }
+  // configuracion.usuarios nunca se otorga por clave (CRUD = rol SUPER_ADMIN).
+  uniqueKeys = uniqueKeys.filter((k) => k !== "configuracion.usuarios");
 
+  const stripped = beforeClamp.filter((k) => !uniqueKeys.includes(k));
   if (uniqueKeys.length === 0) {
     return {
       ok: false,
-      error: "Debe asignar al menos un módulo",
+      error:
+        stripped.length > 0
+          ? "Ningún permiso queda dentro del techo de este rol"
+          : "Debe asignar al menos un módulo",
     };
   }
 
@@ -532,5 +539,12 @@ export async function saveUserPermissionsAction(
   });
 
   revalidatePath("/configuracion");
+  if (stripped.length > 0) {
+    return {
+      ok: true,
+      id: membership.id,
+      error: `Guardado; se omitieron claves fuera del techo del rol: ${stripped.slice(0, 6).join(", ")}${stripped.length > 6 ? "…" : ""}`,
+    };
+  }
   return { ok: true, id: membership.id };
 }

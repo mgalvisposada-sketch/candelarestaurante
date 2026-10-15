@@ -1,10 +1,10 @@
 import { redirect } from "next/navigation";
 import {
   canAccessModuleHref,
+  clampPermissionKeysToRole,
   firstAllowedHref,
   hasPermission,
   moduleKeyFromPath,
-  normalizePermissionKeys,
   ROLE_DEFAULT_PERMISSIONS,
 } from "@/lib/permissions-catalog";
 import type { OrgContext } from "@/lib/org-context";
@@ -24,8 +24,8 @@ export function resolveEffectivePermissions(opts: {
     return ROLE_DEFAULT_PERMISSIONS.SUPER_ADMIN;
   }
   if (opts.storedKeys && opts.storedKeys.length > 0) {
-    const normalized = normalizePermissionKeys(opts.storedKeys);
-    if (normalized.length > 0) return normalized;
+    const clamped = clampPermissionKeysToRole(opts.role, opts.storedKeys);
+    if (clamped.length > 0) return clamped;
   }
   if (opts.role && ROLE_DEFAULT_PERMISSIONS[opts.role]) {
     return [...ROLE_DEFAULT_PERMISSIONS[opts.role]];

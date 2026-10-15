@@ -58,9 +58,7 @@ export default async function ConfiguracionPage() {
 
   const canManageUsers = isSuperAdmin(ctx.role);
   const canManagePermissions =
-    isSuperAdmin(ctx.role) ||
-    ctx.role === "GESTION" ||
-    ctxCanAccess(ctx, "configuracion.permisos");
+    isSuperAdmin(ctx.role) || ctx.role === "GESTION";
 
   const supabase = await createClient();
   const { data: memberships } = await supabase

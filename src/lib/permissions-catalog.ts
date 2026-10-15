@@ -371,7 +371,12 @@ export const APP_MODULES: AppModuleDef[] = [
     href: "/configuracion",
     mvp: 1,
     submodules: [
-      { key: "configuracion.usuarios", label: "Usuarios del sistema" },
+      {
+        key: "configuracion.usuarios",
+        label: "Usuarios del sistema",
+        description:
+          "No se otorga por checkbox: requiere rol Super admin (CRUD de usuarios).",
+      },
       { key: "configuracion.permisos", label: "Permisos por módulo" },
     ],
   },
@@ -523,6 +528,64 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
     "documentos.archivo",
   ],
 };
+
+/**
+ * Techo duro por rol: no se pueden otorgar (ni hacer efectivas) claves fuera de este set.
+ * Invariante: ROLE_DEFAULT_PERMISSIONS[role] ⊆ ROLE_PERMISSION_CEILING[role].
+ * `configuracion.usuarios` no entra en ningún techo: el CRUD es solo rol SUPER_ADMIN.
+ */
+export const ROLE_PERMISSION_CEILING: Record<AppRole, string[]> = {
+  SUPER_ADMIN: [...ALL_PERMISSION_KEYS],
+  GESTION: ALL_PERMISSION_KEYS.filter((k) => k !== "configuracion.usuarios"),
+  ADMIN_LOCAL: [
+    ...ROLE_DEFAULT_PERMISSIONS.ADMIN_LOCAL,
+    "inicio",
+    "inicio.resumen",
+    "documentos",
+    "documentos.archivo",
+  ],
+  TESORERIA: [
+    ...ROLE_DEFAULT_PERMISSIONS.TESORERIA,
+    "proveedores.crear",
+    "proveedores.editar",
+    "proveedores.categorias",
+  ],
+  SOCIO: [...ROLE_DEFAULT_PERMISSIONS.SOCIO],
+  CONTADOR: [...ROLE_DEFAULT_PERMISSIONS.CONTADOR],
+  LECTURA: [...ROLE_DEFAULT_PERMISSIONS.LECTURA],
+};
+
+/** Claves que no se otorgan por checkbox (requieren rol Super admin). */
+export const NON_GRANTABLE_PERMISSION_KEYS = new Set([
+  "configuracion.usuarios",
+]);
+
+export function rolePermissionCeilingSet(role: AppRole): Set<string> {
+  return new Set(ROLE_PERMISSION_CEILING[role] ?? []);
+}
+
+/**
+ * Recorta claves al techo del rol (tras normalizar).
+ * SUPER_ADMIN no se edita; devolver todas las válidas normalizadas.
+ */
+export function clampPermissionKeysToRole(
+  role: AppRole | null | undefined,
+  keys: readonly string[] | null | undefined,
+): string[] {
+  const normalized = normalizePermissionKeys(keys);
+  if (!role || role === "SUPER_ADMIN") return normalized;
+  const ceiling = rolePermissionCeilingSet(role);
+  return normalized.filter((k) => ceiling.has(k));
+}
+
+export function isPermissionAllowedForRole(
+  role: AppRole | null | undefined,
+  key: string,
+): boolean {
+  if (!role || role === "SUPER_ADMIN") return isValidPermissionKey(key);
+  if (NON_GRANTABLE_PERMISSION_KEYS.has(key)) return false;
+  return rolePermissionCeilingSet(role).has(key);
+}
 
 export function isValidPermissionKey(key: string): boolean {
   return ALL_PERMISSION_KEYS.includes(key);

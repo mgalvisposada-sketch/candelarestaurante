@@ -1110,10 +1110,7 @@ export async function getProductInventoryMovementsAction(
 ): Promise<ProductInventoryMovementsResult> {
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
-  if (
-    !ctxCanAccess(ctx, "inventario.maestro") &&
-    !ctxCanAccess(ctx, "inventario.lista")
-  ) {
+  if (!ctxCanAccess(ctx, "inventario.maestro")) {
     return { ok: false, error: "Sin permiso" };
   }
 
