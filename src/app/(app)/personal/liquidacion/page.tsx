@@ -58,7 +58,7 @@ export default async function LiquidacionPage() {
         />
         <PageIntro
           title="Liquidación de quincena"
-          description="El gerente crea el periodo, calcula con condiciones del empleado + novedades aprobadas, y emite el paquete a Contabilidad/RRHH, Tesorería y SST."
+          description="Cree el periodo, complete la planilla de asistencia (fuente de verdad), revise novedades de dinero, calcule y emita el paquete a Contabilidad/RRHH, Tesorería y SST."
         />
         <CreatePeriodForm />
         <PeriodsList periods={(periods ?? []) as PeriodRow[]} />

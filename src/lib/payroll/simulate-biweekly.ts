@@ -14,10 +14,12 @@ import {
   transportAidApplies,
 } from "./rates";
 import { computeNoveltyImpact } from "./novelties";
-import type {
-  BiweeklySimulation,
-  BonusInput,
-  SimulateBiweeklyInput,
+import { computeAttendanceHours } from "./attendance";
+import {
+  ATTENDANCE_REPLACED_NOVELTY_TYPES,
+  type BiweeklySimulation,
+  type BonusInput,
+  type SimulateBiweeklyInput,
 } from "./types";
 
 function bonusAmount(bonus: BonusInput, monthlySalary: number): number {
@@ -41,7 +43,17 @@ export function simulateBiweekly(
   );
   const periodLabel = `${input.half === 1 ? "1ª" : "2ª"} quincena ${String(input.month).padStart(2, "0")}/${input.year}`;
 
-  const hours = computePeriodHours({
+  const hourValue = ordinaryHourValue(
+    input.basicSalary,
+    input.legal.max_weekly_hours,
+  );
+
+  const labor = isLaborContract(input.employmentType);
+  const byShift = isShiftDayContractor(input.employmentType);
+  const useAttendance =
+    !byShift && Array.isArray(input.attendanceDays);
+
+  let hours = computePeriodHours({
     year: input.year,
     month: input.month,
     half: input.half,
@@ -51,13 +63,32 @@ export function simulateBiweekly(
     nightEnd: input.legal.night_end_time,
   });
 
-  const hourValue = ordinaryHourValue(
-    input.basicSalary,
-    input.legal.max_weekly_hours,
-  );
+  let attendanceOvertime = money(0);
+  let attendanceUnpaid = money(0);
+  let attendanceMeta: BiweeklySimulation["attendance"];
 
-  const labor = isLaborContract(input.employmentType);
-  const byShift = isShiftDayContractor(input.employmentType);
+  if (useAttendance) {
+    const att = computeAttendanceHours({
+      days: input.attendanceDays ?? [],
+      employee: input.schedule,
+      candela: input.candelaSchedule,
+      legal: input.legal,
+      hourValue,
+    });
+    hours = att.hours;
+    attendanceOvertime = money(att.overtimePay);
+    attendanceUnpaid = money(att.unpaidTimeDiscount);
+    attendanceMeta = {
+      used: true,
+      netWorkedHours: att.netWorkedHours,
+      restDays: att.restDays,
+      holidayWorkedDays: att.holidayWorkedDays,
+      overtimeMinutes: att.overtimeMinutes,
+      unpaidMinutes: att.unpaidMinutes,
+    };
+    notes.push(...att.notes);
+  }
+
   if (byShift) {
     notes.push(
       "Por turno/día (prestador): se paga solo turnos reportados y aprobados. Sin aportes, auxilio ni provisiones de nómina.",
@@ -122,8 +153,13 @@ export function simulateBiweekly(
     notes.push("Sin auxilio de transporte (salario > tope o desmarcado).");
   }
 
+  const replaced = new Set(ATTENDANCE_REPLACED_NOVELTY_TYPES);
+  const noveltiesForImpact = useAttendance
+    ? (input.novelties ?? []).filter((n) => !replaced.has(n.novelty_type))
+    : (input.novelties ?? []);
+
   const noveltyImpact = computeNoveltyImpact(
-    input.novelties ?? [],
+    noveltiesForImpact,
     hourValue,
     input.legal,
   );
@@ -131,9 +167,17 @@ export function simulateBiweekly(
 
   const shiftPay = money(noveltyImpact.shiftPay);
   const shiftDays = noveltyImpact.shiftDays;
-  const overtime = byShift ? money(0) : money(noveltyImpact.overtimePay);
+  const overtime = byShift
+    ? money(0)
+    : useAttendance
+      ? attendanceOvertime
+      : money(noveltyImpact.overtimePay);
   const occasionalBonuses = money(noveltyImpact.occasionalBonuses);
-  const unpaidDisc = byShift ? money(0) : money(noveltyImpact.unpaidTimeDiscount);
+  const unpaidDisc = byShift
+    ? money(0)
+    : useAttendance
+      ? attendanceUnpaid
+      : money(noveltyImpact.unpaidTimeDiscount);
   const advances = money(noveltyImpact.advances);
   const authDisc = money(noveltyImpact.authorizedDiscounts);
 
@@ -270,7 +314,7 @@ export function simulateBiweekly(
   if (input.schedule.uses_custom_schedule) {
     notes.push("Horario personalizado del empleado (distinto al Horario Candela).");
   }
-  if ((input.novelties ?? []).length === 0 && !byShift) {
+  if ((input.novelties ?? []).length === 0 && !byShift && !useAttendance) {
     notes.push("Liquidación ordinaria sin novedades de turno en el periodo.");
   }
 
@@ -302,9 +346,13 @@ export function simulateBiweekly(
       total: r(deductionsTotal.toNumber()),
     },
     novelties: {
-      count: (input.novelties ?? []).length,
-      unpaidMinutes: noveltyImpact.unpaidMinutes,
-      overtimeMinutes: noveltyImpact.overtimeMinutes,
+      count: noveltiesForImpact.length,
+      unpaidMinutes: useAttendance
+        ? (attendanceMeta?.unpaidMinutes ?? 0)
+        : noveltyImpact.unpaidMinutes,
+      overtimeMinutes: useAttendance
+        ? (attendanceMeta?.overtimeMinutes ?? 0)
+        : noveltyImpact.overtimeMinutes,
       overtimePay: r(overtime.toNumber()),
       shiftDays,
       shiftPay: r(shiftPay.toNumber()),
@@ -333,5 +381,6 @@ export function simulateBiweekly(
     employerCost: r(employerCostFinal.toNumber()),
     notes,
     usesCustomSchedule: input.schedule.uses_custom_schedule,
+    attendance: attendanceMeta,
   };
 }

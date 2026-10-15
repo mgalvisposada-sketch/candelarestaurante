@@ -29,9 +29,17 @@ const TYPE_LABELS: Record<string, string> = {
   BONO_OCASIONAL: "Bono ocasional",
 };
 
-/** En novedades ya no se reportan turnos: eso va en Gastos → liquidación por turno. */
+/**
+ * Horas/turnos de nómina van en Liquidación → planilla.
+ * Turnos de prestador van en Gastos. Aquí solo dinero y permisos.
+ */
 const REPORTABLE_NOVELTY_TYPES = NOVELTY_TYPES.filter(
-  (t) => t !== "TURNO_LABORADO",
+  (t) =>
+    t !== "TURNO_LABORADO" &&
+    t !== "HORA_EXTRA" &&
+    t !== "LLEGADA_TARDE" &&
+    t !== "SALIDA_TEMPRANA" &&
+    t !== "AUSENCIA",
 );
 
 const STATUS_TONE: Record<string, "neutral" | "ok" | "warn" | "danger" | "info"> = {
@@ -90,7 +98,7 @@ export function NovedadesClient({
   const [quincenaFilter, setQuincenaFilter] = useState<string>(() =>
     currentQuincenaKey(),
   );
-  const [type, setType] = useState<string>("LLEGADA_TARDE");
+  const [type, setType] = useState<string>("ANTICIPO");
   const [employeeId, setEmployeeId] = useState<string>("");
 
   const quincenaOptions = useMemo(() => {
@@ -150,9 +158,9 @@ export function NovedadesClient({
         <div>
           <h3 className="font-medium">Reportar novedad</h3>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            El administrador del local registra; el gerente aprueba antes de que
-            entre a la liquidación quincenal. Los días de prestadores por turno
-            se liquidan en Gastos.
+            Anticipos, bonos, descuentos y permisos: el admin del local registra
+            y el gerente aprueba. Horas, extras y ausencias de nómina se capturan
+            en Liquidación → planilla de asistencia. Prestadores por turno: Gastos.
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-3">

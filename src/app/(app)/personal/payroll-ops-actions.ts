@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrgContext } from "@/lib/org-context";
 import { ctxCanAccess } from "@/lib/permissions";
 import {
+  attendanceDaySaveSchema,
   jobPositionSchema,
   noveltySchema,
   payrollPeriodSchema,
@@ -12,10 +13,15 @@ import {
 } from "@/validations/novelties";
 import {
   biweeklyRange,
+  buildAttendanceSeedRows,
   liquidatePeriod,
   mapEmployeeSchedule,
   mapLegalParamsRow,
   mapScheduleRow,
+  timeFromDb,
+  validateAttendanceForCalculate,
+  type AttendanceDayInput,
+  type AttendanceDayKind,
   type EmploymentContractType,
   type ArlRiskLevel,
 } from "@/lib/payroll";
@@ -150,6 +156,18 @@ export async function createNoveltyAction(
       ok: false,
       error:
         "Los días de prestadores por turno se liquidan en Gastos → liquidación por turno",
+    };
+  }
+  if (
+    parsed.data.novelty_type === "HORA_EXTRA" ||
+    parsed.data.novelty_type === "LLEGADA_TARDE" ||
+    parsed.data.novelty_type === "SALIDA_TEMPRANA" ||
+    parsed.data.novelty_type === "AUSENCIA"
+  ) {
+    return {
+      ok: false,
+      error:
+        "Horas, extras y ausencias de nómina se capturan en Liquidación → planilla de asistencia",
     };
   }
 
@@ -444,8 +462,298 @@ export async function createPayrollPeriodAction(
     return { ok: false, error: error.message };
   }
 
+  await seedPayrollAttendanceInternal(
+    supabase,
+    ctx.organization.id,
+    ctx.userId,
+    data.id,
+    parsed.data.period_year,
+    parsed.data.period_month,
+    half,
+  );
+
   revalidateAll(`/personal/liquidacion/${data.id}`);
   return { ok: true, id: data.id };
+}
+
+type Sb = Awaited<ReturnType<typeof createClient>>;
+
+async function seedPayrollAttendanceInternal(
+  supabase: Sb,
+  orgId: string,
+  userId: string,
+  periodId: string,
+  year: number,
+  month: number,
+  half: 1 | 2,
+  options?: { overwriteEmployeeId?: string | null },
+): Promise<ActionResult & { inserted?: number }> {
+  const [{ data: schedule }, { data: employees }, { data: existing }] =
+    await Promise.all([
+      supabase
+        .from("payroll_schedules")
+        .select(
+          "ordinary_entry_time, ordinary_exit_time, break_minutes, works_monday, works_tuesday, works_wednesday, works_thursday, works_friday, works_saturday, works_sunday",
+        )
+        .eq("organization_id", orgId)
+        .eq("is_active", true)
+        .is("deleted_at", null)
+        .maybeSingle(),
+      supabase
+        .from("employees")
+        .select(
+          "id, employment_type, ordinary_entry_time, ordinary_exit_time, break_minutes, uses_custom_schedule",
+        )
+        .eq("organization_id", orgId)
+        .eq("is_active", true)
+        .is("deleted_at", null),
+      supabase
+        .from("payroll_attendance_days")
+        .select("id, employee_id, work_date")
+        .eq("organization_id", orgId)
+        .eq("period_id", periodId)
+        .is("deleted_at", null),
+    ]);
+
+  if (!schedule) {
+    return { ok: false, error: "Configure Horario Candela antes de precargar" };
+  }
+
+  const candela = mapScheduleRow(schedule);
+  const payrollEmps = (employees ?? []).filter(
+    (e) => !isShiftDayContractor(String(e.employment_type ?? "")),
+  );
+  if (payrollEmps.length === 0) {
+    return { ok: false, error: "No hay empleados de nómina activos" };
+  }
+
+  const overwriteId = options?.overwriteEmployeeId ?? null;
+  if (overwriteId) {
+    const now = new Date().toISOString();
+    const { error: softErr } = await supabase
+      .from("payroll_attendance_days")
+      .update({ deleted_at: now, updated_by: userId })
+      .eq("organization_id", orgId)
+      .eq("period_id", periodId)
+      .eq("employee_id", overwriteId)
+      .is("deleted_at", null);
+    if (softErr) return { ok: false, error: softErr.message };
+  }
+
+  const existingKeys = new Set(
+    (overwriteId
+      ? []
+      : (existing ?? []).map((r) => `${r.employee_id}|${r.work_date}`)
+    ),
+  );
+
+  const toInsert: Array<Record<string, unknown>> = [];
+  for (const emp of payrollEmps) {
+    if (overwriteId && emp.id !== overwriteId) continue;
+    const empSchedule = mapEmployeeSchedule({
+      ordinary_entry_time: emp.ordinary_entry_time,
+      ordinary_exit_time: emp.ordinary_exit_time,
+      break_minutes: emp.break_minutes,
+      uses_custom_schedule: emp.uses_custom_schedule,
+      fallback: candela,
+    });
+    const rows = buildAttendanceSeedRows({
+      year,
+      month,
+      half,
+      employeeId: emp.id,
+      employee: empSchedule,
+      candela,
+    });
+    for (const row of rows) {
+      const key = `${row.employeeId}|${row.workDate}`;
+      if (existingKeys.has(key)) continue;
+      toInsert.push({
+        organization_id: orgId,
+        period_id: periodId,
+        employee_id: row.employeeId,
+        work_date: row.workDate,
+        day_kind: row.dayKind,
+        entry_time: row.entryTime,
+        exit_time: row.exitTime,
+        break_minutes: row.breakMinutes,
+        notes: row.notes,
+        created_by: userId,
+        updated_by: userId,
+      });
+    }
+  }
+
+  if (toInsert.length === 0) {
+    return { ok: true, inserted: 0 };
+  }
+
+  const { error: insErr } = await supabase
+    .from("payroll_attendance_days")
+    .insert(toInsert);
+  if (insErr) return { ok: false, error: insErr.message };
+  return { ok: true, inserted: toInsert.length };
+}
+
+export async function seedPayrollAttendanceAction(
+  periodId: string,
+): Promise<ActionResult & { inserted?: number }> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "personal.liquidacion")) {
+    return { ok: false, error: "Sin permiso de liquidación" };
+  }
+  const supabase = await createClient();
+  const { data: period, error } = await supabase
+    .from("payroll_periods")
+    .select("id, period_year, period_month, period_half, status")
+    .eq("id", periodId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error || !period) {
+    return { ok: false, error: error?.message ?? "Periodo no encontrado" };
+  }
+  if (period.status === "EMITIDA" || period.status === "CERRADA") {
+    return { ok: false, error: "La liquidación emitida no admite cambios" };
+  }
+
+  const result = await seedPayrollAttendanceInternal(
+    supabase,
+    ctx.organization.id,
+    ctx.userId,
+    periodId,
+    period.period_year,
+    period.period_month,
+    period.period_half as 1 | 2,
+  );
+  if (result.ok) revalidateAll(`/personal/liquidacion/${periodId}`);
+  return result;
+}
+
+export async function resetEmployeeAttendanceAction(
+  periodId: string,
+  employeeId: string,
+): Promise<ActionResult & { inserted?: number }> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "personal.liquidacion")) {
+    return { ok: false, error: "Sin permiso de liquidación" };
+  }
+  const supabase = await createClient();
+  const { data: period, error } = await supabase
+    .from("payroll_periods")
+    .select("id, period_year, period_month, period_half, status")
+    .eq("id", periodId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error || !period) {
+    return { ok: false, error: error?.message ?? "Periodo no encontrado" };
+  }
+  if (period.status === "EMITIDA" || period.status === "CERRADA") {
+    return { ok: false, error: "La liquidación emitida no admite cambios" };
+  }
+
+  const result = await seedPayrollAttendanceInternal(
+    supabase,
+    ctx.organization.id,
+    ctx.userId,
+    periodId,
+    period.period_year,
+    period.period_month,
+    period.period_half as 1 | 2,
+    { overwriteEmployeeId: employeeId },
+  );
+  if (result.ok) revalidateAll(`/personal/liquidacion/${periodId}`);
+  return result;
+}
+
+export async function saveAttendanceDayAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "personal.liquidacion")) {
+    return { ok: false, error: "Sin permiso de liquidación" };
+  }
+
+  const parsed = attendanceDaySaveSchema.safeParse({
+    period_id: formData.get("period_id"),
+    employee_id: formData.get("employee_id"),
+    work_date: formData.get("work_date"),
+    day_kind: formData.get("day_kind"),
+    entry_time: formData.get("entry_time"),
+    exit_time: formData.get("exit_time"),
+    break_minutes: formData.get("break_minutes") ?? 0,
+    notes: formData.get("notes"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const kind = parsed.data.day_kind;
+  const rest = kind === "DESCANSO" || kind === "FESTIVO";
+  const entryRaw = emptyToNull(parsed.data.entry_time ?? null);
+  const exitRaw = emptyToNull(parsed.data.exit_time ?? null);
+  const entry_time = rest ? null : entryRaw ? timeFromDb(entryRaw) : null;
+  const exit_time = rest ? null : exitRaw ? timeFromDb(exitRaw) : null;
+  const break_minutes = rest ? 0 : parsed.data.break_minutes;
+
+  const supabase = await createClient();
+  const { data: period } = await supabase
+    .from("payroll_periods")
+    .select("id, status")
+    .eq("id", parsed.data.period_id)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!period) return { ok: false, error: "Periodo no encontrado" };
+  if (period.status === "EMITIDA" || period.status === "CERRADA") {
+    return { ok: false, error: "La liquidación emitida no admite cambios" };
+  }
+
+  const { data: existing } = await supabase
+    .from("payroll_attendance_days")
+    .select("id")
+    .eq("organization_id", ctx.organization.id)
+    .eq("period_id", parsed.data.period_id)
+    .eq("employee_id", parsed.data.employee_id)
+    .eq("work_date", parsed.data.work_date)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  const payload = {
+    day_kind: kind,
+    entry_time,
+    exit_time,
+    break_minutes,
+    notes: emptyToNull(parsed.data.notes),
+    updated_by: ctx.userId,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existing) {
+    const { error } = await supabase
+      .from("payroll_attendance_days")
+      .update(payload)
+      .eq("id", existing.id)
+      .eq("organization_id", ctx.organization.id);
+    if (error) return { ok: false, error: error.message };
+  } else {
+    const { error } = await supabase.from("payroll_attendance_days").insert({
+      organization_id: ctx.organization.id,
+      period_id: parsed.data.period_id,
+      employee_id: parsed.data.employee_id,
+      work_date: parsed.data.work_date,
+      ...payload,
+      created_by: ctx.userId,
+    });
+    if (error) return { ok: false, error: error.message };
+  }
+
+  revalidateAll(`/personal/liquidacion/${parsed.data.period_id}`);
+  return { ok: true };
 }
 
 export async function calculatePayrollPeriodAction(
@@ -468,8 +776,14 @@ export async function calculatePayrollPeriodAction(
     return { ok: false, error: "La liquidación emitida no se puede recalcular" };
   }
 
-  const [{ data: schedule }, { data: legal }, { data: employees }, { data: bonuses }, { data: novelties }] =
-    await Promise.all([
+  const [
+    { data: schedule },
+    { data: legal },
+    { data: employees },
+    { data: bonuses },
+    { data: novelties },
+    { data: attendanceRows },
+  ] = await Promise.all([
       supabase
         .from("payroll_schedules")
         .select(
@@ -514,6 +828,14 @@ export async function calculatePayrollPeriodAction(
         .is("deleted_at", null)
         .gte("novelty_date", period.period_start)
         .lte("novelty_date", period.period_end),
+      supabase
+        .from("payroll_attendance_days")
+        .select(
+          "id, employee_id, work_date, day_kind, entry_time, exit_time, break_minutes, notes",
+        )
+        .eq("organization_id", orgId)
+        .eq("period_id", periodId)
+        .is("deleted_at", null),
     ]);
 
   if (!schedule || !legal) {
@@ -535,9 +857,45 @@ export async function calculatePayrollPeriodAction(
     novByEmp.set(n.employee_id, list);
   }
 
+  const attByEmp = new Map<string, AttendanceDayInput[]>();
+  for (const row of attendanceRows ?? []) {
+    const mapped: AttendanceDayInput = {
+      id: row.id,
+      employeeId: row.employee_id,
+      workDate: String(row.work_date),
+      dayKind: row.day_kind as AttendanceDayKind,
+      entryTime: row.entry_time ? timeFromDb(row.entry_time) : null,
+      exitTime: row.exit_time ? timeFromDb(row.exit_time) : null,
+      breakMinutes: Number(row.break_minutes ?? 0),
+      notes: row.notes,
+    };
+    const list = attByEmp.get(row.employee_id) ?? [];
+    list.push(mapped);
+    attByEmp.set(row.employee_id, list);
+  }
+
   const payrollEmployees = (employees ?? []).filter(
     (e) => !isShiftDayContractor(String(e.employment_type ?? "")),
   );
+
+  if (attByEmp.size === 0) {
+    return {
+      ok: false,
+      error:
+        "Sin planilla de asistencia. Pulse «Precargar planilla» antes de calcular.",
+    };
+  }
+
+  for (const e of payrollEmployees) {
+    const days = attByEmp.get(e.id) ?? [];
+    const check = validateAttendanceForCalculate(days);
+    if (!check.ok) {
+      return {
+        ok: false,
+        error: `${e.full_name}: ${check.error}`,
+      };
+    }
+  }
 
   const result = liquidatePeriod({
     year: period.period_year,
@@ -578,6 +936,7 @@ export async function calculatePayrollPeriodAction(
         start_time: n.start_time,
         end_time: n.end_time,
       })),
+      attendanceDays: attByEmp.get(e.id) ?? [],
     })),
   });
 

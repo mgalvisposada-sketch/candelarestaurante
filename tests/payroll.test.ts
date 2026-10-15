@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   art1141ExemptionApplies,
+  buildAttendanceSeedRows,
+  computeAttendanceHours,
   computePeriodHours,
   computeShiftContractorSettlement,
   liquidatePeriod,
@@ -9,6 +11,7 @@ import {
   simulateBiweekly,
   splitDayNightMinutes,
   transportAidApplies,
+  type AttendanceDayInput,
   type LegalParamsInput,
   type PayrollScheduleInput,
 } from "../src/lib/payroll";
@@ -397,5 +400,199 @@ describe("simulateBiweekly", () => {
     expect(settlement.shiftPay).toBe(160_000);
     expect(settlement.advances).toBe(20_000);
     expect(settlement.netPay).toBe(140_000);
+  });
+});
+
+describe("planilla de asistencia", () => {
+  const candelaRestaurant: PayrollScheduleInput = {
+    ordinary_entry_time: "15:00",
+    ordinary_exit_time: "23:00",
+    break_minutes: 60,
+    works_monday: false,
+    works_tuesday: true,
+    works_wednesday: true,
+    works_thursday: true,
+    works_friday: true,
+    works_saturday: true,
+    works_sunday: true,
+  };
+
+  const empSchedule = {
+    ordinary_entry_time: "15:00",
+    ordinary_exit_time: "23:00",
+    break_minutes: 60,
+    uses_custom_schedule: false,
+  };
+
+  it("precarga domingo laborado y lunes descanso", () => {
+    const rows = buildAttendanceSeedRows({
+      year: 2026,
+      month: 10,
+      half: 1,
+      employeeId: "e1",
+      employee: empSchedule,
+      candela: candelaRestaurant,
+    });
+    const byDate = new Map(rows.map((r) => [r.workDate, r]));
+    expect(byDate.get("2026-10-05")?.dayKind).toBe("DESCANSO");
+    expect(byDate.get("2026-10-04")?.dayKind).toBe("LABORADO");
+    expect(byDate.get("2026-10-11")?.dayKind).toBe("LABORADO");
+    expect(rows.filter((r) => r.dayKind === "LABORADO")).toHaveLength(13);
+  });
+
+  it("cuenta 2 domingos y recargo dominical desde planilla", () => {
+    const seeded = buildAttendanceSeedRows({
+      year: 2026,
+      month: 10,
+      half: 1,
+      employeeId: "e1",
+      employee: empSchedule,
+      candela: candelaRestaurant,
+    });
+    const hourValue = ordinaryHourValue(1_750_905, 42);
+    const att = computeAttendanceHours({
+      days: seeded,
+      employee: empSchedule,
+      candela: candelaRestaurant,
+      legal: legalBase,
+      hourValue,
+    });
+    expect(att.hours.sundayDays).toBe(2);
+    expect(att.hours.sundayDayHours + att.hours.sundayNightHours).toBeGreaterThan(
+      0,
+    );
+
+    const sim = simulateBiweekly({
+      year: 2026,
+      month: 10,
+      half: 1,
+      basicSalary: 1_750_905,
+      employmentType: "INDEFINIDO",
+      receivesTransportAid: null,
+      arlRiskLevel: "I",
+      schedule: empSchedule,
+      candelaSchedule: candelaRestaurant,
+      legal: legalBase,
+      bonuses: [],
+      attendanceDays: seeded,
+    });
+    expect(sim.attendance?.used).toBe(true);
+    expect(sim.hours.sundayDays).toBe(2);
+    expect(sim.earnings.sundaySurcharge).toBeGreaterThan(0);
+  });
+
+  it("salida 00:00 cruza medianoche", () => {
+    const days: AttendanceDayInput[] = [
+      {
+        employeeId: "e1",
+        workDate: "2026-10-01",
+        dayKind: "LABORADO",
+        entryTime: "16:00",
+        exitTime: "00:00",
+        breakMinutes: 0,
+      },
+    ];
+    const att = computeAttendanceHours({
+      days,
+      employee: empSchedule,
+      candela: candelaRestaurant,
+      legal: legalBase,
+      hourValue: ordinaryHourValue(1_750_905, 42),
+    });
+    expect(att.netWorkedHours).toBe(8);
+  });
+
+  it("descanso no aporta horas", () => {
+    const days: AttendanceDayInput[] = [
+      {
+        employeeId: "e1",
+        workDate: "2026-10-05",
+        dayKind: "DESCANSO",
+        entryTime: null,
+        exitTime: null,
+        breakMinutes: 0,
+      },
+    ];
+    const att = computeAttendanceHours({
+      days,
+      employee: empSchedule,
+      candela: candelaRestaurant,
+      legal: legalBase,
+      hourValue: 1000,
+    });
+    expect(att.hours.workedDays).toBe(0);
+    expect(att.restDays).toBe(1);
+    expect(att.netWorkedHours).toBe(0);
+  });
+
+  it("exceso vs jornada ordinaria genera extras", () => {
+    const days: AttendanceDayInput[] = [
+      {
+        employeeId: "e1",
+        workDate: "2026-10-07",
+        dayKind: "LABORADO",
+        entryTime: "15:00",
+        exitTime: "23:30",
+        breakMinutes: 30,
+      },
+    ];
+    // Capacidad ordinaria Candela: 15–23 − 60 = 7h; real 15–23:30 − 30 = 8h → 60 min extra
+    const att = computeAttendanceHours({
+      days,
+      employee: empSchedule,
+      candela: candelaRestaurant,
+      legal: legalBase,
+      hourValue: ordinaryHourValue(1_750_905, 42),
+    });
+    expect(att.overtimeMinutes).toBe(60);
+    expect(att.overtimePay).toBeGreaterThan(0);
+  });
+
+  it("con planilla ANTICIPO descuenta y HORA_EXTRA no duplica", () => {
+    const seeded = buildAttendanceSeedRows({
+      year: 2026,
+      month: 10,
+      half: 1,
+      employeeId: "e1",
+      employee: empSchedule,
+      candela: candelaRestaurant,
+    });
+    const withOt = seeded.map((d) =>
+      d.workDate === "2026-10-07"
+        ? { ...d, exitTime: "23:30", breakMinutes: 30 }
+        : d,
+    );
+    const sim = simulateBiweekly({
+      year: 2026,
+      month: 10,
+      half: 1,
+      basicSalary: 1_750_905,
+      employmentType: "INDEFINIDO",
+      receivesTransportAid: null,
+      arlRiskLevel: "I",
+      schedule: empSchedule,
+      candelaSchedule: candelaRestaurant,
+      legal: legalBase,
+      bonuses: [],
+      attendanceDays: withOt,
+      novelties: [
+        {
+          novelty_type: "HORA_EXTRA",
+          novelty_date: "2026-10-07",
+          minutes: 120,
+          start_time: "23:00",
+          end_time: "01:00",
+        },
+        {
+          novelty_type: "ANTICIPO",
+          novelty_date: "2026-10-08",
+          amount: 50_000,
+        },
+      ],
+    });
+    expect(sim.deductions.advances).toBe(50_000);
+    expect(sim.novelties.count).toBe(1);
+    // Extras solo desde planilla (~60 min), no 120 de la novedad
+    expect(sim.novelties.overtimeMinutes).toBe(60);
   });
 });

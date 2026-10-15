@@ -102,6 +102,43 @@ export type NoveltyInput = {
   end_time?: string | null;
 };
 
+/** Tipos horarios que la planilla de asistencia ya expresa (no duplicar). */
+export const ATTENDANCE_REPLACED_NOVELTY_TYPES: ShiftNoveltyType[] = [
+  "LLEGADA_TARDE",
+  "SALIDA_TEMPRANA",
+  "AUSENCIA",
+  "HORA_EXTRA",
+];
+
+export type AttendanceDayKind =
+  | "LABORADO"
+  | "DESCANSO"
+  | "FESTIVO"
+  | "FESTIVO_LABORADO";
+
+export type AttendanceDayInput = {
+  id?: string;
+  employeeId: string;
+  workDate: string; // yyyy-mm-dd
+  dayKind: AttendanceDayKind;
+  entryTime: string | null; // HH:mm
+  exitTime: string | null;
+  breakMinutes: number;
+  notes?: string | null;
+};
+
+export type AttendanceHoursResult = {
+  hours: HoursBreakdown;
+  unpaidMinutes: number;
+  unpaidTimeDiscount: number;
+  overtimeMinutes: number;
+  overtimePay: number;
+  netWorkedHours: number;
+  restDays: number;
+  holidayWorkedDays: number;
+  notes: string[];
+};
+
 export type BiweeklyHalf = 1 | 2;
 
 export type SimulateBiweeklyInput = {
@@ -120,6 +157,11 @@ export type SimulateBiweeklyInput = {
   includeGoalBonuses?: boolean;
   /** Solo novedades ya aprobadas */
   novelties?: NoveltyInput[];
+  /**
+   * Planilla del periodo. Si viene (aunque vacía tras validar), es fuente de
+   * verdad de horas; si es undefined, se usa el horario Candela (simulación).
+   */
+  attendanceDays?: AttendanceDayInput[];
 };
 
 export type HoursBreakdown = {
@@ -191,4 +233,13 @@ export type BiweeklySimulation = {
   employerCost: number;
   notes: string[];
   usesCustomSchedule: boolean;
+  /** Presente cuando la liquidación usó planilla de asistencia. */
+  attendance?: {
+    used: boolean;
+    netWorkedHours: number;
+    restDays: number;
+    holidayWorkedDays: number;
+    overtimeMinutes: number;
+    unpaidMinutes: number;
+  };
 };

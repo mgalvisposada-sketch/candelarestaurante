@@ -2,6 +2,7 @@ import { isShiftDayContractor } from "./rates";
 import { simulateBiweekly } from "./simulate-biweekly";
 import type {
   ArlRiskLevel,
+  AttendanceDayInput,
   BonusInput,
   BiweeklySimulation,
   EmploymentContractType,
@@ -22,6 +23,7 @@ export type LiquidateEmployeeInput = {
   schedule: EmployeeScheduleInput;
   bonuses: BonusInput[];
   novelties: NoveltyInput[];
+  attendanceDays?: AttendanceDayInput[];
 };
 
 export type LiquidationLine = {
@@ -80,6 +82,7 @@ export function liquidatePeriod(input: {
       bonuses: emp.bonuses,
       includeGoalBonuses: input.includeGoalBonuses ?? true,
       novelties: emp.novelties,
+      attendanceDays: emp.attendanceDays,
     });
 
     lines.push({

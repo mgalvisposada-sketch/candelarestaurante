@@ -3,6 +3,7 @@ export * from "./schedule";
 export * from "./rates";
 export * from "./mappers";
 export * from "./novelties";
+export * from "./attendance";
 export * from "./vacations";
 export * from "./shift-settlement";
 export * from "./quincena";

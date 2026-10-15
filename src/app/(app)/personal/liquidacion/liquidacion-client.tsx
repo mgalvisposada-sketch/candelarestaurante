@@ -11,6 +11,12 @@ import {
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO } from "@/lib/dates";
+import {
+  AttendanceGridClient,
+  type AttendanceEmployee,
+  type AttendanceRow,
+} from "./attendance-grid-client";
+import { LiquidationDetailModal } from "./liquidation-detail-modal";
 
 const inputClass =
   "w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none ring-[var(--accent)] focus:ring-2";
@@ -54,9 +60,9 @@ export function CreatePeriodForm() {
     >
       <h3 className="font-medium">Nueva liquidación quincenal</h3>
       <p className="text-sm text-[var(--muted)]">
-        Cree el periodo; luego calcule con empleados de nómina activos + novedades
-        aprobadas y emita el paquete a Contabilidad/RRHH, Tesorería y SST. Los
-        prestadores por turno se pagan en Gastos → liquidación por turno.
+        Cree el periodo (se precarga la planilla desde Horario Candela), ajuste
+        la asistencia real, revise novedades de dinero y calcule. Prestadores por
+        turno se pagan en Gastos → liquidación por turno.
       </p>
       <div className="grid gap-3 md:grid-cols-3">
         <label className="block text-sm">
@@ -155,9 +161,13 @@ export type LineRow = {
 export function PeriodDetailClient({
   period,
   lines,
+  attendanceEmployees,
+  attendanceRows,
 }: {
   period: PeriodRow;
   lines: LineRow[];
+  attendanceEmployees: AttendanceEmployee[];
+  attendanceRows: AttendanceRow[];
 }) {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -186,160 +196,208 @@ export function PeriodDetailClient({
           <p className="mt-1 text-sm text-[var(--muted)]">
             {formatDateCO(period.period_start)} → {formatDateCO(period.period_end)}
           </p>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Flujo: 1) Planilla de asistencia → 2) Novedades de dinero → 3)
+            Calcular / emitir
+          </p>
         </div>
         <Badge tone={STATUS_TONE[period.status] ?? "neutral"}>
           {period.status}
         </Badge>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-xl border border-[var(--line)] bg-white p-4">
-          <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
-            Neto a pagar
-          </p>
-          <p className="mt-2 font-display text-2xl font-bold">
-            {formatCOP(totalNet)}
-          </p>
-        </div>
-        <div className="rounded-xl border border-[var(--line)] bg-white p-4">
-          <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
-            Costo empresa
-          </p>
-          <p className="mt-2 font-display text-2xl font-bold">
-            {formatCOP(totalCost)}
-          </p>
-        </div>
-        <div className="rounded-xl border border-[var(--line)] bg-white p-4">
-          <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
-            Empleados / novedades
-          </p>
-          <p className="mt-2 font-display text-2xl font-bold">
-            {lines.length} / {totalNov}
-          </p>
-        </div>
-      </div>
+      <AttendanceGridClient
+        periodId={period.id}
+        locked={locked}
+        employees={attendanceEmployees}
+        rows={attendanceRows}
+      />
 
-      <div className="flex flex-wrap gap-2">
-        {!locked ? (
-          <button
-            type="button"
-            disabled={pending}
-            className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
-            onClick={() => {
-              setError(null);
-              setOk(null);
-              startTransition(async () => {
-                const r = await calculatePayrollPeriodAction(period.id);
-                if (!r.ok) setError(r.error ?? "Error");
-                else setOk("Liquidación calculada");
-              });
-            }}
-          >
-            {period.status === "BORRADOR" ? "Calcular" : "Recalcular"}
-          </button>
-        ) : null}
-        {period.status === "CALCULADA" ? (
-          <button
-            type="button"
-            disabled={pending}
-            className="rounded-lg bg-emerald-700 px-4 py-2 text-sm text-white"
-            onClick={() => {
-              if (
-                !confirm(
-                  "¿Emitir paquete a Contabilidad/RRHH, Tesorería y SST? Quedará inmutable.",
-                )
-              )
-                return;
-              setError(null);
-              setOk(null);
-              startTransition(async () => {
-                const r = await emitPayrollPeriodAction(period.id);
-                if (!r.ok) setError(r.error ?? "Error");
-                else
-                  setOk(
-                    "Paquete emitido. Listo para control y ejecución departamental.",
-                  );
-              });
-            }}
-          >
-            Emitir a departamentos
-          </button>
-        ) : null}
-      </div>
-
-      {period.status === "EMITIDA" ? (
-        <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-          Paquete emitido
-          {period.emitted_at ? ` el ${formatDateCO(period.emitted_at)}` : ""}.
-          Use este detalle como fuente para Contabilidad/RRHH, Tesorería y SST.
+      <section className="rounded-xl border border-[var(--line)] bg-white p-5">
+        <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+          2 · Novedades
         </p>
-      ) : null}
-      {error ? (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>
-      ) : null}
-      {ok ? (
-        <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{ok}</p>
-      ) : null}
+        <h2 className="mt-1 font-medium">Dinero y permisos</h2>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          Anticipos, bonos, descuentos y permisos se gestionan en{" "}
+          <Link
+            href="/personal/novedades"
+            className="underline underline-offset-2"
+          >
+            Novedades
+          </Link>
+          . Las horas reales ya no se reportan ahí: van en la planilla de arriba.
+        </p>
+      </section>
 
-      <div className="space-y-2">
-        {lines.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">
-            Sin líneas. Pulse Calcular para liquidar empleados de nómina activos.
+      <section className="space-y-4">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+            3 · Calcular / emitir
           </p>
-        ) : (
-          lines.map((l) => {
-            const snap = l.snapshot as {
-              earnings?: { total?: number };
-              deductions?: { total?: number };
-              novelties?: { count?: number };
-              notes?: string[];
-            } | null;
-            const open = openId === l.id;
-            return (
-              <article
-                key={l.id}
-                className="rounded-xl border border-[var(--line)] bg-white p-4"
-              >
-                <button
-                  type="button"
-                  className="flex w-full flex-wrap items-start justify-between gap-3 text-left"
-                  onClick={() => setOpenId(open ? null : l.id)}
+          <h2 className="mt-1 font-medium">Resultado de liquidación</h2>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-xl border border-[var(--line)] bg-white p-4">
+            <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
+              Neto a pagar
+            </p>
+            <p className="mt-2 font-display text-2xl font-bold">
+              {formatCOP(totalNet)}
+            </p>
+          </div>
+          <div className="rounded-xl border border-[var(--line)] bg-white p-4">
+            <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
+              Costo empresa
+            </p>
+            <p className="mt-2 font-display text-2xl font-bold">
+              {formatCOP(totalCost)}
+            </p>
+          </div>
+          <div className="rounded-xl border border-[var(--line)] bg-white p-4">
+            <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
+              Empleados / novedades
+            </p>
+            <p className="mt-2 font-display text-2xl font-bold">
+              {lines.length} / {totalNov}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {!locked ? (
+            <button
+              type="button"
+              disabled={pending}
+              className="rounded-lg bg-[var(--solid)] px-4 py-2 text-sm text-[var(--on-solid)]"
+              onClick={() => {
+                setError(null);
+                setOk(null);
+                startTransition(async () => {
+                  const r = await calculatePayrollPeriodAction(period.id);
+                  if (!r.ok) setError(r.error ?? "Error");
+                  else setOk("Liquidación calculada desde la planilla");
+                });
+              }}
+            >
+              {period.status === "BORRADOR" ? "Calcular" : "Recalcular"}
+            </button>
+          ) : null}
+          {period.status === "CALCULADA" ? (
+            <button
+              type="button"
+              disabled={pending}
+              className="rounded-lg bg-emerald-700 px-4 py-2 text-sm text-white"
+              onClick={() => {
+                if (
+                  !confirm(
+                    "¿Emitir paquete a Contabilidad/RRHH, Tesorería y SST? Quedará inmutable.",
+                  )
+                )
+                  return;
+                setError(null);
+                setOk(null);
+                startTransition(async () => {
+                  const r = await emitPayrollPeriodAction(period.id);
+                  if (!r.ok) setError(r.error ?? "Error");
+                  else
+                    setOk(
+                      "Paquete emitido. Listo para control y ejecución departamental.",
+                    );
+                });
+              }}
+            >
+              Emitir a departamentos
+            </button>
+          ) : null}
+        </div>
+
+        {period.status === "EMITIDA" ? (
+          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+            Paquete emitido
+            {period.emitted_at ? ` el ${formatDateCO(period.emitted_at)}` : ""}.
+            Use este detalle como fuente para Contabilidad/RRHH, Tesorería y SST.
+          </p>
+        ) : null}
+        {error ? (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+            {error}
+          </p>
+        ) : null}
+        {ok ? (
+          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+            {ok}
+          </p>
+        ) : null}
+
+        <div className="space-y-2">
+          {lines.length === 0 ? (
+            <p className="text-sm text-[var(--muted)]">
+              Sin líneas. Complete la planilla y pulse Calcular.
+            </p>
+          ) : (
+            lines.map((l) => {
+              const snap = l.snapshot as {
+                hours?: {
+                  workedDays?: number;
+                  sundayDays?: number;
+                };
+              } | null;
+              return (
+                <article
+                  key={l.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-white p-4"
                 >
-                  <div>
+                  <div className="min-w-0">
                     <p className="font-medium">{l.employee_name}</p>
                     <p className="text-sm text-[var(--muted)]">
                       {l.position_title || "Sin cargo"} · {l.novelty_count}{" "}
                       novedad(es)
+                      {snap?.hours?.workedDays != null
+                        ? ` · ${snap.hours.workedDays} día(s) planilla`
+                        : ""}
+                      {snap?.hours?.sundayDays
+                        ? ` · ${snap.hours.sundayDays} domingo(s)`
+                        : ""}
                     </p>
                   </div>
-                  <div className="text-right text-sm">
-                    <p>
-                      Neto: <strong>{formatCOP(l.net_pay)}</strong>
-                    </p>
-                    <p className="text-[var(--muted)]">
-                      Costo: {formatCOP(l.employer_cost)}
-                    </p>
-                  </div>
-                </button>
-                {open && snap ? (
-                  <div className="mt-3 space-y-1 border-t border-[var(--line)] pt-3 text-sm">
-                    <p>Devengos: {formatCOP(snap.earnings?.total ?? l.earnings_total)}</p>
-                    <p>
-                      Deducciones:{" "}
-                      {formatCOP(snap.deductions?.total ?? l.deductions_total)}
-                    </p>
-                    {(snap.notes ?? []).slice(0, 4).map((n) => (
-                      <p key={n} className="text-xs text-[var(--muted)]">
-                        · {n}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="text-right text-sm">
+                      <p>
+                        Neto: <strong>{formatCOP(l.net_pay)}</strong>
                       </p>
-                    ))}
+                      <p className="text-[var(--muted)]">
+                        Costo: {formatCOP(l.employer_cost)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm hover:border-[var(--ink)]"
+                      onClick={() => setOpenId(l.id)}
+                    >
+                      Ver detalle
+                    </button>
                   </div>
-                ) : null}
-              </article>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </section>
+
+      {openId
+        ? (() => {
+            const line = lines.find((l) => l.id === openId);
+            if (!line) return null;
+            return (
+              <LiquidationDetailModal
+                line={line}
+                onClose={() => setOpenId(null)}
+              />
             );
-          })
-        )}
-      </div>
+          })()
+        : null}
     </div>
   );
 }

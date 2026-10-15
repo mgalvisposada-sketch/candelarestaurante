@@ -54,3 +54,21 @@ export const payrollPeriodSchema = z.object({
   period_half: z.coerce.number().int().refine((n) => n === 1 || n === 2),
   notes: z.string().optional().nullable(),
 });
+
+export const ATTENDANCE_DAY_KINDS = [
+  "LABORADO",
+  "DESCANSO",
+  "FESTIVO",
+  "FESTIVO_LABORADO",
+] as const;
+
+export const attendanceDaySaveSchema = z.object({
+  period_id: z.string().uuid(),
+  employee_id: z.string().uuid(),
+  work_date: isoDate,
+  day_kind: z.enum(ATTENDANCE_DAY_KINDS),
+  entry_time: z.string().optional().nullable(),
+  exit_time: z.string().optional().nullable(),
+  break_minutes: z.coerce.number().int().min(0).max(480),
+  notes: z.string().optional().nullable(),
+});
