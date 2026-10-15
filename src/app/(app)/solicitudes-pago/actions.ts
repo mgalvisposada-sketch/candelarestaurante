@@ -312,7 +312,9 @@ async function availableForAccount(
 
   const { data: txRows } = await supabase
     .from("bank_transactions")
-    .select("bank_account_id, transaction_date, debit, credit")
+    .select(
+      "bank_account_id, transaction_date, debit, credit, settlement_status",
+    )
     .eq("organization_id", orgId)
     .eq("bank_account_id", accountId)
     .is("deleted_at", null);

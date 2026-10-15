@@ -13,7 +13,16 @@ export type BankTransactionInput = {
   transaction_date: string;
   debit: MoneyInput;
   credit: MoneyInput;
+  /** PENDIENTE_BANCO no suma al saldo; INGRESADO / null sí. */
+  settlement_status?: string | null;
 };
+
+/** Créditos de adquirencia aún no vistos en el extracto. */
+export function isPendingBankSettlement(
+  status: string | null | undefined,
+): boolean {
+  return status === "PENDIENTE_BANCO";
+}
 
 /** Saldo disponible = opening + créditos − débitos (movimientos posteriores al corte). */
 export function computeAvailableBalance(opts: {
@@ -64,6 +73,7 @@ export function movementsAfterCutoff(
   for (const tx of txs) {
     if (tx.bank_account_id !== accountId) continue;
     if (cutoffDate && tx.transaction_date <= cutoffDate) continue;
+    if (isPendingBankSettlement(tx.settlement_status)) continue;
     const credit = Number(tx.credit || 0);
     const debit = Number(tx.debit || 0);
     if (credit > 0) credits.push(credit);

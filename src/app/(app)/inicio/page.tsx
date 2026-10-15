@@ -93,7 +93,9 @@ export default async function InicioPage() {
 
       const { data: txRows } = await supabase
         .from("bank_transactions")
-        .select("bank_account_id, transaction_date, debit, credit")
+        .select(
+          "bank_account_id, transaction_date, debit, credit, settlement_status",
+        )
         .eq("organization_id", orgId)
         .is("deleted_at", null)
         .in("bank_account_id", activeIds);

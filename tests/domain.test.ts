@@ -259,6 +259,36 @@ describe("treasury", () => {
     // opening 1_000_000 + crédito 300_000 − débito 50_000 (mismo día del corte no cuenta)
     expect(available.toFixed(2)).toBe("1250000.00");
 
+    const withPendingAcquiring = availableBalanceForAccount({
+      accountId: "acc-1",
+      orgCutoff: "2026-01-01",
+      snapshots,
+      transactions: [
+        {
+          bank_account_id: "acc-1",
+          transaction_date: "2026-01-10",
+          debit: 0,
+          credit: "300000",
+        },
+        {
+          bank_account_id: "acc-1",
+          transaction_date: "2026-01-11",
+          debit: 0,
+          credit: "500000",
+          settlement_status: "PENDIENTE_BANCO",
+        },
+        {
+          bank_account_id: "acc-1",
+          transaction_date: "2026-01-12",
+          debit: 0,
+          credit: "100000",
+          settlement_status: "INGRESADO",
+        },
+      ],
+    });
+    // pendiente no suma; INGRESADO sí → 1_000_000 + 300_000 + 100_000
+    expect(withPendingAcquiring.toFixed(2)).toBe("1400000.00");
+
     expect(contrastDelta("100", "90")?.toFixed(2)).toBe("10.00");
     expect(contrastDelta("100", null)).toBeNull();
   });

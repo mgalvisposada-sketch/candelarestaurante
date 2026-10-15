@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import {
+  confirmAcquiringBankSettlementAction,
   createBankAccountAction,
   createTreasuryTransferAction,
   reassignBankTransactionAccountAction,
@@ -56,6 +57,9 @@ export type BankTransactionRow = {
   origin: string | null;
   category: string | null;
   linked_entity_type: string | null;
+  settlement_status?: string | null;
+  settled_at?: string | null;
+  parent_transaction_id?: string | null;
 };
 
 function movementLabel(tx: BankTransactionRow): string {
@@ -73,6 +77,167 @@ function movementLabel(tx: BankTransactionRow): string {
   if (tx.origin === "solicitudes-pago") return "Solicitud de pago";
   if (tx.origin === "prestamos") return "Ingreso por préstamo de socio";
   return tx.category || tx.origin || "Movimiento";
+}
+
+export function PendingAcquiringSettlementsPanel({
+  pending,
+  accounts,
+  canConfirm,
+  defaultBankDate,
+}: {
+  pending: BankTransactionRow[];
+  accounts: BankAccountRow[];
+  canConfirm: boolean;
+  defaultBankDate: string;
+}) {
+  const accountName = (id: string) =>
+    accounts.find((a) => a.id === id)?.bank_name ?? "Cuenta";
+  const total = pending.reduce((acc, tx) => acc + Number(tx.credit || 0), 0);
+
+  if (pending.length === 0) return null;
+
+  return (
+    <WorkSectionLike
+      title="Adquirencia pendiente de banco"
+      description="Avaladas en cierre, pero aún no vistas en el extracto. Confirme cada abono (total o parcial) con la fecha real del banco."
+      badge={
+        <Badge tone="warn">
+          {pending.length} · {formatCOP(total)}
+        </Badge>
+      }
+    >
+      <ul className="space-y-3">
+        {pending.map((tx) => (
+          <PendingAcquiringRow
+            key={tx.id}
+            tx={tx}
+            accountLabel={accountName(tx.bank_account_id)}
+            canConfirm={canConfirm}
+            defaultBankDate={defaultBankDate}
+          />
+        ))}
+      </ul>
+    </WorkSectionLike>
+  );
+}
+
+/** Contenedor liviano alineado al estilo de WorkSection sin acoplar el layout. */
+function WorkSectionLike({
+  title,
+  description,
+  badge,
+  children,
+}: {
+  title: string;
+  description: string;
+  badge?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      id="adquirencia-pendiente"
+      className="space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h2 className="font-display text-xl font-semibold">{title}</h2>
+          <p className="mt-1 text-sm text-[var(--muted)]">{description}</p>
+        </div>
+        {badge}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function PendingAcquiringRow({
+  tx,
+  accountLabel,
+  canConfirm,
+  defaultBankDate,
+}: {
+  tx: BankTransactionRow;
+  accountLabel: string;
+  canConfirm: boolean;
+  defaultBankDate: string;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const credit = Number(tx.credit || 0);
+
+  return (
+    <li className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-medium text-[var(--ink)]">{movementLabel(tx)}</p>
+          <p className="mt-0.5 text-sm text-[var(--muted)]">
+            {accountLabel} · Cierre {formatDateCO(tx.transaction_date)}
+            {tx.reference ? ` · ${tx.reference}` : ""}
+          </p>
+        </div>
+        <p className="shrink-0 text-sm font-semibold text-[var(--ink)]">
+          {formatCOP(credit)}
+        </p>
+      </div>
+      {canConfirm ? (
+        <form
+          className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]"
+          action={(fd) => {
+            setError(null);
+            startTransition(async () => {
+              const result = await confirmAcquiringBankSettlementAction(
+                tx.id,
+                fd,
+              );
+              if (!result.ok) setError(result.error ?? "No se pudo confirmar");
+            });
+          }}
+        >
+          <label className="block text-sm">
+            <span className="mb-1 block text-xs text-[var(--muted)]">
+              Monto a ingresar
+            </span>
+            <input
+              name="amount"
+              required
+              defaultValue={String(credit)}
+              className={inputClass}
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block text-xs text-[var(--muted)]">
+              Fecha en extracto
+            </span>
+            <input
+              type="date"
+              name="transaction_date"
+              required
+              defaultValue={defaultBankDate}
+              className={inputClass}
+            />
+          </label>
+          <div className="flex items-end">
+            <button
+              type="submit"
+              disabled={pending}
+              className="w-full rounded-md bg-[var(--solid)] px-3 py-2 text-xs font-medium text-[var(--on-solid)] disabled:opacity-60 sm:w-auto"
+            >
+              {pending ? "Guardando…" : "Ingresar al banco"}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <p className="mt-2 text-xs text-[var(--muted)]">
+          Pendiente de liquidación bancaria (sin permiso para confirmar).
+        </p>
+      )}
+      {error ? (
+        <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error}
+        </p>
+      ) : null}
+    </li>
+  );
 }
 
 const inputClass =
@@ -1035,18 +1200,39 @@ export function AccountMovementsList({
               const isTransfer =
                 tx.category === "TRASPASO" || tx.origin === "tesoreria.traspaso";
               const isEditing = editingId === tx.id;
+              const isPendingBank = tx.settlement_status === "PENDIENTE_BANCO";
+              const isSettledBank = tx.settlement_status === "INGRESADO";
               return (
-                <tr key={tx.id} className={cn(isEditing && "bg-[var(--surface-muted)]")}>
+                <tr
+                  key={tx.id}
+                  className={cn(
+                    isEditing && "bg-[var(--surface-muted)]",
+                    isPendingBank && "opacity-70",
+                  )}
+                >
                   <td className="whitespace-nowrap px-3 py-2 align-top text-[var(--muted)]">
                     {formatDateCO(tx.transaction_date)}
                   </td>
                   <td className="px-3 py-2 align-top">
-                    <div className="font-medium text-[var(--ink)]">
-                      {movementLabel(tx)}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-medium text-[var(--ink)]">
+                        {movementLabel(tx)}
+                      </span>
+                      {isPendingBank ? (
+                        <Badge tone="warn">Pendiente banco</Badge>
+                      ) : null}
+                      {isSettledBank ? (
+                        <Badge tone="ok">Ingresado</Badge>
+                      ) : null}
                     </div>
                     {tx.origin ? (
                       <div className="text-xs text-[var(--muted)]">
                         {tx.origin}
+                        {isPendingBank ? " · no suma al disponible" : ""}
+                      </div>
+                    ) : isPendingBank ? (
+                      <div className="text-xs text-[var(--muted)]">
+                        No suma al disponible
                       </div>
                     ) : null}
                     {isEditing ? (

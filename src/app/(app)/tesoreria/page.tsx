@@ -27,6 +27,7 @@ import {
   BankAccountCard,
   CashFloatAndTransferPanel,
   CreateBankAccountForm,
+  PendingAcquiringSettlementsPanel,
   type BalanceSnapshotRow,
   type BankAccountRow,
   type BankTransactionRow,
@@ -83,6 +84,7 @@ export default async function TesoreriaPage() {
 
   const canManageAccounts = ctxCanAccess(ctx, "tesoreria.cuentas");
   const canAvalar = ctxCanAccess(ctx, "tesoreria.caja.avalar");
+  const canConfirmAcquiring = canAvalar || canManageAccounts;
   const canSeeCaja =
     ctxCanAccess(ctx, "tesoreria.caja") || canAvalar;
 
@@ -150,7 +152,7 @@ export default async function TesoreriaPage() {
     const { data: txRows } = await supabase
       .from("bank_transactions")
       .select(
-        "id, bank_account_id, transaction_date, description, reference, debit, credit, origin, category, linked_entity_type",
+        "id, bank_account_id, transaction_date, description, reference, debit, credit, origin, category, linked_entity_type, settlement_status, settled_at, parent_transaction_id",
       )
       .eq("organization_id", orgId)
       .is("deleted_at", null)
@@ -164,6 +166,7 @@ export default async function TesoreriaPage() {
       transaction_date: t.transaction_date,
       debit: t.debit,
       credit: t.credit,
+      settlement_status: t.settlement_status,
     }));
   }
 
@@ -242,6 +245,19 @@ export default async function TesoreriaPage() {
     movementsByAccount.set(tx.bank_account_id, list);
   }
 
+  const pendingAcquiring = movementRows
+    .filter(
+      (tx) =>
+        tx.category === "INGRESO_ADQUIRENCIA" &&
+        tx.settlement_status === "PENDIENTE_BANCO" &&
+        Number(tx.credit || 0) > 0,
+    )
+    .sort((a, b) => a.transaction_date.localeCompare(b.transaction_date));
+  const pendingAcquiringTotal = pendingAcquiring.reduce(
+    (acc, tx) => acc + Number(tx.credit || 0),
+    0,
+  );
+
   return (
     <>
       <AppHeader
@@ -316,6 +332,12 @@ export default async function TesoreriaPage() {
               Cierres por avalar: {pendingReview.length}
             </Badge>
           ) : null}
+          {pendingAcquiring.length > 0 ? (
+            <Badge tone="warn">
+              Adquirencia por ingresar: {pendingAcquiring.length} ·{" "}
+              {formatCOP(pendingAcquiringTotal)}
+            </Badge>
+          ) : null}
           <Badge tone="ok">Confirmados: {confirmed}</Badge>
           <Badge tone="warn">Declarados: {declared}</Badge>
           {Math.max(pending, 0) > 0 ? (
@@ -338,6 +360,13 @@ export default async function TesoreriaPage() {
             cashFloatCurrent={cashFloatCurrent}
           />
         ) : null}
+
+        <PendingAcquiringSettlementsPanel
+          pending={pendingAcquiring}
+          accounts={accounts}
+          canConfirm={canConfirmAcquiring}
+          defaultBankDate={today}
+        />
 
         <section className="space-y-4">
           <div>

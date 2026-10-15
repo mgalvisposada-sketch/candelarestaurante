@@ -11,7 +11,8 @@ export type PendingActionKind =
   | "pago_aprobar"
   | "pago_ejecutar"
   | "inventario_revisar"
-  | "caja_avalar";
+  | "caja_avalar"
+  | "caja_ingreso_banco";
 
 export type PendingAction = {
   id: string;
@@ -55,9 +56,10 @@ const KIND_ORDER: Record<PendingActionKind, number> = {
   compra_recibir: 1,
   novedad_aprobar: 2,
   caja_avalar: 3,
-  pago_aprobar: 4,
-  pago_ejecutar: 5,
-  inventario_revisar: 6,
+  caja_ingreso_banco: 4,
+  pago_aprobar: 5,
+  pago_ejecutar: 6,
+  inventario_revisar: 7,
 };
 
 /**
@@ -89,6 +91,8 @@ export async function fetchPendingActions(
   const canPay = ctxCanAccess(ctx, "solicitudes-pago.pagar");
   const canReviewInventory = ctxCanAccess(ctx, "inventario.fisico.ajustar");
   const canAvalarCaja = ctxCanAccess(ctx, "tesoreria.caja.avalar");
+  const canConfirmAcquiring =
+    canAvalarCaja || ctxCanAccess(ctx, "tesoreria.cuentas");
 
   if (
     !canApprovePurchase &&
@@ -97,7 +101,8 @@ export async function fetchPendingActions(
     !canApprovePayment &&
     !canPay &&
     !canReviewInventory &&
-    !canAvalarCaja
+    !canAvalarCaja &&
+    !canConfirmAcquiring
   ) {
     return empty;
   }
@@ -113,6 +118,7 @@ export async function fetchPendingActions(
     paymentsPayRes,
     inventoryRes,
     cashClosesRes,
+    acquiringPendingRes,
   ] = await Promise.all([
       canApprovePurchase
         ? supabase
@@ -192,6 +198,19 @@ export async function fetchPendingActions(
             .eq("status", "EN_REVISION")
             .is("deleted_at", null)
             .order("business_date", { ascending: true })
+            .limit(50)
+        : Promise.resolve({ data: null as null }),
+      canConfirmAcquiring
+        ? supabase
+            .from("bank_transactions")
+            .select(
+              "id, transaction_date, credit, description, reference, bank_account_id, created_at",
+            )
+            .eq("organization_id", orgId)
+            .eq("category", "INGRESO_ADQUIRENCIA")
+            .eq("settlement_status", "PENDIENTE_BANCO")
+            .is("deleted_at", null)
+            .order("transaction_date", { ascending: true })
             .limit(50)
         : Promise.resolve({ data: null as null }),
     ]);
@@ -351,6 +370,45 @@ export async function fetchPendingActions(
     });
   }
 
+  const acquiringAccountIds = [
+    ...new Set(
+      (acquiringPendingRes.data ?? [])
+        .map((r) => r.bank_account_id as string)
+        .filter(Boolean),
+    ),
+  ];
+  const acquiringAccountName = new Map<string, string>();
+  if (acquiringAccountIds.length > 0) {
+    const { data: accRows } = await supabase
+      .from("bank_accounts")
+      .select("id, bank_name")
+      .eq("organization_id", orgId)
+      .in("id", acquiringAccountIds);
+    for (const a of accRows ?? []) {
+      acquiringAccountName.set(a.id as string, a.bank_name as string);
+    }
+  }
+
+  for (const row of acquiringPendingRes.data ?? []) {
+    const credit = Number(row.credit || 0);
+    if (credit <= 0) continue;
+    const account =
+      acquiringAccountName.get(row.bank_account_id as string) ?? "Banco";
+    const label =
+      (row.description as string | null)?.trim() ||
+      `Adquirencia ${formatDateCO(row.transaction_date as string)}`;
+    items.push({
+      id: `caja-banco:${row.id}`,
+      kind: "caja_ingreso_banco",
+      title: "Ingresar adquirencia al banco",
+      body: `${account} · ${label} · ${formatCOP(credit)}`,
+      href: "/tesoreria#adquirencia-pendiente",
+      createdAt:
+        (row.created_at as string | null) ??
+        (row.transaction_date as string),
+    });
+  }
+
   items.sort((a, b) => {
     if (a.urgent !== b.urgent) return a.urgent ? -1 : 1;
     const kindDiff = KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
@@ -368,7 +426,9 @@ export async function fetchPendingActions(
       (i) => i.kind === "pago_aprobar" || i.kind === "pago_ejecutar",
     ).length,
     inventario: items.filter((i) => i.kind === "inventario_revisar").length,
-    caja: items.filter((i) => i.kind === "caja_avalar").length,
+    caja: items.filter(
+      (i) => i.kind === "caja_avalar" || i.kind === "caja_ingreso_banco",
+    ).length,
   };
 
   return { items, counts };

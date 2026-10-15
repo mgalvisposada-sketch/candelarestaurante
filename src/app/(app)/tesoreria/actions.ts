@@ -16,6 +16,7 @@ import { formatCOP, hasFundsFor } from "@/lib/money";
 import {
   bankAccountSchema,
   bankBalanceSnapshotSchema,
+  confirmAcquiringBankSettlementSchema,
   reassignBankTransactionAccountSchema,
 } from "@/validations/treasury";
 import {
@@ -476,7 +477,9 @@ export async function createTreasuryTransferAction(
 
   const { data: txRows } = await supabase
     .from("bank_transactions")
-    .select("bank_account_id, transaction_date, debit, credit")
+    .select(
+      "bank_account_id, transaction_date, debit, credit, settlement_status",
+    )
     .eq("organization_id", orgId)
     .eq("bank_account_id", fromId)
     .is("deleted_at", null);
@@ -1000,21 +1003,71 @@ export async function approveCashDailyCloseAction(
       });
     }
     if (cardCredited > 0) {
-      txRows.push({
-        organization_id: orgId,
-        bank_account_id: close.card_account_id,
-        transaction_date: close.business_date,
-        description: `Cierre caja adquirencia ${close.business_date}`,
-        reference: `adquirencia-${close.business_date}`,
-        debit: 0,
-        credit: cardCredited,
-        origin: "tesoreria.caja",
-        category: "INGRESO_ADQUIRENCIA",
-        linked_entity_type: "cash_daily_close",
-        linked_entity_id: closeId,
-        created_by: ctx.userId,
-        updated_by: ctx.userId,
-      });
+      const debitSales = Number(close.card_debit_sales ?? 0);
+      const creditSales = Number(close.card_credit_sales ?? 0);
+      const declaredCard = debitSales + creditSales;
+      const amountsMatch =
+        debitSales > 0 &&
+        creditSales > 0 &&
+        Math.abs(cardCredited - declaredCard) < 0.009;
+
+      if (amountsMatch) {
+        txRows.push({
+          organization_id: orgId,
+          bank_account_id: close.card_account_id,
+          transaction_date: close.business_date,
+          description: `Adquirencia débito ${close.business_date}`,
+          reference: `adquirencia-debito-${close.business_date}`,
+          debit: 0,
+          credit: debitSales,
+          origin: "tesoreria.caja",
+          category: "INGRESO_ADQUIRENCIA",
+          settlement_status: "PENDIENTE_BANCO",
+          linked_entity_type: "cash_daily_close",
+          linked_entity_id: closeId,
+          created_by: ctx.userId,
+          updated_by: ctx.userId,
+        });
+        txRows.push({
+          organization_id: orgId,
+          bank_account_id: close.card_account_id,
+          transaction_date: close.business_date,
+          description: `Adquirencia crédito ${close.business_date}`,
+          reference: `adquirencia-credito-${close.business_date}`,
+          debit: 0,
+          credit: creditSales,
+          origin: "tesoreria.caja",
+          category: "INGRESO_ADQUIRENCIA",
+          settlement_status: "PENDIENTE_BANCO",
+          linked_entity_type: "cash_daily_close",
+          linked_entity_id: closeId,
+          created_by: ctx.userId,
+          updated_by: ctx.userId,
+        });
+      } else {
+        const kindLabel =
+          debitSales > 0 && creditSales <= 0
+            ? "débito"
+            : creditSales > 0 && debitSales <= 0
+              ? "crédito"
+              : "adquirencia";
+        txRows.push({
+          organization_id: orgId,
+          bank_account_id: close.card_account_id,
+          transaction_date: close.business_date,
+          description: `Adquirencia ${kindLabel} ${close.business_date}`,
+          reference: `adquirencia-${close.business_date}`,
+          debit: 0,
+          credit: cardCredited,
+          origin: "tesoreria.caja",
+          category: "INGRESO_ADQUIRENCIA",
+          settlement_status: "PENDIENTE_BANCO",
+          linked_entity_type: "cash_daily_close",
+          linked_entity_id: closeId,
+          created_by: ctx.userId,
+          updated_by: ctx.userId,
+        });
+      }
     }
     if (transferCredited > 0) {
       txRows.push({
@@ -1082,6 +1135,190 @@ export async function approveCashDailyCloseAction(
 
   revalidateTreasuryPaths();
   return { ok: true, id: closeId };
+}
+
+/**
+ * Confirma que un abono de adquirencia ya aparece en el extracto bancario.
+ * Soporta ingreso total o parcial (deja el resto pendiente).
+ */
+export async function confirmAcquiringBankSettlementAction(
+  transactionId: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (
+    !ctxCanAccess(ctx, "tesoreria.caja.avalar") &&
+    !ctxCanAccess(ctx, "tesoreria.cuentas")
+  ) {
+    return {
+      ok: false,
+      error: "Sin permiso para confirmar ingreso de adquirencia",
+    };
+  }
+
+  const parsed = confirmAcquiringBankSettlementSchema.safeParse({
+    amount: formData.get("amount"),
+    transaction_date: formData.get("transaction_date"),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Datos inválidos",
+    };
+  }
+
+  const amount = parseMoney(parsed.data.amount);
+  if (amount === null || amount <= 0) {
+    return { ok: false, error: "Monto inválido" };
+  }
+
+  const supabase = await createClient();
+  const orgId = ctx.organization.id;
+
+  const { data: tx, error: txError } = await supabase
+    .from("bank_transactions")
+    .select(
+      "id, bank_account_id, transaction_date, description, reference, debit, credit, origin, category, settlement_status, linked_entity_type, linked_entity_id",
+    )
+    .eq("id", transactionId)
+    .eq("organization_id", orgId)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (txError) return { ok: false, error: txError.message };
+  if (!tx) return { ok: false, error: "Movimiento no encontrado" };
+  if (tx.category !== "INGRESO_ADQUIRENCIA") {
+    return { ok: false, error: "Solo aplica a ingresos de adquirencia" };
+  }
+  if (tx.settlement_status !== "PENDIENTE_BANCO") {
+    return {
+      ok: false,
+      error: "Este movimiento no está pendiente de ingreso al banco",
+    };
+  }
+
+  const pendingCredit = Number(tx.credit || 0);
+  if (pendingCredit <= 0) {
+    return { ok: false, error: "El movimiento pendiente no tiene crédito" };
+  }
+  if (amount - pendingCredit > 0.009) {
+    return {
+      ok: false,
+      error: `El monto (${formatCOP(amount)}) supera el pendiente (${formatCOP(pendingCredit)}).`,
+    };
+  }
+
+  const now = new Date().toISOString();
+  const bankDate = parsed.data.transaction_date;
+  const isFull = Math.abs(amount - pendingCredit) < 0.009;
+
+  if (isFull) {
+    const { error: updateError } = await supabase
+      .from("bank_transactions")
+      .update({
+        settlement_status: "INGRESADO",
+        transaction_date: bankDate,
+        settled_at: now,
+        updated_by: ctx.userId,
+      })
+      .eq("id", transactionId)
+      .eq("organization_id", orgId);
+
+    if (updateError) return { ok: false, error: updateError.message };
+
+    await supabase.from("audit_logs").insert({
+      organization_id: orgId,
+      user_id: ctx.userId,
+      action: "SETTLE_BANK",
+      entity: "bank_transactions",
+      entity_id: transactionId,
+      old_values: {
+        settlement_status: "PENDIENTE_BANCO",
+        credit: pendingCredit,
+        transaction_date: tx.transaction_date,
+      },
+      new_values: {
+        settlement_status: "INGRESADO",
+        credit: amount,
+        transaction_date: bankDate,
+        kind: "FULL",
+      },
+    });
+
+    revalidateTreasuryPaths();
+    return { ok: true, id: transactionId };
+  }
+
+  const remaining = Number((pendingCredit - amount).toFixed(2));
+  const { error: reduceError } = await supabase
+    .from("bank_transactions")
+    .update({
+      credit: remaining,
+      updated_by: ctx.userId,
+    })
+    .eq("id", transactionId)
+    .eq("organization_id", orgId);
+
+  if (reduceError) return { ok: false, error: reduceError.message };
+
+  const { data: childTx, error: insertError } = await supabase
+    .from("bank_transactions")
+    .insert({
+      organization_id: orgId,
+      bank_account_id: tx.bank_account_id,
+      transaction_date: bankDate,
+      description: tx.description
+        ? `${tx.description} · ingreso parcial`
+        : `Adquirencia ingreso parcial`,
+      reference: tx.reference,
+      debit: 0,
+      credit: amount,
+      origin: tx.origin ?? "tesoreria.caja",
+      category: "INGRESO_ADQUIRENCIA",
+      settlement_status: "INGRESADO",
+      settled_at: now,
+      parent_transaction_id: transactionId,
+      linked_entity_type: tx.linked_entity_type,
+      linked_entity_id: tx.linked_entity_id,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+
+  if (insertError) {
+    await supabase
+      .from("bank_transactions")
+      .update({ credit: pendingCredit, updated_by: ctx.userId })
+      .eq("id", transactionId)
+      .eq("organization_id", orgId);
+    return { ok: false, error: insertError.message };
+  }
+
+  await supabase.from("audit_logs").insert({
+    organization_id: orgId,
+    user_id: ctx.userId,
+    action: "SETTLE_BANK",
+    entity: "bank_transactions",
+    entity_id: childTx.id,
+    old_values: {
+      parent_id: transactionId,
+      settlement_status: "PENDIENTE_BANCO",
+      credit: pendingCredit,
+    },
+    new_values: {
+      settlement_status: "INGRESADO",
+      credit: amount,
+      remaining_pending: remaining,
+      transaction_date: bankDate,
+      kind: "PARTIAL",
+      parent_transaction_id: transactionId,
+    },
+  });
+
+  revalidateTreasuryPaths();
+  return { ok: true, id: childTx.id };
 }
 
 export async function rejectCashDailyCloseAction(
@@ -1177,7 +1414,9 @@ async function availableBalanceOnAccount(
 
   const { data: txRows } = await supabase
     .from("bank_transactions")
-    .select("bank_account_id, transaction_date, debit, credit")
+    .select(
+      "bank_account_id, transaction_date, debit, credit, settlement_status",
+    )
     .eq("organization_id", orgId)
     .eq("bank_account_id", accountId)
     .is("deleted_at", null);

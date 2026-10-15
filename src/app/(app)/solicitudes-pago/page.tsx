@@ -136,7 +136,9 @@ export default async function SolicitudesPagoPage() {
 
     const { data: txRows } = await supabase
       .from("bank_transactions")
-      .select("bank_account_id, transaction_date, debit, credit")
+      .select(
+        "bank_account_id, transaction_date, debit, credit, settlement_status",
+      )
       .eq("organization_id", ctx.organization.id)
       .is("deleted_at", null)
       .in("bank_account_id", bankIds);

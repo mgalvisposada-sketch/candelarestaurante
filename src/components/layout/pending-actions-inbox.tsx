@@ -53,6 +53,11 @@ const KIND_META: Record<
     tone: "bg-[var(--accent)]/15 text-[var(--accent)]",
     short: "Caja",
   },
+  caja_ingreso_banco: {
+    icon: Wallet,
+    tone: "bg-[var(--warn)]/20 text-[var(--warn)]",
+    short: "Banco",
+  },
   pago_aprobar: {
     icon: CreditCard,
     tone: "bg-[var(--warn)]/20 text-[var(--warn)]",

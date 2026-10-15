@@ -25,3 +25,9 @@ export const bankBalanceSnapshotSchema = z.object({
 export const reassignBankTransactionAccountSchema = z.object({
   bank_account_id: z.string().uuid("Elija la cuenta correcta"),
 });
+
+/** Confirma ingreso de adquirencia al banco (total o parcial). */
+export const confirmAcquiringBankSettlementSchema = z.object({
+  amount: z.string().min(1, "El monto es obligatorio"),
+  transaction_date: z.string().min(1, "La fecha del extracto es obligatoria"),
+});
