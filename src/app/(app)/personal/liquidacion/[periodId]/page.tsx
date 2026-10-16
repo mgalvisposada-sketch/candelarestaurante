@@ -17,7 +17,11 @@ import type {
   AttendanceEmployee,
   AttendanceRow,
 } from "../attendance-grid-client";
-import type { SlipEmployee, SlipOrg } from "../payroll-slips-client";
+import type {
+  SlipEmployee,
+  SlipOrg,
+  SlipPaymentRequest,
+} from "../payroll-slips-client";
 import type { AttendanceDayKind } from "@/lib/payroll";
 
 export default async function LiquidacionDetailPage({
@@ -89,6 +93,32 @@ export default async function LiquidacionDetailPage({
     ]);
 
   if (!period) notFound();
+
+  const lineIds = (lines ?? []).map((l) => l.id);
+  const paymentRequestsByLineId: Record<string, SlipPaymentRequest> = {};
+  if (lineIds.length > 0) {
+    const { data: payReqs } = await supabase
+      .from("payment_requests")
+      .select("id, status, document_number")
+      .eq("organization_id", ctx.organization.id)
+      .eq("document_type", "COLILLA")
+      .in("document_number", lineIds)
+      .is("deleted_at", null)
+      .in("status", [
+        "BORRADOR",
+        "EN_REVISION",
+        "APROBADA",
+        "EN_COLA_PAGO",
+        "PAGADA",
+      ]);
+    for (const pr of payReqs ?? []) {
+      if (!pr.document_number) continue;
+      paymentRequestsByLineId[pr.document_number] = {
+        id: pr.id,
+        status: pr.status,
+      };
+    }
+  }
 
   const employeeRows = (employees ?? []) as Array<{
     id: string;
@@ -175,6 +205,7 @@ export default async function LiquidacionDetailPage({
           attendanceRows={attendanceRows}
           organization={organization}
           employeesById={employeesById}
+          paymentRequestsByLineId={paymentRequestsByLineId}
         />
       </main>
     </>

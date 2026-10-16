@@ -14,6 +14,7 @@ import {
   expenseCategorySchema,
   expenseSchema,
   shiftLiquidationExpenseSchema,
+  tipLiquidationExpenseSchema,
 } from "@/validations/expenses";
 import type { ActionResult } from "../empresa/actions";
 
@@ -56,6 +57,17 @@ function canCreateShiftLiquidation(
   return (
     ctxCanAccess(ctx, "gastos.liquidacion-turno") ||
     ctxCanAccess(ctx, "personal.liquidacion")
+  );
+}
+
+function canCreateTipLiquidation(
+  ctx: NonNullable<Awaited<ReturnType<typeof getOrgContext>>>,
+) {
+  return (
+    ctxCanAccess(ctx, "gastos.liquidacion-propina") ||
+    ctxCanAccess(ctx, "gastos.registro") ||
+    ctxCanAccess(ctx, "gastos") ||
+    ctxCanAccess(ctx, "tesoreria")
   );
 }
 
@@ -352,6 +364,19 @@ export async function softDeleteExpenseAction(
   const supabase = await createClient();
   const now = new Date().toISOString();
 
+  const { data: existing, error: loadErr } = await supabase
+    .from("expenses")
+    .select("id, expense_kind, employee_id, shift_dates, status")
+    .eq("id", expenseId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (loadErr) return { ok: false, error: loadErr.message };
+  if (!existing) return { ok: false, error: "Gasto no encontrado" };
+  if (existing.status === "PAGADO") {
+    return { ok: false, error: "No se puede anular un gasto ya pagado" };
+  }
+
   const { error } = await supabase
     .from("expenses")
     .update({
@@ -375,7 +400,26 @@ export async function softDeleteExpenseAction(
     .neq("status", "PAGADA")
     .neq("status", "ANULADA");
 
+  // Liberar días del prestador para poder volver a liquidarlos.
+  if (
+    existing.expense_kind === "LIQUIDACION_TURNO" &&
+    existing.employee_id &&
+    Array.isArray(existing.shift_dates) &&
+    existing.shift_dates.length > 0
+  ) {
+    await supabase
+      .from("shift_novelties")
+      .update({ status: "ANULADA", updated_by: ctx.userId })
+      .eq("organization_id", ctx.organization.id)
+      .eq("employee_id", existing.employee_id)
+      .eq("novelty_type", "TURNO_LABORADO")
+      .in("novelty_date", existing.shift_dates as string[])
+      .is("deleted_at", null)
+      .neq("status", "ANULADA");
+  }
+
   revalidateExpensePaths();
+  revalidatePath("/personal/novedades");
   return { ok: true, id: expenseId };
 }
 
@@ -449,28 +493,65 @@ export async function createShiftLiquidationExpenseAction(
     };
   }
 
-  const { data: moneyNovelties, error: moneyErr } = await supabase
-    .from("shift_novelties")
-    .select("novelty_type, amount")
+  // Días ya liquidados en otro gasto (activo) del mismo prestador.
+  const { data: priorExpenses, error: priorErr } = await supabase
+    .from("expenses")
+    .select("id, shift_dates, period_year, period_month, period_half")
     .eq("organization_id", orgId)
     .eq("employee_id", parsed.data.employee_id)
-    .eq("status", "APROBADA")
+    .eq("expense_kind", "LIQUIDACION_TURNO")
     .is("deleted_at", null)
-    .in("novelty_type", ["ANTICIPO", "DESCUENTO_AUTORIZADO", "BONO_OCASIONAL"])
-    .gte("novelty_date", range.startIso)
-    .lte("novelty_date", range.endIso);
-  if (moneyErr) return { ok: false, error: moneyErr.message };
+    .neq("status", "ANULADO");
+  if (priorErr) return { ok: false, error: priorErr.message };
 
+  const alreadyLiquidated = new Set<string>();
+  let hasPriorInSamePeriod = false;
+  for (const row of priorExpenses ?? []) {
+    if (
+      row.period_year === parsed.data.period_year &&
+      row.period_month === parsed.data.period_month &&
+      row.period_half === parsed.data.period_half
+    ) {
+      hasPriorInSamePeriod = true;
+    }
+    for (const d of (row.shift_dates as string[] | null) ?? []) {
+      alreadyLiquidated.add(String(d));
+    }
+  }
+
+  const overlap = selectedDates.filter((d) => alreadyLiquidated.has(d));
+  if (overlap.length > 0) {
+    return {
+      ok: false,
+      error: `Estos días ya están liquidados: ${overlap.join(", ")}`,
+    };
+  }
+
+  // Anticipos/bonos/descuentos solo en la primera liquidación de la quincena.
   let advances = money(0);
   let discounts = money(0);
   let bonuses = money(0);
-  for (const n of moneyNovelties ?? []) {
-    const amt = money(Number(n.amount ?? 0));
-    if (n.novelty_type === "ANTICIPO") advances = advances.plus(amt);
-    else if (n.novelty_type === "DESCUENTO_AUTORIZADO") {
-      discounts = discounts.plus(amt);
-    } else if (n.novelty_type === "BONO_OCASIONAL") {
-      bonuses = bonuses.plus(amt);
+  if (!hasPriorInSamePeriod) {
+    const { data: moneyNovelties, error: moneyErr } = await supabase
+      .from("shift_novelties")
+      .select("novelty_type, amount")
+      .eq("organization_id", orgId)
+      .eq("employee_id", parsed.data.employee_id)
+      .eq("status", "APROBADA")
+      .is("deleted_at", null)
+      .in("novelty_type", ["ANTICIPO", "DESCUENTO_AUTORIZADO", "BONO_OCASIONAL"])
+      .gte("novelty_date", range.startIso)
+      .lte("novelty_date", range.endIso);
+    if (moneyErr) return { ok: false, error: moneyErr.message };
+
+    for (const n of moneyNovelties ?? []) {
+      const amt = money(Number(n.amount ?? 0));
+      if (n.novelty_type === "ANTICIPO") advances = advances.plus(amt);
+      else if (n.novelty_type === "DESCUENTO_AUTORIZADO") {
+        discounts = discounts.plus(amt);
+      } else if (n.novelty_type === "BONO_OCASIONAL") {
+        bonuses = bonuses.plus(amt);
+      }
     }
   }
 
@@ -486,8 +567,12 @@ export async function createShiftLiquidationExpenseAction(
   }
 
   const periodLabel = `${half === 1 ? "1ª" : "2ª"} quincena ${String(parsed.data.period_month).padStart(2, "0")}/${parsed.data.period_year}`;
+  const datesLabel = selectedDates
+    .map((d) => d.slice(8, 10) + "/" + d.slice(5, 7))
+    .join(", ");
   const concept = `Liquidación por turno · ${emp.full_name} · ${periodLabel}`;
   const detailNotes = [
+    `días ${datesLabel}`,
     `${selectedDates.length} día(s) × ${rate}`,
     bonuses.gt(0) ? `bonos $${bonuses.toDecimalPlaces(2).toNumber()}` : null,
     advances.gt(0)
@@ -502,26 +587,19 @@ export async function createShiftLiquidationExpenseAction(
 
   const { data: existingShifts, error: existingErr } = await supabase
     .from("shift_novelties")
-    .select("id, novelty_date, status")
+    .select("id, novelty_date")
     .eq("organization_id", orgId)
     .eq("employee_id", parsed.data.employee_id)
     .eq("novelty_type", "TURNO_LABORADO")
-    .gte("novelty_date", range.startIso)
-    .lte("novelty_date", range.endIso)
+    .in("novelty_date", selectedDates)
     .is("deleted_at", null)
     .in("status", ["PENDIENTE", "APROBADA"]);
   if (existingErr) return { ok: false, error: existingErr.message };
 
-  const activeByDate = new Map<string, string>();
-  for (const row of existingShifts ?? []) {
-    const date = String(row.novelty_date);
-    if (!activeByDate.has(date)) activeByDate.set(date, row.id as string);
-  }
-  const selectedSet = new Set(selectedDates);
+  const activeByDate = new Set(
+    (existingShifts ?? []).map((row) => String(row.novelty_date)),
+  );
   const toCreate = selectedDates.filter((d) => !activeByDate.has(d));
-  const toAnnul = [...activeByDate.entries()]
-    .filter(([date]) => !selectedSet.has(date))
-    .map(([, id]) => id);
 
   const now = new Date().toISOString();
   if (toCreate.length > 0) {
@@ -542,15 +620,15 @@ export async function createShiftLiquidationExpenseAction(
         updated_by: ctx.userId,
       })),
     );
-    if (insertShiftErr) return { ok: false, error: insertShiftErr.message };
-  }
-  if (toAnnul.length > 0) {
-    const { error: annulErr } = await supabase
-      .from("shift_novelties")
-      .update({ status: "ANULADA", updated_by: ctx.userId })
-      .eq("organization_id", orgId)
-      .in("id", toAnnul);
-    if (annulErr) return { ok: false, error: annulErr.message };
+    if (insertShiftErr) {
+      if (insertShiftErr.code === "23505") {
+        return {
+          ok: false,
+          error: "Uno o más días ya tienen turno registrado para este prestador",
+        };
+      }
+      return { ok: false, error: insertShiftErr.message };
+    }
   }
 
   const { data, error } = await supabase
@@ -574,6 +652,7 @@ export async function createShiftLiquidationExpenseAction(
       period_month: parsed.data.period_month,
       period_half: parsed.data.period_half,
       period: periodLabel,
+      shift_dates: selectedDates,
       created_by: ctx.userId,
       updated_by: ctx.userId,
     })
@@ -584,7 +663,7 @@ export async function createShiftLiquidationExpenseAction(
     if (error.code === "23505") {
       return {
         ok: false,
-        error: "Ya existe una liquidación por turno para ese empleado y quincena",
+        error: "Conflicto al guardar la liquidación (día o período duplicado)",
       };
     }
     return { ok: false, error: error.message };
@@ -628,5 +707,138 @@ export async function createShiftLiquidationExpenseAction(
 
   revalidateExpensePaths();
   revalidatePath("/personal/novedades");
+  return { ok: true, id: data.id };
+}
+
+/** Liquidación de propinas: monto desde caja/tesorería + días cubiertos (sin repetir). */
+export async function createTipLiquidationExpenseAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!canCreateTipLiquidation(ctx)) {
+    return { ok: false, error: "Sin permiso para liquidar propinas" };
+  }
+
+  const parsed = tipLiquidationExpenseSchema.safeParse({
+    dates: formData.getAll("dates").map(String),
+    expense_date: formData.get("expense_date") || todayInBogota(),
+    amount: formData.get("amount"),
+    category_id: formData.get("category_id"),
+    priority: formData.get("priority") || "NORMAL",
+    notes: formData.get("notes"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const selectedDates = [...new Set(parsed.data.dates)].sort();
+  if (selectedDates.length === 0) {
+    return { ok: false, error: "Marque al menos un día de propina" };
+  }
+
+  const amount = parseMoney(parsed.data.amount);
+  if (amount === null || amount <= 0) {
+    return { ok: false, error: "Monto inválido" };
+  }
+
+  const orgId = ctx.organization.id;
+  const supabase = await createClient();
+
+  const { data: priorTips, error: priorErr } = await supabase
+    .from("expenses")
+    .select("id, shift_dates")
+    .eq("organization_id", orgId)
+    .eq("expense_kind", "LIQUIDACION_PROPINA")
+    .is("deleted_at", null)
+    .neq("status", "ANULADO");
+  if (priorErr) return { ok: false, error: priorErr.message };
+
+  const alreadyCovered = new Set<string>();
+  for (const row of priorTips ?? []) {
+    for (const d of (row.shift_dates as string[] | null) ?? []) {
+      alreadyCovered.add(String(d));
+    }
+  }
+  const overlap = selectedDates.filter((d) => alreadyCovered.has(d));
+  if (overlap.length > 0) {
+    return {
+      ok: false,
+      error: `Estos días ya están en otra liquidación de propina: ${overlap.join(", ")}`,
+    };
+  }
+
+  const datesLabel = selectedDates
+    .map((d) => d.slice(8, 10) + "/" + d.slice(5, 7))
+    .join(", ");
+  const concept = `Liquidación de propina · ${selectedDates.length} día(s)`;
+  const notes = [
+    `días ${datesLabel}`,
+    emptyToNull(parsed.data.notes),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const { data, error } = await supabase
+    .from("expenses")
+    .insert({
+      organization_id: orgId,
+      expense_date: parsed.data.expense_date,
+      supplier_id: null,
+      category_id: emptyToNull(parsed.data.category_id),
+      concept,
+      amount,
+      tax_amount: 0,
+      total_amount: amount,
+      nature: "UNICO",
+      criticality: "ESENCIAL",
+      status: "APROBADO",
+      shared_service: false,
+      expense_kind: "LIQUIDACION_PROPINA",
+      shift_dates: selectedDates,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+
+  if (error) return { ok: false, error: error.message };
+
+  const { error: payError } = await supabase.from("payment_requests").insert({
+    organization_id: orgId,
+    source: "GASTO",
+    status: "EN_REVISION",
+    priority: parsed.data.priority ?? "NORMAL",
+    concept,
+    amount,
+    requested_at: parsed.data.expense_date,
+    due_date: null,
+    supplier_id: null,
+    expense_id: data.id,
+    document_type: "CUENTA_DE_COBRO",
+    document_number: null,
+    issue_date: parsed.data.expense_date,
+    notes,
+    requested_by: ctx.userId,
+    created_by: ctx.userId,
+    updated_by: ctx.userId,
+  });
+  if (payError) return { ok: false, error: payError.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: orgId,
+    user_id: ctx.userId,
+    action: "CREATE",
+    entity: "expenses",
+    entity_id: data.id,
+    new_values: {
+      payment_request_source: "GASTO",
+      expense_kind: "LIQUIDACION_PROPINA",
+      dates: selectedDates,
+      total: amount,
+    },
+  });
+
+  revalidateExpensePaths();
   return { ok: true, id: data.id };
 }

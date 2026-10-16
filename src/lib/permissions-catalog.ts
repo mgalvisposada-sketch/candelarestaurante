@@ -159,6 +159,10 @@ export const APP_MODULES: AppModuleDef[] = [
         key: "gastos.liquidacion-turno",
         label: "Liquidación de prestadores por turno",
       },
+      {
+        key: "gastos.liquidacion-propina",
+        label: "Liquidación de propina",
+      },
     ],
   },
   {

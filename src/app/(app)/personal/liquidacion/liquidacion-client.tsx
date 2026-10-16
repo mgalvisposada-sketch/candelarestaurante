@@ -22,6 +22,7 @@ import {
   PayrollSlipsSection,
   type SlipEmployee,
   type SlipOrg,
+  type SlipPaymentRequest,
 } from "./payroll-slips-client";
 
 const inputClass =
@@ -171,6 +172,7 @@ export function PeriodDetailClient({
   attendanceRows,
   organization,
   employeesById,
+  paymentRequestsByLineId = {},
 }: {
   period: PeriodRow;
   lines: LineRow[];
@@ -178,6 +180,7 @@ export function PeriodDetailClient({
   attendanceRows: AttendanceRow[];
   organization: SlipOrg;
   employeesById: Record<string, SlipEmployee>;
+  paymentRequestsByLineId?: Record<string, SlipPaymentRequest>;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -432,6 +435,7 @@ export function PeriodDetailClient({
           period={period}
           lines={lines}
           employeesById={employeesById}
+          paymentRequestsByLineId={paymentRequestsByLineId}
         />
       ) : null}
 

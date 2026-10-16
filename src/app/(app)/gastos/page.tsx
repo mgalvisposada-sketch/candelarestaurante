@@ -21,6 +21,7 @@ import { GastosNav } from "./gastos-nav";
 import {
   CreateExpenseForm,
   CreateShiftLiquidationForm,
+  CreateTipLiquidationForm,
   ExpenseList,
   type CategoryRow,
   type ExpenseRow,
@@ -51,6 +52,11 @@ export default async function GastosPage() {
   const canShiftLiquidation =
     ctxCanAccess(ctx, "gastos.liquidacion-turno") ||
     ctxCanAccess(ctx, "personal.liquidacion");
+  const canTipLiquidation =
+    ctxCanAccess(ctx, "gastos.liquidacion-propina") ||
+    ctxCanAccess(ctx, "gastos.registro") ||
+    ctxCanAccess(ctx, "gastos") ||
+    ctxCanAccess(ctx, "tesoreria");
   const supabase = await createClient();
   const [{ data: catRows }, { data: expRows }, { data: supRows }, { data: shiftEmpRows }] =
     await Promise.all([
@@ -63,7 +69,7 @@ export default async function GastosPage() {
       supabase
         .from("expenses")
         .select(
-          "id, expense_date, concept, amount, tax_amount, total_amount, nature, criticality, status, category_id, supplier_id, shared_service, expense_kind, employee_id, period_year, period_month, period_half",
+          "id, expense_date, concept, amount, tax_amount, total_amount, nature, criticality, status, category_id, supplier_id, shared_service, expense_kind, employee_id, period_year, period_month, period_half, shift_dates",
         )
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
@@ -105,6 +111,34 @@ export default async function GastosPage() {
     .filter((e) => e.status === "APROBADO" || e.status === "BORRADOR")
     .reduce((acc, e) => acc.plus(money(e.total_amount)), money(0));
 
+  const liquidatedDatesByEmployee: Record<string, string[]> = {};
+  for (const e of expenses) {
+    if (
+      e.expense_kind !== "LIQUIDACION_TURNO" ||
+      e.status === "ANULADO" ||
+      !e.employee_id ||
+      !Array.isArray(e.shift_dates)
+    ) {
+      continue;
+    }
+    const list = liquidatedDatesByEmployee[e.employee_id] ?? [];
+    for (const d of e.shift_dates) list.push(String(d));
+    liquidatedDatesByEmployee[e.employee_id] = list;
+  }
+
+  const tipLiquidatedDates = [
+    ...new Set(
+      expenses
+        .filter(
+          (e) =>
+            e.expense_kind === "LIQUIDACION_PROPINA" &&
+            e.status !== "ANULADO" &&
+            Array.isArray(e.shift_dates),
+        )
+        .flatMap((e) => (e.shift_dates ?? []).map(String)),
+    ),
+  ];
+
   return (
     <>
       <AppHeader
@@ -119,7 +153,7 @@ export default async function GastosPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Gastos operativos"
-            description="Facturas y cuentas de cobro operativas. Solo aparecen proveedores marcados como “Proveedor de gastos” en el maestro. Clasifique, envíe a Solicitudes de pago (aval de gerencia) y pague desde caja o banco. Los prestadores por turno se liquidan aquí, no en nómina."
+            description="Facturas y cuentas de cobro operativas. Solo aparecen proveedores marcados como “Proveedor de gastos” en el maestro. Clasifique, envíe a Solicitudes de pago (aval de gerencia) y pague desde caja o banco. Aquí también se liquidan prestadores por turno y propinas (con control de días)."
           />
           <div className="flex flex-wrap gap-2">
             <Link
@@ -173,6 +207,22 @@ export default async function GastosPage() {
               <CreateShiftLiquidationForm
                 categories={categories}
                 employees={shiftEmployees}
+                liquidatedDatesByEmployee={liquidatedDatesByEmployee}
+                embedded
+              />
+            </WorkSection>
+          ) : null}
+
+          {canTipLiquidation ? (
+            <WorkSection
+              kind="form"
+              title="Liquidación de propina"
+              description="Valor a entregar al personal (caja/tesorería) con los días que cubre."
+              defaultOpen={false}
+            >
+              <CreateTipLiquidationForm
+                categories={categories}
+                liquidatedDates={tipLiquidatedDates}
                 embedded
               />
             </WorkSection>

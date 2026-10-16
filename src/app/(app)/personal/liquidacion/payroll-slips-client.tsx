@@ -1,8 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO } from "@/lib/dates";
+import { sendPayrollLineToPaymentRequestAction } from "../payroll-ops-actions";
 
 export type SlipEmployee = {
   id: string;
@@ -49,6 +52,11 @@ export type SlipLine = {
   earnings_total: number | string;
   deductions_total: number | string;
   snapshot: Record<string, unknown> | null;
+};
+
+export type SlipPaymentRequest = {
+  id: string;
+  status: string;
 };
 
 type Snap = {
@@ -522,18 +530,39 @@ function PayrollSlipSheet({
   );
 }
 
+function paymentStatusLabel(status: string) {
+  const map: Record<string, string> = {
+    BORRADOR: "Borrador",
+    EN_REVISION: "Por aprobar",
+    APROBADA: "Aprobada",
+    EN_COLA_PAGO: "Por pagar",
+    PAGADA: "Pagada",
+    RECHAZADA: "Rechazada",
+    ANULADA: "Anulada",
+  };
+  return map[status] ?? status;
+}
+
 export function PayrollSlipsSection({
   organization,
   period,
   lines,
   employeesById,
+  paymentRequestsByLineId = {},
 }: {
   organization: SlipOrg;
   period: SlipPeriod;
   lines: SlipLine[];
   employeesById: Record<string, SlipEmployee>;
+  /** Solicitudes activas indexadas por payroll_period_lines.id */
+  paymentRequestsByLineId?: Record<string, SlipPaymentRequest>;
 }) {
+  const router = useRouter();
   const [focusId, setFocusId] = useState<string | null>(null);
+  const [pendingLineId, setPendingLineId] = useState<string | null>(null);
+  const [payError, setPayError] = useState<string | null>(null);
+  const [payOk, setPayOk] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
 
   useEffect(() => {
     const clearFocus = () => setFocusId(null);
@@ -781,28 +810,113 @@ export function PayrollSlipsSection({
         </p>
       ) : null}
 
-      <div className="no-print space-y-2">
-        {lines.map((line) => (
-          <div
-            key={line.id}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-white px-4 py-3"
+      {isOfficial ? (
+        <p className="no-print rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--muted)]">
+          Envíe cada neto a{" "}
+          <Link
+            href="/solicitudes-pago"
+            className="underline underline-offset-2 hover:text-[var(--ink)]"
           >
-            <div className="min-w-0">
-              <p className="font-medium">{line.employee_name}</p>
-              <p className="text-sm text-[var(--muted)]">
-                {line.position_title || "Sin cargo"} · Neto{" "}
-                {formatCOP(line.net_pay)}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm hover:border-[var(--ink)]"
-              onClick={() => printOne(line.employee_id)}
+            Solicitudes de pago
+          </Link>{" "}
+          para aval y desembolso (banco/caja). El monto es el neto de la colilla.
+        </p>
+      ) : null}
+      {payError ? (
+        <p className="no-print rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+          {payError}
+        </p>
+      ) : null}
+      {payOk ? (
+        <p className="no-print rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          {payOk}{" "}
+          <Link
+            href="/solicitudes-pago"
+            className="underline underline-offset-2"
+          >
+            Ir a solicitudes →
+          </Link>
+        </p>
+      ) : null}
+
+      <div className="no-print space-y-2">
+        {lines.map((line) => {
+          const payReq = paymentRequestsByLineId[line.id];
+          const net = Number(line.net_pay || 0);
+          return (
+            <div
+              key={line.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-white px-4 py-3"
             >
-              Imprimir colilla
-            </button>
-          </div>
-        ))}
+              <div className="min-w-0">
+                <p className="font-medium">{line.employee_name}</p>
+                <p className="text-sm text-[var(--muted)]">
+                  {line.position_title || "Sin cargo"} · Neto{" "}
+                  {formatCOP(line.net_pay)}
+                </p>
+                {payReq ? (
+                  <p className="mt-1 text-xs text-emerald-800">
+                    Solicitud {paymentStatusLabel(payReq.status)}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm hover:border-[var(--ink)]"
+                  onClick={() => printOne(line.employee_id)}
+                >
+                  Imprimir colilla
+                </button>
+                {isOfficial ? (
+                  payReq ? (
+                    <Link
+                      href="/solicitudes-pago"
+                      className="rounded-lg border border-emerald-700 px-3 py-2 text-sm text-emerald-900 hover:bg-emerald-50"
+                    >
+                      Ver en pagos
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={pending || net <= 0}
+                      className="rounded-lg bg-[var(--solid)] px-3 py-2 text-sm text-[var(--on-solid)] disabled:opacity-50"
+                      onClick={() => {
+                        if (
+                          !confirm(
+                            `¿Enviar a Solicitudes de pago?\n\n${line.employee_name}\nNeto: ${formatCOP(net)}`,
+                          )
+                        )
+                          return;
+                        setPayError(null);
+                        setPayOk(null);
+                        setPendingLineId(line.id);
+                        startTransition(async () => {
+                          const r = await sendPayrollLineToPaymentRequestAction(
+                            line.id,
+                          );
+                          setPendingLineId(null);
+                          if (!r.ok) {
+                            setPayError(r.error ?? "No se pudo enviar");
+                            return;
+                          }
+                          setPayOk(
+                            `Solicitud creada por ${formatCOP(net)} · ${line.employee_name}.`,
+                          );
+                          router.refresh();
+                        });
+                      }}
+                    >
+                      {pending && pendingLineId === line.id
+                        ? "Enviando…"
+                        : "Enviar a solicitud de pago"}
+                    </button>
+                  )
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="print-only print-root space-y-8">

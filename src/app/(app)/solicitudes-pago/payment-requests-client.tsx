@@ -79,12 +79,26 @@ const inputClass =
 
 type QueueKey = "review" | "pay" | "history";
 
-function sourceMeta(source: string) {
+function sourceMeta(
+  source: string,
+  extras?: { document_type?: string | null; concept?: string | null },
+) {
   if (source === "FACTURA_PROVEEDOR") {
     return { label: "Costo / CxP", tone: "info" as const, href: "/proveedores/cxp" };
   }
   if (source === "GASTO") {
     return { label: "Gasto", tone: "accent" as const, href: "/gastos" };
+  }
+  if (
+    source === "NOMINA" ||
+    extras?.document_type === "COLILLA" ||
+    (extras?.concept ?? "").startsWith("Nómina ")
+  ) {
+    return {
+      label: "Nómina",
+      tone: "ok" as const,
+      href: "/personal/liquidacion",
+    };
   }
   return { label: "Interna", tone: "neutral" as const, href: null };
 }
@@ -702,7 +716,10 @@ function RequestCard({
   const [pending, startTransition] = useTransition();
   const [payOpen, setPayOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const source = sourceMeta(request.source);
+  const source = sourceMeta(request.source, {
+    document_type: request.document_type,
+    concept: request.concept,
+  });
   const overdue = isOverdue(request.due_date, request.status);
   const inReview = queue === "review";
   const inPayQueue = queue === "pay";

@@ -548,6 +548,64 @@ describe("planilla de asistencia", () => {
     expect(att.overtimePay).toBeGreaterThan(0);
   });
 
+  it("compensa faltante con extras de la misma semana", () => {
+    // Capacidad 7h. Mar 4,5h (faltante 2,5h) + Mié 8h (extra 1h) → compensa 1h, descuenta 1,5h
+    const days: AttendanceDayInput[] = [
+      {
+        employeeId: "e1",
+        workDate: "2026-10-06",
+        dayKind: "LABORADO",
+        entryTime: "18:00",
+        exitTime: "23:00",
+        breakMinutes: 30,
+      },
+      {
+        employeeId: "e1",
+        workDate: "2026-10-07",
+        dayKind: "LABORADO",
+        entryTime: "15:00",
+        exitTime: "23:30",
+        breakMinutes: 30,
+      },
+    ];
+    const att = computeAttendanceHours({
+      days,
+      employee: empSchedule,
+      candela: candelaRestaurant,
+      legal: legalBase,
+      hourValue: ordinaryHourValue(1_750_905, 42),
+    });
+    expect(att.overtimeMinutes).toBe(0);
+    expect(att.unpaidMinutes).toBe(90); // 2,5h faltante − 1h compensada
+    expect(
+      att.notes.some((n) => n.includes("compensados con extras")),
+    ).toBe(true);
+  });
+
+  it("faltante sin extras de la semana se descuenta", () => {
+    const days: AttendanceDayInput[] = [
+      {
+        employeeId: "e1",
+        workDate: "2026-10-06",
+        dayKind: "LABORADO",
+        entryTime: "18:00",
+        exitTime: "23:00",
+        breakMinutes: 30,
+      },
+    ];
+    // 18–23 − 30 = 4,5h; capacidad 7h → faltante 2,5h = 150 min
+    const att = computeAttendanceHours({
+      days,
+      employee: empSchedule,
+      candela: candelaRestaurant,
+      legal: legalBase,
+      hourValue: ordinaryHourValue(1_750_905, 42),
+    });
+    expect(att.overtimeMinutes).toBe(0);
+    expect(att.unpaidMinutes).toBe(150);
+    expect(att.unpaidTimeDiscount).toBeGreaterThan(0);
+  });
+
   it("con planilla ANTICIPO descuenta y HORA_EXTRA no duplica", () => {
     const seeded = buildAttendanceSeedRows({
       year: 2026,

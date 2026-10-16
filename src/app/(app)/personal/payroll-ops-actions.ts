@@ -55,6 +55,138 @@ function revalidateAll(extra?: string) {
   if (extra) revalidatePath(extra);
 }
 
+function periodHalfLabel(half: number) {
+  return half === 1 ? "1ª" : "2ª";
+}
+
+/** Envía el neto de una línea emitida a Solicitudes de pago. */
+export async function sendPayrollLineToPaymentRequestAction(
+  periodLineId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "personal.liquidacion")) {
+    return { ok: false, error: "Sin permiso de liquidación" };
+  }
+
+  const orgId = ctx.organization.id;
+  const supabase = await createClient();
+
+  const { data: line, error: lineErr } = await supabase
+    .from("payroll_period_lines")
+    .select(
+      "id, period_id, employee_id, employee_name, position_title, net_pay, deleted_at",
+    )
+    .eq("id", periodLineId)
+    .eq("organization_id", orgId)
+    .maybeSingle();
+  if (lineErr) return { ok: false, error: lineErr.message };
+  if (!line || line.deleted_at) {
+    return { ok: false, error: "Línea de liquidación no encontrada" };
+  }
+
+  const net = Number(line.net_pay ?? 0);
+  if (!(net > 0)) {
+    return { ok: false, error: "El neto a pagar debe ser mayor a cero" };
+  }
+
+  const { data: period, error: periodErr } = await supabase
+    .from("payroll_periods")
+    .select(
+      "id, period_year, period_month, period_half, period_start, period_end, status, emitted_at",
+    )
+    .eq("id", line.period_id)
+    .eq("organization_id", orgId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (periodErr) return { ok: false, error: periodErr.message };
+  if (!period) return { ok: false, error: "Periodo no encontrado" };
+  if (period.status !== "EMITIDA" && period.status !== "CERRADA") {
+    return {
+      ok: false,
+      error: "Solo se puede enviar a pago una liquidación emitida",
+    };
+  }
+
+  // Idempotencia sin columna dedicada: document_type=COLILLA + document_number=line.id
+  const { data: existing } = await supabase
+    .from("payment_requests")
+    .select("id, status")
+    .eq("organization_id", orgId)
+    .eq("document_type", "COLILLA")
+    .eq("document_number", line.id)
+    .is("deleted_at", null)
+    .in("status", [
+      "BORRADOR",
+      "EN_REVISION",
+      "APROBADA",
+      "EN_COLA_PAGO",
+      "PAGADA",
+    ])
+    .maybeSingle();
+  if (existing) {
+    return {
+      ok: false,
+      error: `Ya existe una solicitud de pago (${existing.status}). Revísela en Solicitudes de pago.`,
+      id: existing.id,
+    };
+  }
+
+  const mm = String(period.period_month).padStart(2, "0");
+  const concept = `Nómina ${periodHalfLabel(period.period_half)} quincena ${mm}/${period.period_year} · ${line.employee_name}`;
+  const requestedAt = String(period.period_end).slice(0, 10);
+
+  // Fuente SOLICITUD_INTERNA: no crea gasto; el pago se ejecuta en Solicitudes de pago.
+  // Cuando exista el enum NOMINA + payroll_period_line_id (migración), se puede migrar.
+  const { data: created, error: payError } = await supabase
+    .from("payment_requests")
+    .insert({
+      organization_id: orgId,
+      source: "SOLICITUD_INTERNA",
+      status: "EN_REVISION",
+      priority: "NORMAL",
+      concept,
+      amount: net,
+      requested_at: requestedAt,
+      due_date: null,
+      supplier_id: null,
+      expense_id: null,
+      document_type: "COLILLA",
+      document_number: line.id,
+      issue_date: requestedAt,
+      notes: `Liquidación personal ${period.id}. Empleado ${line.employee_name}${
+        line.position_title ? ` (${line.position_title})` : ""
+      }. Neto colilla.`,
+      requested_by: ctx.userId,
+      created_by: ctx.userId,
+      updated_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+  if (payError) return { ok: false, error: payError.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: orgId,
+    user_id: ctx.userId,
+    action: "CREATE",
+    entity: "payment_requests",
+    entity_id: created.id,
+    new_values: {
+      payment_request_source: "SOLICITUD_INTERNA",
+      origin: "NOMINA_COLILLA",
+      payroll_period_line_id: line.id,
+      period_id: period.id,
+      employee_id: line.employee_id,
+      amount: net,
+    },
+  });
+
+  revalidateAll(`/personal/liquidacion/${period.id}`);
+  revalidatePath("/solicitudes-pago");
+  revalidatePath("/inicio");
+  return { ok: true, id: created.id };
+}
+
 // ----- Cargos -----
 
 export async function upsertJobPositionAction(

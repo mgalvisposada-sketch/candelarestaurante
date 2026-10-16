@@ -50,6 +50,15 @@ function isoDateUtc(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Lunes (UTC) de la semana calendario lun–dom de una fecha ISO. */
+function weekMondayKey(isoDate: string): string {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  const dow = d.getUTCDay(); // 0=dom … 6=sáb
+  const mondayOffset = dow === 0 ? -6 : 1 - dow;
+  d.setUTCDate(d.getUTCDate() + mondayOffset);
+  return isoDateUtc(d);
+}
+
 /** Precarga filas de planilla desde Horario Candela (+ horario empleado). */
 export function buildAttendanceSeedRows(input: {
   year: number;
@@ -131,9 +140,25 @@ function allocateDayNight(
   return { day, night };
 }
 
+type DayWorkSlice = {
+  workDate: string;
+  dayKind: AttendanceDayKind;
+  isSundayOrHoliday: boolean;
+  ordinaryDay: number;
+  ordinaryNight: number;
+  otMins: number;
+  otDay: number;
+  otNight: number;
+  faltante: number;
+  otPct: number;
+};
+
 /**
  * Horas/recargos/extras desde planilla de asistencia (fuente de verdad).
- * Capacidad ordinaria = jornada Candela/empleado (net); exceso = extra; faltante en LABORADO = no laborado.
+ * Capacidad ordinaria = jornada Candela/empleado (net).
+ * Exceso = extra; faltante en LABORADO se compensa con extras de la misma
+ * semana (lun–dom), días más antiguos primero (jornada flexible art. 161 CST).
+ * Solo el faltante no compensado se descuenta del salario.
  */
 export function computeAttendanceHours(input: {
   days: AttendanceDayInput[];
@@ -151,19 +176,13 @@ export function computeAttendanceHours(input: {
     resolved.breakMinutes,
   );
 
-  let ordinaryDayMinutes = 0;
-  let ordinaryNightMinutes = 0;
-  let sundayDayMinutes = 0;
-  let sundayNightMinutes = 0;
   let workedDays = 0;
   let sundayDays = 0;
   let holidayWorkedDays = 0;
   let restDays = 0;
-  let unpaidMinutes = 0;
-  let overtimeMinutes = 0;
-  let overtimePay = money(0);
   let netWorkedMinutes = 0;
   const notes: string[] = [];
+  const slices: DayWorkSlice[] = [];
 
   const sorted = [...input.days].sort((a, b) =>
     a.workDate.localeCompare(b.workDate),
@@ -208,22 +227,18 @@ export function computeAttendanceHours(input: {
 
     const ordinaryMins = Math.min(actualNet, ordinaryCapacity);
     const otMins = Math.max(0, actualNet - ordinaryCapacity);
-    if (day.dayKind === "LABORADO") {
-      unpaidMinutes += Math.max(0, ordinaryCapacity - actualNet);
-    }
+    const faltante =
+      day.dayKind === "LABORADO"
+        ? Math.max(0, ordinaryCapacity - actualNet)
+        : 0;
 
     const ordinarySplit = allocateDayNight(dayMins, nightMins, ordinaryMins);
-    if (isSundayOrHoliday) {
-      sundayDayMinutes += ordinarySplit.day;
-      sundayNightMinutes += ordinarySplit.night;
-    } else {
-      ordinaryDayMinutes += ordinarySplit.day;
-      ordinaryNightMinutes += ordinarySplit.night;
-    }
+    const remainingDay = Math.max(0, dayMins - ordinarySplit.day);
+    const remainingNight = Math.max(0, nightMins - ordinarySplit.night);
+    const otSplit = allocateDayNight(remainingDay, remainingNight, otMins);
 
+    let otPct = 0;
     if (otMins > 0) {
-      overtimeMinutes += otMins;
-      // Recargo de extra según hora cercana al final del turno ordinario.
       const otStartMin = entryMin + ordinaryCapacity + day.breakMinutes;
       const clock = ((otStartMin % (24 * 60)) + 24 * 60) % (24 * 60);
       const hh = String(Math.floor(clock / 60)).padStart(2, "0");
@@ -233,17 +248,80 @@ export function computeAttendanceHours(input: {
         `${hh}:${mm}`,
         input.legal,
       );
-      // En festivo laborado trate el extra con recargo dominical/festivo.
-      const pctAdj =
+      otPct =
         day.dayKind === "FESTIVO_LABORADO" && dow !== 0
           ? Math.max(pct, input.legal.surcharge_extra_day_sunday)
           : pct;
-      const pay = money(otMins)
-        .div(60)
-        .times(input.hourValue)
-        .times(money(100).plus(pctAdj))
-        .div(100);
-      overtimePay = overtimePay.plus(pay);
+    }
+
+    slices.push({
+      workDate: day.workDate,
+      dayKind: day.dayKind,
+      isSundayOrHoliday,
+      ordinaryDay: ordinarySplit.day,
+      ordinaryNight: ordinarySplit.night,
+      otMins,
+      otDay: otSplit.day,
+      otNight: otSplit.night,
+      faltante,
+      otPct,
+    });
+  }
+
+  // Compensar faltantes con extras de la misma semana (días más antiguos primero).
+  let compensatedMinutes = 0;
+  const byWeek = new Map<string, DayWorkSlice[]>();
+  for (const s of slices) {
+    const key = weekMondayKey(s.workDate);
+    const list = byWeek.get(key) ?? [];
+    list.push(s);
+    byWeek.set(key, list);
+  }
+
+  for (const weekSlices of byWeek.values()) {
+    weekSlices.sort((a, b) => a.workDate.localeCompare(b.workDate));
+    let faltanteLeft = weekSlices.reduce((acc, s) => acc + s.faltante, 0);
+    for (const s of weekSlices) {
+      if (faltanteLeft <= 0 || s.otMins <= 0) continue;
+      const take = Math.min(s.otMins, faltanteLeft);
+      const moved = allocateDayNight(s.otDay, s.otNight, take);
+      s.otMins -= take;
+      s.otDay = Math.max(0, s.otDay - moved.day);
+      s.otNight = Math.max(0, s.otNight - moved.night);
+      s.ordinaryDay += moved.day;
+      s.ordinaryNight += moved.night;
+      faltanteLeft -= take;
+      compensatedMinutes += take;
+    }
+  }
+
+  const totalFaltante = slices.reduce((acc, s) => acc + s.faltante, 0);
+  const unpaidMinutes = Math.max(0, totalFaltante - compensatedMinutes);
+
+  let ordinaryDayMinutes = 0;
+  let ordinaryNightMinutes = 0;
+  let sundayDayMinutes = 0;
+  let sundayNightMinutes = 0;
+  let overtimeMinutes = 0;
+  let overtimePay = money(0);
+
+  for (const s of slices) {
+    if (s.isSundayOrHoliday) {
+      sundayDayMinutes += s.ordinaryDay;
+      sundayNightMinutes += s.ordinaryNight;
+    } else {
+      ordinaryDayMinutes += s.ordinaryDay;
+      ordinaryNightMinutes += s.ordinaryNight;
+    }
+    if (s.otMins > 0) {
+      overtimeMinutes += s.otMins;
+      overtimePay = overtimePay.plus(
+        money(s.otMins)
+          .div(60)
+          .times(input.hourValue)
+          .times(money(100).plus(s.otPct))
+          .div(100),
+      );
     }
   }
 
@@ -261,12 +339,17 @@ export function computeAttendanceHours(input: {
       `${sundayDays} domingo(s) y ${holidayWorkedDays} festivo(s) laborado(s) en planilla.`,
     );
   }
+  if (compensatedMinutes > 0) {
+    notes.push(
+      `${compensatedMinutes} min faltantes compensados con extras de la misma semana (jornada flexible).`,
+    );
+  }
   if (overtimeMinutes > 0) {
     notes.push(`${overtimeMinutes} min extras desde planilla.`);
   }
   if (unpaidMinutes > 0) {
     notes.push(
-      `${unpaidMinutes} min bajo jornada ordinaria descontados desde planilla ($${unpaidTimeDiscount}).`,
+      `${unpaidMinutes} min bajo jornada ordinaria no compensados, descontados desde planilla ($${unpaidTimeDiscount}).`,
     );
   }
 

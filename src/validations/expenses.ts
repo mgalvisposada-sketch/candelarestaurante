@@ -47,3 +47,14 @@ export const shiftLiquidationExpenseSchema = z.object({
   priority: z.enum(["CRITICA", "ALTA", "NORMAL", "BAJA"]).optional(),
   notes: z.string().optional().nullable(),
 });
+
+export const tipLiquidationExpenseSchema = z.object({
+  dates: z
+    .array(isoDate)
+    .min(1, "Marque al menos un día de propina"),
+  expense_date: z.string().min(1, "Fecha obligatoria"),
+  amount: z.string().min(1, "Monto obligatorio"),
+  category_id: z.string().uuid().optional().nullable().or(z.literal("")),
+  priority: z.enum(["CRITICA", "ALTA", "NORMAL", "BAJA"]).optional(),
+  notes: z.string().optional().nullable(),
+});
