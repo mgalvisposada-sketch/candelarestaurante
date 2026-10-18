@@ -7,6 +7,7 @@ import {
   ArrowLeftRight,
   Banknote,
   BarChart3,
+  Bot,
   Building2,
   Calculator,
   CircleDollarSign,
@@ -72,6 +73,7 @@ const ENABLED_HREFS: Set<string> = new Set(
 
 const NAV_ICONS: Record<NavItem["href"], LucideIcon> = {
   "/inicio": LayoutDashboard,
+  "/asistente": Bot,
   "/checklist-inicial": ArrowLeftRight,
   "/empresa": Building2,
   "/socios": Users,

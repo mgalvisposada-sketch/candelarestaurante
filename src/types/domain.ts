@@ -17,6 +17,12 @@ export const NAV_ITEMS = [
     hint: "Resumen ejecutivo",
   },
   {
+    href: "/asistente",
+    label: "Asistente",
+    mvp: 1,
+    hint: "Agente con conocimiento de Candela",
+  },
+  {
     href: "/checklist-inicial",
     label: "Checklist inicial",
     mvp: 1,
@@ -151,7 +157,7 @@ export const NAV_GROUPS = [
   {
     id: "principal",
     label: "Operación",
-    hrefs: ["/inicio", "/cierre-caja", "/tesoreria"] as const,
+    hrefs: ["/inicio", "/asistente", "/cierre-caja", "/tesoreria"] as const,
   },
   {
     id: "caja",

@@ -16,6 +16,7 @@ import {
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP, money, apDocumentBalance } from "@/lib/money";
 import { formatDateCO } from "@/lib/dates";
+import { compareSuppliersByPriority } from "@/lib/suppliers/priority";
 import type { VerificationStatus } from "@/types/domain";
 
 export type ProductCategoryOption = {
@@ -503,17 +504,47 @@ function ApDocFields({
   );
 }
 
+function docSortKey(d: ApDocRow): string {
+  return d.issue_date || d.due_date || "";
+}
+
+function documentTypeLabel(type: string): string {
+  if (type === "FACTURA") return "Factura";
+  if (type === "CUENTA_DE_COBRO") return "Cuenta de cobro";
+  if (type === "NOTA") return "Nota";
+  return type || "Documento";
+}
+
+function statusTone(status: string) {
+  if (status === "PAGADA") return "ok" as const;
+  if (status === "PARCIAL") return "warn" as const;
+  if (status === "ANULADA") return "neutral" as const;
+  return "danger" as const;
+}
+
+function statusLabel(status: string): string {
+  if (status === "ABIERTA") return "Por pagar";
+  if (status === "PARCIAL") return "Parcial";
+  if (status === "PAGADA") return "Pagada";
+  if (status === "ANULADA") return "Anulada";
+  return status;
+}
+
 export function SupplierMasterList({
   suppliers,
   categories,
   balanceBySupplier,
+  billedBySupplier = {},
   docsCountBySupplier,
+  documentsBySupplier = {},
   caps,
 }: {
   suppliers: SupplierRow[];
   categories: ProductCategoryOption[];
   balanceBySupplier: Record<string, number>;
+  billedBySupplier?: Record<string, number>;
   docsCountBySupplier: Record<string, number>;
+  documentsBySupplier?: Record<string, ApDocRow[]>;
   caps: ProveedoresCaps;
 }) {
   const [query, setQuery] = useState("");
@@ -524,39 +555,56 @@ export function SupplierMasterList({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return suppliers;
-    return suppliers.filter((s) => {
-      const categoryNames = s.category_ids
-        .map((id) => categoryNameById.get(id) ?? "")
-        .join(" ");
-      const haystack = [
-        s.name,
-        s.tax_id,
-        s.contact_name,
-        s.phone,
-        s.email,
-        s.category,
-        s.notes,
-        categoryNames,
-        s.is_purchase_supplier ? "insumos" : "",
-        s.is_expense_supplier ? "gastos administrativo" : "",
-        s.is_active ? "activo" : "inactivo",
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
-    });
-  }, [suppliers, query, categoryNameById]);
+    const matches = !q
+      ? [...suppliers]
+      : suppliers.filter((s) => {
+          const categoryNames = s.category_ids
+            .map((id) => categoryNameById.get(id) ?? "")
+            .join(" ");
+          const haystack = [
+            s.name,
+            s.tax_id,
+            s.contact_name,
+            s.phone,
+            s.email,
+            s.category,
+            s.notes,
+            categoryNames,
+            s.is_purchase_supplier ? "insumos" : "",
+            s.is_expense_supplier ? "gastos administrativo" : "",
+            s.is_active ? "activo" : "inactivo",
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return haystack.includes(q);
+        });
+
+    return matches.sort((a, b) =>
+      compareSuppliersByPriority(a, b, balanceBySupplier, billedBySupplier),
+    );
+  }, [
+    suppliers,
+    query,
+    categoryNameById,
+    balanceBySupplier,
+    billedBySupplier,
+  ]);
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <h3 className="font-medium">
-          {filtered.length === suppliers.length
-            ? `${suppliers.length} ${suppliers.length === 1 ? "proveedor" : "proveedores"}`
-            : `${filtered.length} de ${suppliers.length} proveedores`}
-        </h3>
+        <div>
+          <h3 className="font-medium">
+            {filtered.length === suppliers.length
+              ? `${suppliers.length} ${suppliers.length === 1 ? "proveedor" : "proveedores"}`
+              : `${filtered.length} de ${suppliers.length} proveedores`}
+          </h3>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">
+            Con deuda arriba (se actualiza al pagar). Sin deuda: de más a menos
+            comprado
+          </p>
+        </div>
         <label className="block min-w-[220px] flex-1 sm:max-w-sm">
           <span className="mb-1 block text-sm text-[var(--muted)]">Buscar</span>
           <input
@@ -580,7 +628,9 @@ export function SupplierMasterList({
             supplier={s}
             categories={categories}
             openBalance={balanceBySupplier[s.id] ?? 0}
+            billedTotal={billedBySupplier[s.id] ?? 0}
             openDocsCount={docsCountBySupplier[s.id] ?? 0}
+            documents={documentsBySupplier[s.id] ?? []}
             caps={caps}
           />
         ))
@@ -589,16 +639,247 @@ export function SupplierMasterList({
   );
 }
 
+type BillingFilter = "todas" | "abiertas" | "pagadas";
+
+function SupplierBillingHistory({ documents }: { documents: ApDocRow[] }) {
+  const [filter, setFilter] = useState<BillingFilter>("todas");
+  const [expanded, setExpanded] = useState(false);
+
+  const activeDocs = useMemo(
+    () => documents.filter((d) => d.status !== "ANULADA"),
+    [documents],
+  );
+
+  const totals = useMemo(() => {
+    let billed = money(0);
+    let paid = money(0);
+    let open = money(0);
+    for (const d of activeDocs) {
+      billed = billed.plus(money(d.original_amount));
+      paid = paid.plus(money(d.paid_amount));
+      open = open.plus(apDocumentBalance(d.original_amount, d.paid_amount));
+    }
+    return { billed, paid, open };
+  }, [activeDocs]);
+
+  const filtered = useMemo(() => {
+    const list =
+      filter === "abiertas"
+        ? activeDocs.filter(
+            (d) =>
+              d.status === "ABIERTA" ||
+              d.status === "PARCIAL" ||
+              apDocumentBalance(d.original_amount, d.paid_amount).gt(0),
+          )
+        : filter === "pagadas"
+          ? activeDocs.filter((d) => d.status === "PAGADA")
+          : [...documents];
+
+    return list.sort((a, b) => {
+      const ka = docSortKey(a);
+      const kb = docSortKey(b);
+      if (ka && kb) return kb.localeCompare(ka);
+      if (ka) return -1;
+      if (kb) return 1;
+      return 0;
+    });
+  }, [activeDocs, documents, filter]);
+
+  const openCount = activeDocs.filter(
+    (d) =>
+      d.status === "ABIERTA" ||
+      d.status === "PARCIAL" ||
+      apDocumentBalance(d.original_amount, d.paid_amount).gt(0),
+  ).length;
+  const paidCount = activeDocs.filter((d) => d.status === "PAGADA").length;
+
+  const filters: { id: BillingFilter; label: string; count: number }[] = [
+    { id: "todas", label: "Todas", count: documents.length },
+    { id: "abiertas", label: "Abiertas", count: openCount },
+    { id: "pagadas", label: "Pagadas", count: paidCount },
+  ];
+
+  return (
+    <div className="mt-4 border-t border-[var(--line)] pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-2 text-left"
+        >
+          <h4 className="text-sm font-medium">Historial de facturación</h4>
+          <Badge tone="neutral">
+            {documents.length}{" "}
+            {documents.length === 1 ? "doc." : "docs."}
+          </Badge>
+          <span className="text-xs text-[var(--muted)]">
+            {expanded ? "Ocultar" : "Ver"}
+          </span>
+        </button>
+        {activeDocs.length > 0 ? (
+          <div className="flex flex-wrap gap-3 text-xs text-[var(--muted)]">
+            <span>
+              Facturado{" "}
+              <strong className="text-[var(--ink)]">
+                {formatCOP(totals.billed)}
+              </strong>
+            </span>
+            <span>
+              Pagado{" "}
+              <strong className="text-[var(--ink)]">
+                {formatCOP(totals.paid)}
+              </strong>
+            </span>
+            <span>
+              Saldo{" "}
+              <strong className="text-[var(--ink)]">
+                {formatCOP(totals.open)}
+              </strong>
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      {expanded ? (
+        <div className="mt-3 space-y-3">
+          {documents.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-[var(--line)] bg-neutral-50 px-3 py-3 text-sm text-[var(--muted)]">
+              Sin facturas ni gastos registrados. Insumos llegan desde Compras;
+              gastos operativos desde Gastos / Solicitudes de pago.
+            </p>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-1.5">
+                {filters.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setFilter(f.id)}
+                    className={
+                      filter === f.id
+                        ? "rounded-md bg-[var(--solid)] px-2.5 py-1 text-xs font-medium text-[var(--on-solid)]"
+                        : "rounded-md border border-[var(--line)] px-2.5 py-1 text-xs text-[var(--muted)]"
+                    }
+                  >
+                    {f.label} ({f.count})
+                  </button>
+                ))}
+              </div>
+
+              {filtered.length === 0 ? (
+                <p className="text-sm text-[var(--muted)]">
+                  No hay documentos en este filtro.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-[var(--line)]">
+                  <table className="min-w-full text-left text-sm">
+                    <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-[var(--muted)]">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Fecha</th>
+                        <th className="px-3 py-2 font-medium">Documento</th>
+                        <th className="px-3 py-2 font-medium">Concepto</th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          Original
+                        </th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          Pagado
+                        </th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          Saldo
+                        </th>
+                        <th className="px-3 py-2 font-medium">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--line)]">
+                      {filtered.map((doc) => {
+                        const balance = apDocumentBalance(
+                          doc.original_amount,
+                          doc.paid_amount,
+                        );
+                        const title = [
+                          documentTypeLabel(doc.document_type),
+                          doc.document_number,
+                        ]
+                          .filter(Boolean)
+                          .join(" ");
+                        return (
+                          <tr key={doc.id} className="bg-white align-top">
+                            <td className="whitespace-nowrap px-3 py-2.5 text-[var(--muted)]">
+                              {formatDateCO(doc.issue_date || doc.due_date)}
+                              {doc.due_date && doc.issue_date !== doc.due_date ? (
+                                <span className="mt-0.5 block text-[11px]">
+                                  Vence {formatDateCO(doc.due_date)}
+                                </span>
+                              ) : null}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <span className="font-medium">{title}</span>
+                              <span className="mt-1 flex flex-wrap gap-1">
+                                {doc.source === "GASTO" ? (
+                                  <Badge tone="neutral">Gasto</Badge>
+                                ) : null}
+                                {doc.priority && doc.priority !== "NORMAL" ? (
+                                  <Badge tone={pTone(doc.priority)}>
+                                    {doc.priority}
+                                  </Badge>
+                                ) : null}
+                              </span>
+                            </td>
+                            <td className="max-w-[220px] px-3 py-2.5 text-[var(--muted)]">
+                              <span className="line-clamp-2">
+                                {doc.concept || "—"}
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">
+                              {formatCOP(doc.original_amount)}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-[var(--muted)]">
+                              {formatCOP(doc.paid_amount)}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-medium tabular-nums">
+                              {formatCOP(balance)}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <div className="flex flex-col items-start gap-1">
+                                <Badge tone={statusTone(doc.status)}>
+                                  {statusLabel(doc.status)}
+                                </Badge>
+                                {doc.verification_status !== "CONFIRMADO" ? (
+                                  <Badge tone={vTone(doc.verification_status)}>
+                                    {doc.verification_status}
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function SupplierMasterCard({
   supplier,
   openBalance,
+  billedTotal = 0,
   openDocsCount,
+  documents = [],
   categories,
   caps,
 }: {
   supplier: SupplierRow;
   openBalance: number | string;
+  billedTotal?: number | string;
   openDocsCount: number;
+  documents?: ApDocRow[];
   categories: ProductCategoryOption[];
   caps: ProveedoresCaps;
 }) {
@@ -609,14 +890,22 @@ export function SupplierMasterCard({
     .filter((c) => supplier.category_ids.includes(c.id))
     .map((c) => c.name)
     .join(", ");
+  const hasDebt = money(openBalance).gt(0);
 
   return (
-    <article className="rounded-xl border border-[var(--line)] bg-white p-5">
+    <article
+      className={
+        hasDebt
+          ? "rounded-xl border border-[var(--line)] border-l-4 border-l-amber-500 bg-white p-5"
+          : "rounded-xl border border-[var(--line)] bg-white p-5"
+      }
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="font-display text-xl font-semibold">{supplier.name}</h3>
             {!supplier.is_active ? <Badge tone="neutral">Inactivo</Badge> : null}
+            {hasDebt ? <Badge tone="warn">Se le debe</Badge> : null}
             {supplier.is_purchase_supplier ? (
               <Badge tone="ok">Insumos</Badge>
             ) : null}
@@ -661,8 +950,10 @@ export function SupplierMasterCard({
           </p>
           <p className="font-display text-2xl">{formatCOP(openBalance)}</p>
           <p className="mt-0.5 text-xs text-[var(--muted)]">
-            {openDocsCount}{" "}
-            {openDocsCount === 1 ? "documento" : "documentos"}
+            Facturado {formatCOP(billedTotal)}
+            {openDocsCount > 0
+              ? ` · ${openDocsCount} ${openDocsCount === 1 ? "abierto" : "abiertos"}`
+              : null}
           </p>
         </div>
       </div>
@@ -728,6 +1019,8 @@ export function SupplierMasterCard({
           {error}
         </p>
       ) : null}
+
+      <SupplierBillingHistory documents={documents} />
     </article>
   );
 }

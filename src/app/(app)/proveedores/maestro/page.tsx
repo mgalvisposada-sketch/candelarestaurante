@@ -18,10 +18,12 @@ import {
   CreateCategoryMasterForm,
   CreateSupplierForm,
   SupplierMasterList,
+  type ApDocRow,
   type ProductCategoryOption,
   type ProveedoresCaps,
   type SupplierRow,
 } from "../suppliers-client";
+import { compareSuppliersByPriority } from "@/lib/suppliers/priority";
 
 export default async function ProveedoresMaestroPage() {
   const ctx = await getOrgContext();
@@ -99,28 +101,145 @@ export default async function ProveedoresMaestroPage() {
   const ids = suppliers.map((s) => s.id);
 
   const balanceBySupplier = new Map<string, ReturnType<typeof money>>();
-  const docsCountBySupplier = new Map<string, number>();
-  if (ids.length > 0) {
-    const { data: docs } = await supabase
-      .from("accounts_payable_documents")
-      .select("id, supplier_id, original_amount, paid_amount, status")
-      .eq("organization_id", ctx.organization.id)
-      .is("deleted_at", null)
-      .in("supplier_id", ids);
+  const billedBySupplier = new Map<string, ReturnType<typeof money>>();
+  const openDocsCountBySupplier = new Map<string, number>();
+  const docsBySupplier = new Map<string, ApDocRow[]>();
 
-    for (const d of docs ?? []) {
+  const OPEN_PAYMENT_STATUSES = new Set([
+    "BORRADOR",
+    "EN_REVISION",
+    "APROBADA",
+    "EN_COLA_PAGO",
+  ]);
+
+  if (ids.length > 0) {
+    // CxP (compras) + solicitudes de pago sin documento CxP (gastos, etc.)
+    const [{ data: docs }, { data: payReqs }] = await Promise.all([
+      supabase
+        .from("accounts_payable_documents")
+        .select(
+          "id, supplier_id, document_type, document_number, issue_date, due_date, concept, original_amount, paid_amount, status, priority, verification_status, observation, comments, source",
+        )
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null)
+        .in("supplier_id", ids)
+        .order("issue_date", { ascending: false }),
+      supabase
+        .from("payment_requests")
+        .select(
+          "id, source, status, priority, concept, amount, requested_at, due_date, supplier_id, document_number, document_type, issue_date, notes, ap_document_id",
+        )
+        .eq("organization_id", ctx.organization.id)
+        .is("deleted_at", null)
+        .is("ap_document_id", null)
+        .in("supplier_id", ids)
+        .order("requested_at", { ascending: false }),
+    ]);
+
+    for (const d of (docs ?? []) as ApDocRow[]) {
+      const list = docsBySupplier.get(d.supplier_id) ?? [];
+      list.push(d);
+      docsBySupplier.set(d.supplier_id, list);
+
       if (d.status === "ANULADA") continue;
       const bal = apDocumentBalance(d.original_amount, d.paid_amount);
       balanceBySupplier.set(
         d.supplier_id,
         (balanceBySupplier.get(d.supplier_id) ?? money(0)).plus(bal),
       );
-      docsCountBySupplier.set(
+      billedBySupplier.set(
         d.supplier_id,
-        (docsCountBySupplier.get(d.supplier_id) ?? 0) + 1,
+        (billedBySupplier.get(d.supplier_id) ?? money(0)).plus(
+          money(d.original_amount),
+        ),
       );
+      if (d.status === "ABIERTA" || d.status === "PARCIAL" || bal.gt(0)) {
+        openDocsCountBySupplier.set(
+          d.supplier_id,
+          (openDocsCountBySupplier.get(d.supplier_id) ?? 0) + 1,
+        );
+      }
+    }
+
+    for (const pr of payReqs ?? []) {
+      if (!pr.supplier_id) continue;
+      const status = String(pr.status);
+      const amount = money(pr.amount);
+      const isVoid = status === "ANULADA" || status === "RECHAZADA";
+      const isPaid = status === "PAGADA";
+      const isOpen = OPEN_PAYMENT_STATUSES.has(status);
+
+      const asDoc: ApDocRow = {
+        id: `pr:${pr.id}`,
+        supplier_id: pr.supplier_id,
+        document_type: pr.document_type || "FACTURA",
+        document_number: pr.document_number,
+        issue_date: pr.issue_date || pr.requested_at?.slice(0, 10) || null,
+        due_date: pr.due_date,
+        concept: pr.concept
+          ? `${pr.source === "GASTO" ? "Gasto" : "Solicitud"}: ${pr.concept}`
+          : pr.source === "GASTO"
+            ? "Gasto por pagar"
+            : "Solicitud de pago",
+        original_amount: amount.toNumber(),
+        paid_amount: isPaid ? amount.toNumber() : 0,
+        status: isVoid ? "ANULADA" : isPaid ? "PAGADA" : "ABIERTA",
+        priority: pr.priority || "NORMAL",
+        verification_status: isOpen || isPaid ? "CONFIRMADO" : "PENDIENTE",
+        observation: pr.notes,
+        comments: null,
+        source: pr.source || "GASTO",
+      };
+
+      const list = docsBySupplier.get(pr.supplier_id) ?? [];
+      list.push(asDoc);
+      docsBySupplier.set(pr.supplier_id, list);
+
+      if (isVoid) continue;
+
+      billedBySupplier.set(
+        pr.supplier_id,
+        (billedBySupplier.get(pr.supplier_id) ?? money(0)).plus(amount),
+      );
+
+      if (isOpen) {
+        balanceBySupplier.set(
+          pr.supplier_id,
+          (balanceBySupplier.get(pr.supplier_id) ?? money(0)).plus(amount),
+        );
+        openDocsCountBySupplier.set(
+          pr.supplier_id,
+          (openDocsCountBySupplier.get(pr.supplier_id) ?? 0) + 1,
+        );
+      }
+    }
+
+    // Historial: más reciente primero (CxP + gastos mezclados)
+    for (const [sid, list] of docsBySupplier) {
+      list.sort((a, b) => {
+        const ka = a.issue_date || a.due_date || "";
+        const kb = b.issue_date || b.due_date || "";
+        if (ka && kb) return kb.localeCompare(ka);
+        if (ka) return -1;
+        if (kb) return 1;
+        return 0;
+      });
+      docsBySupplier.set(sid, list);
     }
   }
+
+  const balanceRecord = Object.fromEntries(
+    [...balanceBySupplier.entries()].map(([id, bal]) => [id, bal.toNumber()]),
+  );
+  const billedRecord = Object.fromEntries(
+    [...billedBySupplier.entries()].map(([id, total]) => [
+      id,
+      total.toNumber(),
+    ]),
+  );
+  const suppliersRanked = [...suppliers].sort((a, b) =>
+    compareSuppliersByPriority(a, b, balanceRecord, billedRecord),
+  );
 
   return (
     <>
@@ -135,7 +254,7 @@ export default async function ProveedoresMaestroPage() {
         />
         <PageIntro
           title="Maestro de proveedores"
-          description="Catálogo secundario: contactos, tipo (insumos o administrativo) y categorías. El trabajo diario de facturas y saldos está en Cuentas por pagar."
+          description="Catálogo de contactos, tipo (insumos o administrativo) y categorías. El saldo e historial incluyen facturas de compras (CxP) y gastos por pagar. Quien tiene deuda sube arriba; al pagar vuelve al ranking por volumen (de más a menos)."
         />
 
         <WorkStack>
@@ -193,30 +312,27 @@ export default async function ProveedoresMaestroPage() {
           <WorkSection
             kind="list"
             title="Proveedores"
-            badge={<Badge tone="neutral">{suppliers.length}</Badge>}
+            badge={<Badge tone="neutral">{suppliersRanked.length}</Badge>}
             summary={
-              suppliers.length === 0
+              suppliersRanked.length === 0
                 ? "Sin proveedores"
-                : `${suppliers.length} en maestro`
+                : `${suppliersRanked.length} · deuda arriba · resto por compras`
             }
             defaultOpen
           >
-            {suppliers.length === 0 ? (
+            {suppliersRanked.length === 0 ? (
               <WorkEmptyHint
                 title="Sin proveedores"
                 description="Cree el maestro de proveedores. Luego cargue facturas en Cuentas por pagar."
               />
             ) : (
               <SupplierMasterList
-                suppliers={suppliers}
+                suppliers={suppliersRanked}
                 categories={categories}
-                balanceBySupplier={Object.fromEntries(
-                  [...balanceBySupplier.entries()].map(([id, bal]) => [
-                    id,
-                    bal.toNumber(),
-                  ]),
-                )}
-                docsCountBySupplier={Object.fromEntries(docsCountBySupplier)}
+                balanceBySupplier={balanceRecord}
+                billedBySupplier={billedRecord}
+                docsCountBySupplier={Object.fromEntries(openDocsCountBySupplier)}
+                documentsBySupplier={Object.fromEntries(docsBySupplier)}
                 caps={caps}
               />
             )}

@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
+import { AsistenteWidget } from "@/components/asistente/asistente-widget";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
-import type { AppRole } from "@/types/domain";
+import { ROLE_LABELS, type AppRole } from "@/types/domain";
 import { cn } from "@/lib/utils";
 
 export function AppShell({
@@ -13,11 +14,13 @@ export function AppShell({
   userEmail,
   role,
   permissions,
+  orgLabel,
 }: {
   children: React.ReactNode;
   userEmail?: string | null;
   role?: AppRole | null;
   permissions?: string[];
+  orgLabel?: string | null;
 }) {
   const pathname = usePathname();
   const [navOpen, setNavOpen] = useState(false);
@@ -80,6 +83,13 @@ export function AppShell({
         </div>
         {children}
       </div>
+
+      <AsistenteWidget
+        orgLabel={orgLabel?.trim() || "Candela"}
+        userRole={role ? ROLE_LABELS[role] : "Sin rol"}
+        role={role ?? null}
+        permissions={permissions ?? []}
+      />
     </div>
   );
 }

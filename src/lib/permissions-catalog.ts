@@ -29,6 +29,20 @@ export const APP_MODULES: AppModuleDef[] = [
     ],
   },
   {
+    key: "asistente",
+    label: "Asistente",
+    href: "/asistente",
+    mvp: 1,
+    submodules: [
+      {
+        key: "asistente.chat",
+        label: "Chat del asistente",
+        description:
+          "Consultar y operar con el agente (KB + datos + acciones confirmadas).",
+      },
+    ],
+  },
+  {
     key: "empalme",
     label: "Checklist inicial",
     href: "/checklist-inicial",
