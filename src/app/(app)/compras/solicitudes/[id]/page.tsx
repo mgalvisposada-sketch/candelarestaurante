@@ -158,7 +158,17 @@ export default async function CompraSolicitudDetailPage({
     <>
       <AppHeader
         title="Compras"
-        subtitle="Siga el paso actual de la solicitud"
+        subtitle={
+          [
+            "APROBADA",
+            "PEDIDA",
+            "RECIBIDA",
+            "RECIBIDA_PARCIAL",
+            "FACTURA_ACEPTADA",
+          ].includes(request.status)
+            ? "Cada proveedor avanza en su propio hito"
+            : "Siga el paso actual de la solicitud"
+        }
       />
       <main className="space-y-6 p-8">
         <ComprasNav

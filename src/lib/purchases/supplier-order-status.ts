@@ -164,6 +164,79 @@ export function supplierOrderAllowsMarkOrdered(status: string): boolean {
   return status === "POR_PEDIR";
 }
 
+/** Se puede quitar la OC solo si nadie facturó ni recibió. */
+export function supplierOrderCanBeRemoved(args: {
+  status: string;
+  hasInvoice: boolean;
+  hasReceived: boolean;
+}): boolean {
+  if (args.hasInvoice || args.hasReceived) return false;
+  return args.status === "POR_PEDIR" || args.status === "PEDIDA";
+}
+
+/** Hito visible de una OC. Cada orden vive en un solo hito. */
+export type PurchaseMilestone =
+  | "pedir"
+  | "facturar"
+  | "pagar"
+  | "recibir"
+  | "listas";
+
+export const PURCHASE_MILESTONES: {
+  id: PurchaseMilestone;
+  label: string;
+  empty: string;
+}[] = [
+  {
+    id: "pedir",
+    label: "Por pedir",
+    empty: "Ninguna orden está por pedir.",
+  },
+  {
+    id: "facturar",
+    label: "Por facturar",
+    empty: "Ninguna orden está por facturar.",
+  },
+  {
+    id: "pagar",
+    label: "Por pagar",
+    empty: "Ninguna factura está esperando pago.",
+  },
+  {
+    id: "recibir",
+    label: "Por recibir",
+    empty: "Ninguna orden está por recibir.",
+  },
+  {
+    id: "listas",
+    label: "Listas",
+    empty: "Ninguna orden está cerrada.",
+  },
+];
+
+export function purchaseMilestoneFor(args: {
+  status: string;
+  prepago: boolean;
+  isSettled: boolean;
+  awaitingPay: boolean;
+  hasUninvoiced: boolean;
+  hasOpenItems: boolean;
+}): PurchaseMilestone {
+  if (
+    args.status === "ANULADA" ||
+    args.status === "CERRADA" ||
+    args.isSettled
+  ) {
+    return "listas";
+  }
+  if (args.status === "POR_PEDIR") return "pedir";
+  if (args.awaitingPay) return "pagar";
+  if (args.prepago && args.hasUninvoiced) return "facturar";
+  if (args.hasOpenItems) return "recibir";
+  if (args.hasUninvoiced) return "facturar";
+  return "listas";
+}
+
 /** Prepago puede facturar desde POR_PEDIR; crédito desde PEDIDA+. */
 export function supplierOrderAllowsInvoice(args: {
   status: string;

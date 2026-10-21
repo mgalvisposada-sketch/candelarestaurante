@@ -249,6 +249,7 @@ async function syncPurchaseSupplierOrdersForRequest({
   const now = new Date().toISOString();
 
   for (const order of orders ?? []) {
+    if (order.status === "ANULADA") continue;
     const supplierId = order.supplier_id as string;
     const supplierItems = itemsBySupplier.get(supplierId) ?? [];
     const nextStatus = deriveSupplierOrderStatus({
@@ -1343,6 +1344,144 @@ export async function markPurchaseOrderedAction(
     entity: "purchase_supplier_orders",
     entity_id: requestId,
     new_values: { supplier_id: sid, item_ids: itemIds },
+  });
+
+  revalidateCompras(requestId);
+  return { ok: true, id: requestId };
+}
+
+/** Quita una OC que aún no se facturó ni se recibió (hitos Por pedir y Por facturar). */
+export async function cancelPurchaseSupplierOrderAction(
+  requestId: string,
+  supplierId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (
+    !ctxCanAccess(ctx, "compras.solicitudes.pedir") &&
+    !ctxCanAccess(ctx, "compras.solicitudes.facturar")
+  ) {
+    return { ok: false, error: "Sin permiso para eliminar este pedido" };
+  }
+
+  const sid = String(supplierId ?? "").trim();
+  if (!sid) return { ok: false, error: "Indique el proveedor" };
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (
+    !["APROBADA", "PEDIDA", "RECIBIDA_PARCIAL", "RECIBIDA", "FACTURA_ACEPTADA"].includes(
+      request.status,
+    )
+  ) {
+    return {
+      ok: false,
+      error: "Solo se puede eliminar un pedido de una compra ya autorizada.",
+    };
+  }
+
+  const { data: order } = await supabase
+    .from("purchase_supplier_orders")
+    .select("id, status, order_number")
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .eq("supplier_id", sid)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  const ocStatus = (order?.status as string | undefined) ?? "POR_PEDIR";
+  if (ocStatus !== "POR_PEDIR" && ocStatus !== "PEDIDA") {
+    return {
+      ok: false,
+      error: "Este pedido ya avanzó. Solo se elimina si está por pedir o por facturar, sin recepción ni factura.",
+    };
+  }
+
+  const { data: supplierItems } = await supabase
+    .from("purchase_request_items")
+    .select(
+      "id, status, quantity_received, invoice_payment_request_id, approved_supplier_id, suggested_supplier_id, notes",
+    )
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null);
+
+  const items = (supplierItems ?? []).filter(
+    (item) => (item.approved_supplier_id ?? item.suggested_supplier_id) === sid,
+  );
+  if (items.length === 0) {
+    return { ok: false, error: "Este proveedor ya no tiene productos en la solicitud" };
+  }
+
+  const blocked = items.some(
+    (item) =>
+      Boolean(item.invoice_payment_request_id) ||
+      Number(item.quantity_received || 0) > 0,
+  );
+  if (blocked) {
+    return {
+      ok: false,
+      error:
+        "No se puede eliminar: este pedido ya tiene factura o mercancía recibida.",
+    };
+  }
+
+  const now = new Date().toISOString();
+  for (const item of items) {
+    const note = [item.notes, "Pedido eliminado"].filter(Boolean).join(" · ");
+    const { error } = await supabase
+      .from("purchase_request_items")
+      .update({
+        deleted_at: now,
+        status: "CANCELADO",
+        notes: note,
+        updated_by: ctx.userId,
+      })
+      .eq("id", item.id)
+      .eq("organization_id", ctx.organization.id);
+    if (error) return { ok: false, error: error.message };
+  }
+
+  if (order) {
+    const { error: orderError } = await supabase
+      .from("purchase_supplier_orders")
+      .update({
+        status: "ANULADA",
+        updated_by: ctx.userId,
+      })
+      .eq("id", order.id)
+      .eq("organization_id", ctx.organization.id);
+    if (orderError) return { ok: false, error: orderError.message };
+  }
+
+  const syncError = await syncPurchaseSupplierOrdersForRequest({
+    supabase,
+    organizationId: ctx.organization.id,
+    requestId,
+    userId: ctx.userId,
+  });
+  if (syncError) return { ok: false, error: syncError };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "ANULAR",
+    entity: "purchase_supplier_orders",
+    entity_id: order?.id ?? requestId,
+    new_values: {
+      purchase_request_id: requestId,
+      supplier_id: sid,
+      order_number: order?.order_number ?? null,
+      item_ids: items.map((item) => item.id),
+    },
   });
 
   revalidateCompras(requestId);

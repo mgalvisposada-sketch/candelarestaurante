@@ -18,6 +18,7 @@ import {
   deletePurchaseRequestAction,
   importSuggestedProductsAction,
   markPurchaseOrderedAction,
+  cancelPurchaseSupplierOrderAction,
   receivePurchaseItemsAction,
   rejectPurchaseRequestAction,
   removePurchaseRequestItemAction,
@@ -37,10 +38,14 @@ import {
   type SupplierTermsMix,
 } from "@/lib/purchases/payment-terms";
 import {
+  PURCHASE_MILESTONES,
+  purchaseMilestoneFor,
   purchaseSupplierOrderStatusLabel,
   supplierOrderAllowsInvoice,
   supplierOrderAllowsMarkOrdered,
   supplierOrderAllowsReceive,
+  supplierOrderCanBeRemoved,
+  type PurchaseMilestone,
 } from "@/lib/purchases/supplier-order-status";
 import {
   createProductCategoryAction,
@@ -2761,8 +2766,12 @@ function SupplierReceiveForm({
     >
       <p className="text-sm font-medium">Recibir de {supplierName}</p>
       <p className="text-xs text-[var(--muted)]">
-        Prepago pagado: se recibe <strong>solo contra lo facturado</strong>, no
-        contra el pedido. Confirme cantidades y guarde.
+        {openItems.some(
+          (item) =>
+            item.invoice_payment_request_id && itemInvoicedQty(item) > 0,
+        )
+          ? "Esta orden ya está facturada: confirme lo que llegó contra esa cantidad."
+          : "Confirme lo que llegó. Lo que no llega puede quedar pendiente."}
       </p>
       {openItems.map((item) => (
         <ReceiveItemRow
@@ -2798,6 +2807,7 @@ function SupplierOperationsPanel({
   orderNumberBySupplier,
   orderStatusBySupplier,
   paymentStatusById,
+  canMarkOrdered,
   canReceive,
   canReceiveExtras,
   canCreateProduct,
@@ -2817,6 +2827,7 @@ function SupplierOperationsPanel({
   orderNumberBySupplier: Record<string, string>;
   orderStatusBySupplier: Record<string, string>;
   paymentStatusById: Map<string, string>;
+  canMarkOrdered: boolean;
   canReceive: boolean;
   canReceiveExtras: boolean;
   canCreateProduct: boolean;
@@ -2825,6 +2836,8 @@ function SupplierOperationsPanel({
   startTransition: TransitionStartFunction;
   setError: Dispatch<SetStateAction<string | null>>;
 }) {
+  const [pickedHito, setPickedHito] = useState<PurchaseMilestone | null>(null);
+  const [supplierKey, setSupplierKey] = useState<string | null>(null);
   const groups = groupPurchaseItemsBySupplier(items, supplierMap, {
     includeCancelled: true,
   });
@@ -2841,6 +2854,8 @@ function SupplierOperationsPanel({
     canShowInvoice: boolean;
     canShowExtra: boolean;
     isSettled: boolean;
+    awaitingPay: boolean;
+    hito: PurchaseMilestone;
     nextStep: string;
     prepago: boolean;
     billingMode: "ordered" | "received";
@@ -2849,8 +2864,7 @@ function SupplierOperationsPanel({
     orderNumber: string | undefined;
   };
 
-  const views = groups
-    .map((group): GroupView | null => {
+  const views = groups.map((group): GroupView => {
       const terms = group.supplierId
         ? supplierTerms.get(group.supplierId) ?? "PREPAGO"
         : "PREPAGO";
@@ -2960,17 +2974,14 @@ function SupplierOperationsPanel({
                       : "Siguiente: pedir"
                     : "Sin acción aún";
 
-      if (
-        !canShowReceive &&
-        !canShowInvoice &&
-        !canShowExtra &&
-        !payGateLabel &&
-        invoiced.length === 0 &&
-        closedItems.length === 0 &&
-        ocStatus === "POR_PEDIR"
-      ) {
-        return null;
-      }
+      const hito = purchaseMilestoneFor({
+        status: ocStatus,
+        prepago,
+        isSettled,
+        awaitingPay,
+        hasUninvoiced: uninvoiced.length > 0,
+        hasOpenItems: openItems.length > 0,
+      });
 
       return {
         group,
@@ -2982,6 +2993,8 @@ function SupplierOperationsPanel({
         canShowInvoice,
         canShowExtra,
         isSettled,
+        awaitingPay,
+        hito,
         nextStep,
         prepago,
         billingMode,
@@ -2989,16 +3002,29 @@ function SupplierOperationsPanel({
         ocStatus,
         orderNumber,
       };
-    })
-    .filter((v): v is GroupView => v != null);
+    });
 
-  const activeViews = views.filter((v) => !v.isSettled);
-  const settledViews = views.filter((v) => v.isSettled);
+  const preferredHito =
+    PURCHASE_MILESTONES.find(
+      (milestone) =>
+        milestone.id !== "listas" &&
+        views.some((view) => view.hito === milestone.id),
+    )?.id ?? "listas";
+  const activeHito = pickedHito ?? preferredHito;
+  const inTab = views
+    .filter((view) => view.hito === activeHito)
+    .sort((a, b) =>
+      (a.orderNumber ?? "").localeCompare(b.orderNumber ?? "", "es"),
+    );
+  const selected =
+    inTab.find(
+      (view) => (view.group.supplierId ?? "sin") === supplierKey,
+    ) ??
+    inTab[0] ??
+    null;
+  const pedidoHref = `/compras/solicitudes/${requestId}/pedido`;
 
-  function renderSupplierCard(
-    view: GroupView,
-    opts?: { settled?: boolean; defaultOpen?: boolean },
-  ) {
+  function renderSupplierWork(view: GroupView) {
     const {
       group,
       openItems,
@@ -3007,6 +3033,7 @@ function SupplierOperationsPanel({
       canShowReceive,
       canShowInvoice,
       canShowExtra,
+      hito,
       nextStep,
       prepago,
       billingMode,
@@ -3014,299 +3041,439 @@ function SupplierOperationsPanel({
       ocStatus,
       orderNumber,
     } = view;
-    const settled = Boolean(opts?.settled);
-    const actionLabel = nextStep.replace(/^Siguiente:\s*/i, "Ahora: ");
-    const nextTone =
-      nextStep.startsWith("Siguiente")
-        ? "bg-[var(--solid)] text-[var(--on-solid)]"
-        : nextStep === "Listo"
-          ? "bg-emerald-100 text-emerald-900"
-          : "bg-neutral-200 text-neutral-800";
-    const primaryIsInvoice = nextStep.includes("facturar");
-    const primaryIsReceive = nextStep.includes("recibir");
-    const invoiceFirst = primaryIsInvoice || (prepago && !primaryIsReceive);
-    const needsAction = Boolean(
-      canShowInvoice || payGateLabel || canShowReceive,
+    const canMark = Boolean(
+      canMarkOrdered &&
+        group.supplierId &&
+        supplierOrderAllowsMarkOrdered(ocStatus),
     );
-    const defaultOpen = Boolean(opts?.defaultOpen);
-
-    const invoiceExtraBlock =
-      canShowExtra && canShowInvoice && group.supplierId ? (
-        <AddPendingToSupplierForm
-          requestId={requestId}
-          supplierId={group.supplierId}
-          supplierName={group.supplierName}
-          products={products}
-          categories={categories}
-          units={units}
-          links={links}
-          canCreateProduct={canCreateProduct}
-          pending={pending}
-          startTransition={startTransition}
-          setError={setError}
-          mode="invoice"
-        />
-      ) : null;
+    const canRemove =
+      (hito === "pedir" || hito === "facturar") &&
+      Boolean(group.supplierId) &&
+      (canMarkOrdered || canAcceptInvoice) &&
+      supplierOrderCanBeRemoved({
+        status: ocStatus,
+        hasInvoice: group.items.some((item) =>
+          Boolean(item.invoice_payment_request_id),
+        ),
+        hasReceived: group.items.some(
+          (item) => Number(item.quantity_received || 0) > 0,
+        ),
+      });
+    const printHref = group.supplierId
+      ? `${pedidoHref}?supplier=${group.supplierId}`
+      : pedidoHref;
 
     const invoiceBlock =
       canShowInvoice && group.supplierId ? (
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-            {primaryIsInvoice
-              ? "Acción actual · Facturar precios"
-              : "También · Facturar precios"}
-          </p>
-          {invoiceExtraBlock}
-          <SupplierInvoiceForm
-            requestId={requestId}
-            supplierId={group.supplierId}
-            supplierName={group.supplierName}
-            items={group.items}
-            billingMode={billingMode}
-            canUndoReceive={canReceive && billingMode === "received"}
-            pending={pending}
-            startTransition={startTransition}
-            setError={setError}
-          />
-        </div>
-      ) : null;
-
-    const receiveBlock = canShowReceive ? (
-      <div className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-          {primaryIsReceive
-            ? "Acción actual · Recibir cantidades"
-            : "También · Recibir cantidades"}
-        </p>
-        <SupplierReceiveForm
+        <SupplierInvoiceForm
           requestId={requestId}
+          supplierId={group.supplierId}
           supplierName={group.supplierName}
-          openItems={openItems}
+          items={group.items}
+          billingMode={billingMode}
+          canUndoReceive={canReceive && billingMode === "received"}
           pending={pending}
           startTransition={startTransition}
           setError={setError}
         />
-      </div>
+      ) : null;
+
+    const receiveBlock = canShowReceive ? (
+      <SupplierReceiveForm
+        requestId={requestId}
+        supplierName={group.supplierName}
+        openItems={openItems}
+        pending={pending}
+        startTransition={startTransition}
+        setError={setError}
+      />
     ) : null;
 
+    const history =
+      closedItems.length > 0 ? (
+        <details className="rounded-lg border border-[var(--line)] px-3 py-2">
+          <summary className="cursor-pointer text-sm text-[var(--muted)]">
+            Ya recibido o cerrado ({closedItems.length})
+          </summary>
+          <div className="mt-2 space-y-2">
+            {closedItems.map((item) => (
+              <ReceiveItemRow
+                key={item.id}
+                item={item}
+                requestId={requestId}
+                canUndoReceive={
+                  canReceive && !item.invoice_payment_request_id
+                }
+                pending={pending}
+                startTransition={startTransition}
+                setError={setError}
+              />
+            ))}
+          </div>
+        </details>
+      ) : null;
+
+    const extra =
+      hito !== "listas" &&
+      hito !== "pedir" &&
+      canShowExtra &&
+      group.supplierId &&
+      !canShowInvoice ? (
+        <details className="rounded-lg border border-dashed border-[var(--line)] px-3 py-2">
+          <summary className="cursor-pointer text-sm text-[var(--muted)]">
+            Agregar producto extra a este proveedor
+          </summary>
+          <div className="mt-2">
+            <AddPendingToSupplierForm
+              requestId={requestId}
+              supplierId={group.supplierId}
+              supplierName={group.supplierName}
+              products={products}
+              categories={categories}
+              units={units}
+              links={links}
+              canCreateProduct={canCreateProduct}
+              pending={pending}
+              startTransition={startTransition}
+              setError={setError}
+              mode={hito === "facturar" ? "invoice" : "receive"}
+            />
+          </div>
+        </details>
+      ) : null;
+
+    const orderLines = group.items.filter(
+      (item) => itemOrderedQty(item) > 0 || item.status !== "CANCELADO",
+    );
+
     return (
-      <details
-        key={group.supplierId ?? "sin"}
-        className={`overflow-hidden rounded-xl border bg-white ${
-          settled
-            ? "border-[var(--line)] opacity-90"
-            : needsAction
-              ? "border-[var(--ink)] shadow-sm"
-              : "border-[var(--line)]"
-        }`}
-        open={defaultOpen}
-      >
-        <summary className="cursor-pointer list-none bg-neutral-50 px-4 py-3 marker:content-none [&::-webkit-details-marker]:hidden">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <p className="font-medium">
-                {orderNumber ? `${orderNumber} · ` : ""}
-                {group.supplierName}
-              </p>
+      <section className="overflow-hidden rounded-xl border border-[var(--line)] bg-white">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line)] bg-neutral-50 px-4 py-3">
+          <div className="min-w-0">
+            <h3 className="font-medium">
+              {orderNumber ? `${orderNumber} · ` : ""}
+              {group.supplierName}
+            </h3>
+            <p className="text-sm text-[var(--muted)]">
+              {group.items.length} producto
+              {group.items.length === 1 ? "" : "s"} ·{" "}
+              {prepago ? "Prepago" : "Crédito"} ·{" "}
+              {purchaseSupplierOrderStatusLabel(ocStatus)}
+            </p>
+            {hito === "facturar" || hito === "pagar" || hito === "recibir" ? (
+              <SupplierFlowChips prepago={prepago} nextStep={nextStep} />
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href={printHref} className="text-sm text-[var(--accent)]">
+              Imprimir
+            </Link>
+            {canMark ? (
+              <button
+                type="button"
+                disabled={pending}
+                className="rounded-lg bg-[var(--solid)] px-3 py-1.5 text-sm text-[var(--on-solid)] disabled:opacity-60"
+                onClick={() =>
+                  startTransition(async () => {
+                    setError(null);
+                    const result = await markPurchaseOrderedAction(
+                      requestId,
+                      group.supplierId!,
+                    );
+                    if (!result.ok) setError(result.error ?? "Error");
+                  })
+                }
+              >
+                Ya pedí / compré
+              </button>
+            ) : null}
+            {canRemove ? (
+              <button
+                type="button"
+                disabled={pending}
+                className="rounded-lg px-3 py-1.5 text-sm text-red-700 disabled:opacity-60"
+                onClick={() => {
+                  const label = orderNumber
+                    ? `${orderNumber} · ${group.supplierName}`
+                    : group.supplierName;
+                  if (
+                    !window.confirm(
+                      `¿Eliminar el pedido ${label}? Se quita de esta solicitud y no se puede deshacer.`,
+                    )
+                  ) {
+                    return;
+                  }
+                  startTransition(async () => {
+                    setError(null);
+                    const result = await cancelPurchaseSupplierOrderAction(
+                      requestId,
+                      group.supplierId!,
+                    );
+                    if (!result.ok) setError(result.error ?? "Error");
+                    else notifyPendingActionsChanged();
+                  });
+                }}
+              >
+                Eliminar pedido
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="space-y-4 px-4 py-4">
+          {hito === "pedir" ? (
+            <>
               <p className="text-sm text-[var(--muted)]">
-                {group.items.length} producto
-                {group.items.length === 1 ? "" : "s"} ·{" "}
-                {prepago ? "Prepago" : "Crédito"} ·{" "}
-                {purchaseSupplierOrderStatusLabel(ocStatus)}
-                <span className="ml-1 text-xs">· tocar para expandir</span>
+                Descargue el PDF, envíe el pedido y márquelo solo en esta
+                orden.
+                {prepago
+                  ? " Si ya tiene la factura, puede cargarla abajo sin marcar el pedido."
+                  : " En crédito, recibir y facturar se habilitan después de marcar el pedido."}
               </p>
-              {!settled ? (
-                <SupplierFlowChips prepago={prepago} nextStep={nextStep} />
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--line)] text-left text-[var(--muted)]">
+                    <th className="py-2 font-medium">Producto</th>
+                    <th className="py-2 text-right font-medium">Cantidad</th>
+                    <th className="hidden py-2 font-medium sm:table-cell">
+                      Entrega
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderLines.map((item) => (
+                    <tr
+                      key={item.id}
+                      className="border-b border-[var(--line)] last:border-b-0"
+                    >
+                      <td className="py-2.5 font-medium">
+                        {item.product_name}
+                        {item.notes ? (
+                          <span className="mt-0.5 block text-xs font-normal text-[var(--muted)]">
+                            {item.notes}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="py-2.5 text-right tabular-nums">
+                        {formatPurchaseQty(itemOrderedQty(item))} {item.unit}
+                      </td>
+                      <td className="hidden py-2.5 text-[var(--muted)] sm:table-cell">
+                        {item.expected_delivery_date
+                          ? formatDateCO(item.expected_delivery_date)
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {hito === "pedir" && !canMark ? (
+                <p className="text-sm text-amber-800">
+                  No tiene permiso para marcar pedida. Quien compre debe tener
+                  «Pedir / comprar al proveedor».
+                </p>
+              ) : null}
+              {prepago && invoiceBlock ? (
+                <details className="rounded-lg border border-[var(--line)] px-3 py-2">
+                  <summary className="cursor-pointer text-sm">
+                    Facturar esta orden ahora
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    {canShowExtra && group.supplierId ? (
+                      <AddPendingToSupplierForm
+                        requestId={requestId}
+                        supplierId={group.supplierId}
+                        supplierName={group.supplierName}
+                        products={products}
+                        categories={categories}
+                        units={units}
+                        links={links}
+                        canCreateProduct={canCreateProduct}
+                        pending={pending}
+                        startTransition={startTransition}
+                        setError={setError}
+                        mode="invoice"
+                      />
+                    ) : null}
+                    {invoiceBlock}
+                  </div>
+                </details>
+              ) : null}
+            </>
+          ) : null}
+
+          {hito === "facturar" ? (
+            <>
+              {invoiceBlock}
+              {!invoiceBlock && payGateLabel ? (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                  {payGateLabel}{" "}
+                  <a className="underline" href="/solicitudes-pago">
+                    Ir a Solicitudes de pago
+                  </a>
+                </p>
+              ) : null}
+              {canShowExtra && group.supplierId ? (
+                <details className="rounded-lg border border-dashed border-[var(--line)] px-3 py-2">
+                  <summary className="cursor-pointer text-sm text-[var(--muted)]">
+                    Agregar producto extra a esta factura
+                  </summary>
+                  <div className="mt-3">
+                    <AddPendingToSupplierForm
+                      requestId={requestId}
+                      supplierId={group.supplierId}
+                      supplierName={group.supplierName}
+                      products={products}
+                      categories={categories}
+                      units={units}
+                      links={links}
+                      canCreateProduct={canCreateProduct}
+                      pending={pending}
+                      startTransition={startTransition}
+                      setError={setError}
+                      mode="invoice"
+                    />
+                  </div>
+                </details>
+              ) : null}
+              {!group.supplierId ? (
+                <p className="text-sm text-amber-800">
+                  Asigne proveedor a estos productos para poder facturarlos.
+                </p>
+              ) : null}
+            </>
+          ) : null}
+
+          {hito === "pagar" ? (
+            <div className="space-y-3">
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                {payGateLabel ??
+                  "La factura ya está cargada. Pague en Solicitudes de pago y luego vuelva a recibir."}{" "}
+                <a className="underline" href="/solicitudes-pago">
+                  Ir a Solicitudes de pago
+                </a>
+              </p>
+              {invoiced.length > 0 ? (
+                <ul className="space-y-1 text-sm text-[var(--muted)]">
+                  {invoiced.map((item) => (
+                    <li key={item.id}>{item.product_name}</li>
+                  ))}
+                </ul>
               ) : null}
             </div>
-            <span
-              className={`rounded-lg px-2.5 py-1 text-xs font-medium ${nextTone}`}
-            >
-              {actionLabel}
-            </span>
-          </div>
-        </summary>
-
-        <div className="space-y-4 border-t border-[var(--line)] px-3 py-3">
-          {settled ? (
-            <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-              Todo recibido y factura gestionada.
-            </p>
           ) : null}
 
-          {payGateLabel ? (
-            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-              {payGateLabel}{" "}
-              <a className="underline" href="/solicitudes-pago">
-                Ir a Solicitudes de pago
-              </a>
-            </p>
-          ) : null}
-
-          {invoiceFirst ? (
-            <>
-              {invoiceBlock}
-              {receiveBlock}
-            </>
-          ) : (
+          {hito === "recibir" ? (
             <>
               {receiveBlock}
-              {invoiceBlock}
+              {!canShowReceive && payGateLabel ? (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                  {payGateLabel}
+                </p>
+              ) : null}
+              {invoiceBlock ? (
+                <details className="rounded-lg border border-[var(--line)] px-3 py-2">
+                  <summary className="cursor-pointer text-sm text-[var(--muted)]">
+                    Facturar lo que ya llegó
+                  </summary>
+                  <div className="mt-3">{invoiceBlock}</div>
+                </details>
+              ) : null}
+              {history}
+              {extra}
             </>
-          )}
-
-          {!settled && !canShowInvoice && invoiced.length > 0 ? (
-            <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-              Factura de {group.supplierName} ya en{" "}
-              <a className="underline" href="/solicitudes-pago">
-                Solicitudes de pago
-              </a>
-              .
-            </p>
           ) : null}
 
-          {!group.supplierId ? (
-            <p className="text-sm text-amber-800">
-              Asigne proveedor a estos ítems para poder facturarlos.
-            </p>
-          ) : null}
-
-          {closedItems.length > 0 ? (
-            <details className="rounded-lg border border-[var(--line)] px-3 py-2">
-              <summary className="cursor-pointer text-sm text-[var(--muted)]">
-                Historial recibido / cerrado ({closedItems.length})
-              </summary>
-              <div className="mt-2 space-y-2">
-                {closedItems.map((item) => (
-                  <ReceiveItemRow
-                    key={item.id}
-                    item={item}
-                    requestId={requestId}
-                    canUndoReceive={
-                      canReceive && !item.invoice_payment_request_id
-                    }
-                    pending={pending}
-                    startTransition={startTransition}
-                    setError={setError}
-                  />
-                ))}
-              </div>
-            </details>
-          ) : null}
-
-          {!settled && canShowExtra && group.supplierId && !canShowInvoice ? (
-            <details className="rounded-lg border border-dashed border-[var(--line)] px-3 py-2">
-              <summary className="cursor-pointer text-sm text-[var(--muted)]">
-                Agregar producto extra a este proveedor
-              </summary>
-              <div className="mt-2">
-                <AddPendingToSupplierForm
-                  requestId={requestId}
-                  supplierId={group.supplierId}
-                  supplierName={group.supplierName}
-                  products={products}
-                  categories={categories}
-                  units={units}
-                  links={links}
-                  canCreateProduct={canCreateProduct}
-                  pending={pending}
-                  startTransition={startTransition}
-                  setError={setError}
-                  mode="receive"
-                />
-              </div>
-            </details>
+          {hito === "listas" ? (
+            <>
+              <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                Esta orden ya no tiene pasos pendientes.
+              </p>
+              {history ?? (
+                <ul className="space-y-1 text-sm">
+                  {orderLines.map((item) => (
+                    <li key={item.id}>
+                      {item.product_name}{" "}
+                      <span className="text-[var(--muted)]">
+                        {formatPurchaseQty(itemOrderedQty(item))} {item.unit}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           ) : null}
         </div>
-      </details>
+      </section>
     );
   }
 
-  const prepagoActive = activeViews.filter((v) => v.prepago);
-  const creditoActive = activeViews.filter((v) => !v.prepago);
-  const opsMixed = prepagoActive.length > 0 && creditoActive.length > 0;
-
   return (
     <section className="space-y-4">
-      <div className="rounded-xl border border-[var(--line)] bg-white p-4">
-        <h3 className="font-medium">Trabajo por proveedor</h3>
+      <div>
+        <h3 className="font-medium">Órdenes por hito</h3>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Cada OC está colapsada para no saturar la pantalla. Expanda un
-          proveedor y haga solo la acción <strong>Ahora</strong>. Recibir =
-          cantidades; Facturar = precios y cola de pago.
+          Cada proveedor está en un solo paso. Abra el hito y elija la orden.
         </p>
-        {opsMixed ? (
-          <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-            Mezcla prepago y crédito: use el bloque correspondiente; no hay un
-            solo orden para todos.
-          </p>
-        ) : null}
       </div>
 
-      {activeViews.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-3 text-sm text-[var(--muted)]">
-          No hay proveedores pendientes de recepción o factura.
+      <div className="flex flex-wrap gap-2 border-b border-[var(--line)] pb-3">
+        {PURCHASE_MILESTONES.map((milestone) => {
+          const count = views.filter((view) => view.hito === milestone.id).length;
+          const active = milestone.id === activeHito;
+          return (
+            <button
+              key={milestone.id}
+              type="button"
+              onClick={() => {
+                setPickedHito(milestone.id);
+                setSupplierKey(null);
+              }}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+                active
+                  ? "bg-[var(--solid)] text-[var(--on-solid)]"
+                  : "text-[var(--muted)] hover:bg-neutral-100 hover:text-[var(--ink)]"
+              }`}
+            >
+              {milestone.label} ({count})
+            </button>
+          );
+        })}
+      </div>
+
+      {inTab.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-[var(--line)] bg-white px-4 py-6 text-sm text-[var(--muted)]">
+          {PURCHASE_MILESTONES.find((milestone) => milestone.id === activeHito)
+            ?.empty}
         </p>
-      ) : null}
-
-      {prepagoActive.length > 0 ? (
+      ) : (
         <div className="space-y-3">
-          <div>
-            <h4 className="text-sm font-medium text-amber-900">
-              Prepago ({prepagoActive.length})
-            </h4>
-            <p className="text-xs text-amber-900/80">
-              Facturar → Pagar → Recibir
-            </p>
+          <div className="flex flex-wrap gap-2">
+            {inTab.map((view) => {
+              const key = view.group.supplierId ?? "sin";
+              const active = (selected?.group.supplierId ?? "sin") === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  title={view.group.supplierName}
+                  onClick={() => setSupplierKey(key)}
+                  className={`rounded-lg border px-3 py-2 text-left text-sm ${
+                    active
+                      ? "border-[var(--ink)] bg-neutral-100 font-medium text-[var(--ink)]"
+                      : "border-[var(--line)] bg-neutral-50 text-[var(--ink)]"
+                  }`}
+                >
+                  <span className="block">{view.orderNumber ?? "Sin OC"}</span>
+                  <span className="block max-w-[220px] truncate text-xs text-[var(--muted)]">
+                    {view.group.supplierName} · {view.group.items.length}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          {prepagoActive.map((view, index) => {
-            const needs =
-              view.canShowInvoice || view.canShowReceive || Boolean(view.payGateLabel);
-            const firstNeeds = prepagoActive.findIndex(
-              (v) => v.canShowInvoice || v.canShowReceive || Boolean(v.payGateLabel),
-            );
-            return renderSupplierCard(view, {
-              defaultOpen: needs && index === firstNeeds,
-            });
-          })}
+          {selected ? renderSupplierWork(selected) : null}
         </div>
-      ) : null}
-
-      {creditoActive.length > 0 ? (
-        <div className="space-y-3">
-          <div>
-            <h4 className="text-sm font-medium text-emerald-900">
-              Crédito ({creditoActive.length})
-            </h4>
-            <p className="text-xs text-emerald-900/80">
-              Recibir → Facturar
-            </p>
-          </div>
-          {creditoActive.map((view, index) => {
-            const needs =
-              view.canShowInvoice || view.canShowReceive || Boolean(view.payGateLabel);
-            const firstNeeds = creditoActive.findIndex(
-              (v) => v.canShowInvoice || v.canShowReceive || Boolean(v.payGateLabel),
-            );
-            return renderSupplierCard(view, {
-              defaultOpen: needs && index === firstNeeds,
-            });
-          })}
-        </div>
-      ) : null}
-
-      {settledViews.length > 0 ? (
-        <details className="space-y-3">
-          <summary className="cursor-pointer text-sm font-medium text-[var(--muted)]">
-            Ya gestionados ({settledViews.length})
-          </summary>
-          <div className="mt-3 space-y-3">
-            {settledViews.map((view) =>
-              renderSupplierCard(view, { settled: true }),
-            )}
-          </div>
-        </details>
-      ) : null}
+      )}
     </section>
   );
 }
@@ -3485,45 +3652,13 @@ export function RequestDetailClient({
     return classifySuppliersByTerms(entries);
   }, [items, supplierMap, supplierTerms]);
   const existingProductIds = new Set(items.map((i) => i.product_id));
-  const supplierIdsInRequest = useMemo(() => {
-    const ids = new Set<string>();
-    for (const item of items) {
-      const sid = item.approved_supplier_id ?? item.suggested_supplier_id;
-      if (sid) ids.add(sid);
-    }
-    return [...ids];
-  }, [items]);
-  const hasPendingOrders = supplierIdsInRequest.some((sid) =>
-    supplierOrderAllowsMarkOrdered(orderStatusBySupplier[sid] ?? "POR_PEDIR"),
-  );
-  const hasActiveOrders = supplierIdsInRequest.some((sid) => {
-    const st = orderStatusBySupplier[sid] ?? "POR_PEDIR";
-    return st !== "POR_PEDIR" && st !== "ANULADA";
-  });
-  // Pedir: mientras quede alguna OC por pedir (aunque otras ya avancen).
-  const showOrderPanel =
-    hasPendingOrders &&
-    ["APROBADA", "PEDIDA", "RECIBIDA_PARCIAL", "RECIBIDA", "FACTURA_ACEPTADA"].includes(
-      request.status,
-    );
-  // PDF compact cuando ya no hay panel de pedir completo.
-  const showSupplierOrders =
-    !showOrderPanel &&
-    [
-      "PEDIDA",
-      "RECIBIDA_PARCIAL",
-      "RECIBIDA",
-      "FACTURA_ACEPTADA",
-    ].includes(request.status);
-  const showOpsPanel =
-    (hasActiveOrders || supplierMix.hasPrepago) &&
-    [
-      "APROBADA",
-      "PEDIDA",
-      "RECIBIDA",
-      "RECIBIDA_PARCIAL",
-      "FACTURA_ACEPTADA",
-    ].includes(request.status);
+  const inSupplierFlow = [
+    "APROBADA",
+    "PEDIDA",
+    "RECIBIDA_PARCIAL",
+    "RECIBIDA",
+    "FACTURA_ACEPTADA",
+  ].includes(request.status);
   const approveGroups = useMemo(
     () =>
       groupPurchaseItemsBySupplier(items, supplierMap, {
@@ -3588,19 +3723,23 @@ export function RequestDetailClient({
             {purchaseRequestStatusLabel(request.status)}
           </Badge>
         </div>
-        <RequestProcessSteps status={request.status} />
-        <div className="mt-4">
-          <NextActionGuide
-            status={request.status}
-            canCreate={canCreate}
-            canApprove={canApprove}
-            canMarkOrdered={canMarkOrdered}
-            canReceive={canReceive}
-            canAcceptInvoice={canAcceptInvoice}
-            supplierMix={supplierMix}
-            itemCount={items.length}
-          />
-        </div>
+        {inSupplierFlow ? null : (
+          <>
+            <RequestProcessSteps status={request.status} />
+            <div className="mt-4">
+              <NextActionGuide
+                status={request.status}
+                canCreate={canCreate}
+                canApprove={canApprove}
+                canMarkOrdered={canMarkOrdered}
+                canReceive={canReceive}
+                canAcceptInvoice={canAcceptInvoice}
+                supplierMix={supplierMix}
+                itemCount={items.length}
+              />
+            </div>
+          </>
+        )}
       </div>
 
       {request.status === "BORRADOR" && canCreate ? (
@@ -3832,46 +3971,28 @@ export function RequestDetailClient({
         </div>
       ) : null}
 
-      {showOrderPanel ? (
-        <div className="space-y-4 rounded-xl border-2 border-[var(--ink)] bg-white p-5">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-              Paso actual
-            </p>
-            <h3 className="mt-1 font-medium">Pedir por proveedor</h3>
-            <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-[var(--muted)]">
-              <li>Descargue o imprima el PDF de cada proveedor.</li>
-              <li>Envíe el pedido o compre a ese proveedor.</li>
-              <li>
-                Marque <strong className="text-[var(--ink)]">Ya pedí / compré</strong>{" "}
-                solo en esa orden. Las demás pueden seguir pendientes.
-              </li>
-            </ol>
-            {supplierMix.hasPrepago ? (
-              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-                Prepago: puede facturar ese proveedor más abajo aunque aún no
-                marque el pedido.
-              </p>
-            ) : null}
-            {!canMarkOrdered ? (
-              <p className="mt-3 text-sm text-amber-800">
-                No tiene permiso para marcar pedida. Quien compre debe tener
-                «Pedir / comprar al proveedor».
-              </p>
-            ) : null}
-          </div>
-          <SupplierOrdersPanel
-            requestId={request.id}
-            items={items}
-            supplierMap={supplierMap}
-            orderNumberBySupplier={orderNumberBySupplier}
-            orderStatusBySupplier={orderStatusBySupplier}
-            canMarkOrdered={canMarkOrdered}
-            pending={pending}
-            startTransition={startTransition}
-            setError={setError}
-          />
-        </div>
+      {inSupplierFlow ? (
+        <SupplierOperationsPanel
+          requestId={request.id}
+          items={items}
+          products={products}
+          categories={categories}
+          units={units}
+          links={links}
+          supplierMap={supplierMap}
+          supplierTerms={supplierTerms}
+          orderNumberBySupplier={orderNumberBySupplier}
+          orderStatusBySupplier={orderStatusBySupplier}
+          paymentStatusById={new Map(Object.entries(paymentStatusById))}
+          canMarkOrdered={canMarkOrdered}
+          canReceive={canReceive}
+          canReceiveExtras={canReceiveExtras}
+          canCreateProduct={canCreateProduct}
+          canAcceptInvoice={canAcceptInvoice}
+          pending={pending}
+          startTransition={startTransition}
+          setError={setError}
+        />
       ) : null}
 
       {request.status === "ENVIADA" && canApprove ? (
@@ -3896,48 +4017,6 @@ export function RequestDetailClient({
             Rechazar
           </button>
         </form>
-      ) : null}
-
-      {showOpsPanel &&
-      (canReceive || canAcceptInvoice || canReceiveExtras) ? (
-        <SupplierOperationsPanel
-          requestId={request.id}
-          items={items}
-          products={products}
-          categories={categories}
-          units={units}
-          links={links}
-          supplierMap={supplierMap}
-          supplierTerms={supplierTerms}
-          orderNumberBySupplier={orderNumberBySupplier}
-          orderStatusBySupplier={orderStatusBySupplier}
-          paymentStatusById={new Map(Object.entries(paymentStatusById))}
-          canReceive={canReceive}
-          canReceiveExtras={canReceiveExtras}
-          canCreateProduct={canCreateProduct}
-          canAcceptInvoice={canAcceptInvoice}
-          pending={pending}
-          startTransition={startTransition}
-          setError={setError}
-        />
-      ) : null}
-
-      {showSupplierOrders ? (
-        <details className="rounded-xl border border-[var(--line)] bg-white">
-          <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-            PDF / pedido a proveedores
-          </summary>
-          <div className="border-t border-[var(--line)] px-4 py-3">
-            <SupplierOrdersPanel
-              requestId={request.id}
-              items={items}
-              supplierMap={supplierMap}
-              orderNumberBySupplier={orderNumberBySupplier}
-              orderStatusBySupplier={orderStatusBySupplier}
-              compact
-            />
-          </div>
-        </details>
       ) : null}
     </div>
   );
