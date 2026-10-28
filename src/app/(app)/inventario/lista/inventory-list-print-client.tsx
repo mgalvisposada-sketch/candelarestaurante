@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
 import { formatCOP, money } from "@/lib/money";
 import { todayInBogota, formatDateCO } from "@/lib/dates";
+import { KITCHEN_ITEM_KIND_LABELS } from "@/lib/kitchen/cost";
 
 export type ListCategory = {
   id: string;
@@ -21,6 +22,7 @@ export type ListProduct = {
   current_stock: number | string;
   unit_cost: number | string;
   notes: string | null;
+  item_kind?: string | null;
 };
 
 type CategoryBlock = {
@@ -39,6 +41,14 @@ function qty(value: number | string) {
 
 function lineValue(p: ListProduct) {
   return money(p.current_stock).times(money(p.unit_cost)).toNumber();
+}
+
+function kindLabel(kind: string | null | undefined) {
+  if (!kind || kind === "MATERIA_PRIMA") return null;
+  if (kind in KITCHEN_ITEM_KIND_LABELS) {
+    return KITCHEN_ITEM_KIND_LABELS[kind as keyof typeof KITCHEN_ITEM_KIND_LABELS];
+  }
+  return kind;
 }
 
 export function InventoryListPrintClient({
@@ -62,7 +72,14 @@ export function InventoryListPrintClient({
       if (onlyBelowMin && !(stock < min)) return false;
       if (!q) return true;
       const cat = catMap.get(p.category_id);
-      const hay = [p.name, p.sku ?? "", p.unit, cat?.code ?? "", cat?.name ?? ""]
+      const hay = [
+        p.name,
+        p.sku ?? "",
+        p.unit,
+        kindLabel(p.item_kind) ?? "",
+        cat?.code ?? "",
+        cat?.name ?? "",
+      ]
         .join(" ")
         .toLowerCase();
       return hay.includes(q);
@@ -185,7 +202,8 @@ export function InventoryListPrintClient({
           <div>
             <h1 className="text-xl font-medium">Lista de inventario</h1>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Vista para revisar o imprimir, agrupada por categoría.
+              Materias primas, insumos y preparaciones con inventario, agrupados
+              por categoría.
             </p>
           </div>
           <button
@@ -225,7 +243,7 @@ export function InventoryListPrintClient({
       <div className="print-root mx-auto max-w-5xl rounded-xl border border-[var(--line)] bg-white p-5 md:p-8 print:border-0 print:p-0">
         <header className="print-header mb-5">
           <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
-            Inventario de compras
+            Inventario
           </p>
           <h2 className="mt-1 text-xl font-medium">{organizationName}</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
@@ -274,6 +292,11 @@ export function InventoryListPrintClient({
                       <tr key={p.id} className="border-b border-[var(--line)]">
                         <td className="py-1.5 pr-2">
                           <span className="font-medium">{p.name}</span>
+                          {kindLabel(p.item_kind) ? (
+                            <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                              {kindLabel(p.item_kind)}
+                            </span>
+                          ) : null}
                           {p.notes ? (
                             <span className="mt-0.5 block text-xs text-[var(--muted)]">
                               {p.notes}

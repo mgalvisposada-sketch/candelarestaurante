@@ -6,6 +6,7 @@ import { isSuperAdmin } from "@/types/domain";
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { PHYSICAL_COUNT_ITEM_KINDS } from "@/lib/inventory/physical-count";
 import { InventarioNav } from "../inventario-nav";
 import {
   InventoryListPrintClient,
@@ -47,10 +48,10 @@ export default async function InventarioListaPage() {
     supabase
       .from("products")
       .select(
-        "id, category_id, sku, name, unit, min_stock, current_stock, unit_cost, notes",
+        "id, category_id, sku, name, unit, min_stock, current_stock, unit_cost, notes, item_kind",
       )
       .eq("organization_id", ctx.organization.id)
-      .eq("item_kind", "MATERIA_PRIMA")
+      .in("item_kind", [...PHYSICAL_COUNT_ITEM_KINDS])
       .eq("tracks_inventory", true)
       .is("deleted_at", null)
       .eq("is_active", true)
