@@ -19,6 +19,7 @@ import {
   importSuggestedProductsAction,
   markPurchaseOrderedAction,
   cancelPurchaseSupplierOrderAction,
+  dropUninvoicedPurchaseItemAction,
   receivePurchaseItemsAction,
   rejectPurchaseRequestAction,
   removePurchaseRequestItemAction,
@@ -1725,7 +1726,9 @@ function ReceiveItemRow({
               {item.status === "CANCELADO"
                 ? received > 0
                   ? "Recibido parcial · resto no llega"
-                  : "No llegará"
+                  : (item.notes ?? "").toLowerCase().includes("no vino en la factura")
+                    ? "No facturado"
+                    : "No llegará"
                 : isReceiveExtraItem(item)
                   ? "Agregado en recepción"
                   : againstInvoice && received >= target
@@ -2057,6 +2060,13 @@ function SupplierInvoiceForm({
     ]);
   }
 
+  const dropped = items.filter(
+    (item) =>
+      item.status === "CANCELADO" &&
+      roundPurchaseQty(Number(item.quantity_received || 0)) <= 0 &&
+      !item.invoice_payment_request_id,
+  );
+
   if (billable.length === 0) return null;
 
   return (
@@ -2087,8 +2097,8 @@ function SupplierInvoiceForm({
           {billingMode === "ordered" ? (
             <>
               Prepago: ajuste la <strong>cant. facturada</strong> si el
-              proveedor cobró distinto al pedido → pagar → recibir contra esa
-              cantidad.
+              proveedor cobró distinto al pedido. Si un producto no vino en la
+              factura, quítelo: se cierra y no queda pendiente por recibir.
             </>
           ) : (
             <>
@@ -2129,6 +2139,36 @@ function SupplierInvoiceForm({
                   <span className="tabular-nums font-medium">
                     {formatCOP(lineBase)}
                   </span>
+                  {receivedQty <= 0 ? (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      className="rounded-lg px-2 py-1 text-xs font-medium text-red-700 disabled:opacity-60"
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            `¿Quitar «${item.product_name}» (${formatPurchaseQty(ordered)} ${item.unit}) de la factura de ${supplierName}?\n\nEl proveedor no lo facturó. Esa línea se cierra y no queda pendiente por recibir.`,
+                          )
+                        ) {
+                          return;
+                        }
+                        setError(null);
+                        startTransition(async () => {
+                          const r = await dropUninvoicedPurchaseItemAction(
+                            requestId,
+                            item.id,
+                          );
+                          if (!r.ok) setError(r.error ?? "Error");
+                          else {
+                            notifyPendingActionsChanged();
+                            router.refresh();
+                          }
+                        });
+                      }}
+                    >
+                      Quitar · no facturado
+                    </button>
+                  ) : null}
                   {canUndoReceive ? (
                     <UndoReceiveButton
                       requestId={requestId}
@@ -2220,6 +2260,22 @@ function SupplierInvoiceForm({
           <span className="tabular-nums">{formatCOP(merchandise)}</span>
         </li>
       </ul>
+
+      {dropped.length > 0 ? (
+        <div className="rounded-lg border border-[var(--line)] bg-neutral-50 px-3 py-2 text-xs text-[var(--muted)]">
+          <p className="font-medium text-[var(--ink)]">
+            No facturados · no quedan por recibir
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {dropped.map((item) => (
+              <li key={item.id}>
+                {item.product_name} · pedido{" "}
+                {formatPurchaseQty(itemOrderedQty(item))} {item.unit}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <div className="space-y-2 rounded-lg border border-dashed border-[var(--line)] p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3143,7 +3199,7 @@ function SupplierOperationsPanel({
       ) : null;
 
     const orderLines = group.items.filter(
-      (item) => itemOrderedQty(item) > 0 || item.status !== "CANCELADO",
+      (item) => item.status !== "CANCELADO" && itemOrderedQty(item) > 0,
     );
 
     return (

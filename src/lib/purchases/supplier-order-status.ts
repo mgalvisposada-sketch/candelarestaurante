@@ -114,6 +114,10 @@ export function deriveSupplierOrderStatus(args: {
         Number(i.quantity_received || 0) > 0 ||
         Boolean(i.invoice_payment_request_id),
     );
+  const allCancelled = items.every((i) => i.status === "CANCELADO");
+  // Nada llegó ni se facturó: no marcar RECIBIDA (eso la dejaría por facturar
+  // o con fecha de recepción). La línea quitada al facturar no queda por recibir.
+  if (allCancelled && !anyReceived && !hasInvoice) return "ANULADA";
 
   if (allClosed && allInvoiced && allPaid) return "CERRADA";
   if (allClosed && allInvoiced) return "RECIBIDA";

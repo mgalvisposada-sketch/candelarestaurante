@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  deriveSupplierOrderStatus,
   purchaseMilestoneFor,
   supplierOrderCanBeRemoved,
 } from "@/lib/purchases/supplier-order-status";
@@ -137,5 +138,39 @@ describe("supplierOrderCanBeRemoved", () => {
         hasReceived: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("deriveSupplierOrderStatus al quitar una línea no facturada", () => {
+  const line = (
+    status: string,
+    qty = 2500,
+  ) => ({
+    status,
+    quantity_requested: qty,
+    quantity_approved: qty,
+    quantity_received: 0,
+    quantity_invoiced: 0,
+    invoice_payment_request_id: null,
+  });
+
+  it("anula la orden si todas las líneas se quitaron sin recepción ni factura", () => {
+    expect(
+      deriveSupplierOrderStatus({
+        items: [line("CANCELADO")],
+        paymentStatusById: new Map(),
+        wasMarkedOrdered: true,
+      }),
+    ).toBe("ANULADA");
+  });
+
+  it("deja pedida la orden si solo se quitó una línea y quedan otras por facturar", () => {
+    expect(
+      deriveSupplierOrderStatus({
+        items: [line("CANCELADO", 2500), line("APROBADO", 10)],
+        paymentStatusById: new Map(),
+        wasMarkedOrdered: true,
+      }),
+    ).toBe("PEDIDA");
   });
 });

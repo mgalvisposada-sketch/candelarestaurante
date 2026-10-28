@@ -1488,6 +1488,115 @@ export async function cancelPurchaseSupplierOrderAction(
   return { ok: true, id: requestId };
 }
 
+/**
+ * Quita un producto de la factura en curso porque el proveedor no lo facturó
+ * (no lo tenía). Cierra la línea: no queda pendiente por recibir.
+ */
+export async function dropUninvoicedPurchaseItemAction(
+  requestId: string,
+  itemId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (!ctxCanAccess(ctx, "compras.solicitudes.facturar")) {
+    return { ok: false, error: "Sin permiso para quitar productos de la factura" };
+  }
+
+  const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("purchase_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!request) return { ok: false, error: "Solicitud no encontrada" };
+  if (
+    ![
+      "APROBADA",
+      "PEDIDA",
+      "RECIBIDA_PARCIAL",
+      "RECIBIDA",
+      "FACTURA_ACEPTADA",
+    ].includes(request.status)
+  ) {
+    return {
+      ok: false,
+      error: "Solo se puede quitar un producto de una compra ya autorizada.",
+    };
+  }
+
+  const { data: item } = await supabase
+    .from("purchase_request_items")
+    .select(
+      "id, status, notes, quantity_received, invoice_payment_request_id, approved_supplier_id, suggested_supplier_id",
+    )
+    .eq("id", itemId)
+    .eq("purchase_request_id", requestId)
+    .eq("organization_id", ctx.organization.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (!item) return { ok: false, error: "Producto no encontrado" };
+  if (item.status === "CANCELADO") {
+    return { ok: false, error: "Este producto ya está cerrado" };
+  }
+  if (item.invoice_payment_request_id) {
+    return {
+      ok: false,
+      error: "Esta línea ya está en una factura enviada a pago.",
+    };
+  }
+  if (roundPurchaseQty(Number(item.quantity_received || 0)) > 0) {
+    return {
+      ok: false,
+      error:
+        "Este producto ya tiene mercancía recibida. No se quita desde la factura.",
+    };
+  }
+
+  const note = [item.notes, "No vino en la factura: el proveedor no lo tenía"]
+    .filter(Boolean)
+    .join(" · ");
+
+  const { error } = await supabase
+    .from("purchase_request_items")
+    .update({
+      status: "CANCELADO",
+      quantity_invoiced: 0,
+      notes: note,
+      updated_by: ctx.userId,
+    })
+    .eq("id", item.id)
+    .eq("organization_id", ctx.organization.id);
+  if (error) return { ok: false, error: error.message };
+
+  const syncError = await syncPurchaseSupplierOrdersForRequest({
+    supabase,
+    organizationId: ctx.organization.id,
+    requestId,
+    userId: ctx.userId,
+  });
+  if (syncError) return { ok: false, error: syncError };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organization.id,
+    user_id: ctx.userId,
+    action: "ANULAR",
+    entity: "purchase_request_items",
+    entity_id: item.id,
+    new_values: {
+      purchase_request_id: requestId,
+      supplier_id: item.approved_supplier_id ?? item.suggested_supplier_id,
+      reason: "no_vino_en_factura",
+    },
+  });
+
+  revalidateCompras(requestId);
+  return { ok: true, id: item.id };
+}
+
 export async function rejectPurchaseRequestAction(
   requestId: string,
   formData: FormData,
