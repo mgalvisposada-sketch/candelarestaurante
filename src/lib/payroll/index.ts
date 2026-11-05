@@ -7,6 +7,7 @@ export * from "./attendance";
 export * from "./vacations";
 export * from "./shift-settlement";
 export * from "./quincena";
+export * from "./accounting-report";
 export { simulateBiweekly } from "./simulate-biweekly";
 export { liquidatePeriod } from "./liquidate-period";
 export type { LiquidateEmployeeInput, LiquidationLine } from "./liquidate-period";

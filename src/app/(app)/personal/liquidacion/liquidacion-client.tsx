@@ -18,6 +18,7 @@ import {
   type AttendanceRow,
 } from "./attendance-grid-client";
 import { LiquidationDetailModal } from "./liquidation-detail-modal";
+import { AccountingReportSection } from "./accounting-report-client";
 import {
   PayrollSlipsSection,
   type SlipEmployee,
@@ -211,7 +212,7 @@ export function PeriodDetailClient({
           </p>
           <p className="mt-2 text-sm text-[var(--muted)]">
             Flujo: 1) Planilla → 2) Novedades → 3) Calcular / emitir → 4)
-            Colillas
+            Colillas → 5) Informe contador / ERP
           </p>
         </div>
         <Badge tone={STATUS_TONE[period.status] ?? "neutral"}>
@@ -436,6 +437,14 @@ export function PeriodDetailClient({
           lines={lines}
           employeesById={employeesById}
           paymentRequestsByLineId={paymentRequestsByLineId}
+        />
+      ) : null}
+
+      {lines.length > 0 ? (
+        <AccountingReportSection
+          period={period}
+          lines={lines}
+          employeesById={employeesById}
         />
       ) : null}
 
