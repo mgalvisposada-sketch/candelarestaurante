@@ -65,7 +65,7 @@ export default async function SolicitudesPagoPage() {
       supabase
         .from("payment_requests")
         .select(
-          "id, source, status, priority, concept, amount, requested_at, due_date, supplier_id, document_number, document_type, notes, rejection_reason, paid_at, payment_reference, payment_proof_document_id",
+          "id, source, status, priority, concept, amount, paid_amount, requested_at, due_date, supplier_id, document_number, document_type, notes, rejection_reason, paid_at, payment_reference, payment_proof_document_id",
         )
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
@@ -169,10 +169,13 @@ export default async function SolicitudesPagoPage() {
     (acc, r) => acc.plus(money(r.amount)),
     money(0),
   );
-  const payTotal = payQueue.reduce(
-    (acc, r) => acc.plus(money(r.amount)),
-    money(0),
-  );
+  const payTotal = payQueue.reduce((acc, r) => {
+    const remaining = Math.max(
+      0,
+      Number(r.amount || 0) - Number(r.paid_amount || 0),
+    );
+    return acc.plus(money(remaining));
+  }, money(0));
 
   const canApprove = ctxCanAccess(ctx, "solicitudes-pago.aprobar");
   const canPay = ctxCanAccess(ctx, "solicitudes-pago.pagar");

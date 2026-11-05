@@ -44,6 +44,7 @@ export type PaymentRequestRow = {
   priority: string;
   concept: string;
   amount: number | string;
+  paid_amount?: number | string | null;
   requested_at: string;
   due_date: string | null;
   supplier_id: string | null;
@@ -55,6 +56,16 @@ export type PaymentRequestRow = {
   payment_reference: string | null;
   payment_proof_document_id?: string | null;
 };
+
+function remainingForRequest(request: {
+  amount: number | string;
+  paid_amount?: number | string | null;
+}) {
+  return Math.max(
+    0,
+    Number(request.amount || 0) - Number(request.paid_amount || 0),
+  );
+}
 
 export type PaymentInvoiceLine = {
   id: string;
@@ -166,17 +177,21 @@ function accountOptionLabel(a: BankAccountOption) {
 
 function PayForm({
   requestId,
-  defaultAmount,
+  totalAmount,
+  paidAmount,
   bankAccounts: initialBankAccounts,
 }: {
   requestId: string;
-  defaultAmount: number | string;
+  totalAmount: number | string;
+  paidAmount?: number | string | null;
   bankAccounts: BankAccountOption[];
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [bankAccounts, setBankAccounts] = useState(initialBankAccounts);
-  const total = Number(defaultAmount) || 0;
+  const total = Number(totalAmount) || 0;
+  const alreadyPaid = Number(paidAmount || 0);
+  const remaining = Math.max(0, total - alreadyPaid);
   const floatAcc = bankAccounts.find((a) => a.is_cash_float);
   const otherAccounts = bankAccounts.filter((a) => !a.is_cash_float);
   const defaultPrimary =
@@ -188,14 +203,16 @@ function PayForm({
   const [split, setSplit] = useState(false);
   const [primaryId, setPrimaryId] = useState(defaultPrimary);
   const [primaryAmt, setPrimaryAmt] = useState(
-    total > 0 ? toMoneyString(total) : "",
+    remaining > 0 ? toMoneyString(remaining) : "",
   );
   const [secondaryAmt, setSecondaryAmt] = useState("");
 
   const primaryN = Number(String(primaryAmt).replace(/,/g, "")) || 0;
   const secondaryN = Number(String(secondaryAmt).replace(/,/g, "")) || 0;
-  const partsSum = split ? primaryN + secondaryN : primaryN;
-  const partsOk = !split || Math.abs(partsSum - total) < 0.01;
+  const payNow = split ? primaryN + secondaryN : primaryN;
+  const overRemaining = payNow - remaining > 0.009;
+  const isAbono = payNow > 0 && payNow < remaining - 0.009;
+  const partsOk = !split || (payNow > 0 && !overRemaining);
 
   return (
     <form
@@ -209,9 +226,28 @@ function PayForm({
         });
       }}
     >
-      <p className="md:col-span-12 text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
-        Registrar pago · total {formatCOP(total)}
-      </p>
+      <div className="md:col-span-12 space-y-1">
+        <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
+          {alreadyPaid > 0 ? "Registrar abono" : "Registrar pago o abono"}
+        </p>
+        <p className="text-sm text-[var(--muted)]">
+          Total {formatCOP(total)}
+          {alreadyPaid > 0 ? (
+            <>
+              {" "}
+              · abonado {formatCOP(alreadyPaid)} · saldo{" "}
+              <span className="font-medium text-[var(--ink)]">
+                {formatCOP(remaining)}
+              </span>
+            </>
+          ) : (
+            <>
+              {" "}
+              · puede pagar el total o un abono parcial
+            </>
+          )}
+        </p>
+      </div>
 
       {floatAcc ? (
         <label className="md:col-span-12 flex cursor-pointer items-center gap-2 text-sm text-[var(--ink)]">
@@ -223,15 +259,16 @@ function PayForm({
               setSplit(on);
               if (on) {
                 const floatAvail = Number(floatAcc.available_balance ?? 0);
-                const fromBase = Math.min(Math.max(floatAvail, 0), total);
-                const fromOther = Math.max(0, total - fromBase);
+                const target = payNow > 0 ? Math.min(payNow, remaining) : remaining;
+                const fromBase = Math.min(Math.max(floatAvail, 0), target);
+                const fromOther = Math.max(0, target - fromBase);
                 setSecondaryAmt(fromBase > 0 ? String(fromBase) : "");
                 setPrimaryAmt(String(fromOther));
                 if (!primaryId || primaryId === floatAcc.id) {
                   setPrimaryId(defaultPrimary);
                 }
               } else {
-                setPrimaryAmt(String(total));
+                setPrimaryAmt(String(payNow > 0 ? Math.min(payNow, remaining) : remaining));
                 setSecondaryAmt("");
               }
             }}
@@ -320,19 +357,14 @@ function PayForm({
       </label>
       <label className="block text-sm md:col-span-4">
         <span className="mb-1 block text-[var(--muted)]">
-          {split ? "Monto desde cuenta principal *" : "Monto"}
+          {split ? "Monto desde cuenta principal *" : "Monto a pagar / abonar"}
         </span>
         <input
           name="amount"
           value={primaryAmt}
-          onChange={(e) => {
-            setPrimaryAmt(e.target.value);
-            if (split) {
-              const n = Number(String(e.target.value).replace(/,/g, "")) || 0;
-              setSecondaryAmt(String(Math.max(0, total - n)));
-            }
-          }}
+          onChange={(e) => setPrimaryAmt(e.target.value)}
           className={inputClass}
+          inputMode="decimal"
         />
       </label>
 
@@ -347,23 +379,35 @@ function PayForm({
             <input
               name="secondary_amount"
               value={secondaryAmt}
-              onChange={(e) => {
-                setSecondaryAmt(e.target.value);
-                const n = Number(String(e.target.value).replace(/,/g, "")) || 0;
-                setPrimaryAmt(String(Math.max(0, total - n)));
-              }}
+              onChange={(e) => setSecondaryAmt(e.target.value)}
               className={inputClass}
+              inputMode="decimal"
             />
           </label>
           <div className="md:col-span-4 flex items-end pb-2 text-sm text-[var(--muted)]">
-            Suma {formatCOP(partsSum)}
-            {!partsOk ? (
-              <span className="ml-2 text-[var(--danger)]">≠ {formatCOP(total)}</span>
+            Suma {formatCOP(payNow)}
+            {overRemaining ? (
+              <span className="ml-2 text-[var(--danger)]">
+                &gt; saldo {formatCOP(remaining)}
+              </span>
             ) : (
-              <span className="ml-2 text-[var(--ok)]">= total</span>
+              <span className="ml-2 text-[var(--ok)]">
+                {isAbono ? "abono" : "= saldo"}
+              </span>
             )}
           </div>
         </>
+      ) : null}
+
+      {!split && overRemaining ? (
+        <p className="md:col-span-12 text-sm text-[var(--danger)]">
+          El monto supera el saldo pendiente ({formatCOP(remaining)}).
+        </p>
+      ) : null}
+      {!split && isAbono ? (
+        <p className="md:col-span-12 text-sm text-[var(--muted)]">
+          Quedará un saldo de {formatCOP(remaining - payNow)} por pagar.
+        </p>
       ) : null}
 
       <label className="block text-sm md:col-span-5">
@@ -388,10 +432,22 @@ function PayForm({
       <div className="flex items-end md:col-span-4">
         <button
           type="submit"
-          disabled={pending || bankAccounts.length === 0 || (split && !partsOk)}
+          disabled={
+            pending ||
+            bankAccounts.length === 0 ||
+            payNow <= 0 ||
+            overRemaining ||
+            (split && !partsOk)
+          }
           className="w-full rounded-lg bg-[var(--solid)] px-3 py-2.5 text-sm font-medium text-[var(--on-solid)] disabled:opacity-60"
         >
-          {pending ? "Pagando…" : "Confirmar pago"}
+          {pending
+            ? isAbono
+              ? "Registrando abono…"
+              : "Pagando…"
+            : isAbono
+              ? "Registrar abono"
+              : "Confirmar pago"}
         </button>
       </div>
       {error ? (
@@ -723,6 +779,9 @@ function RequestCard({
   const overdue = isOverdue(request.due_date, request.status);
   const inReview = queue === "review";
   const inPayQueue = queue === "pay";
+  const alreadyPaid = Number(request.paid_amount || 0);
+  const remaining = remainingForRequest(request);
+  const hasPartialPayment = alreadyPaid > 0.009 && request.status !== "PAGADA";
   const parsedNotes = parsePaymentInvoiceNotes(request.notes);
   const purchaseRequestId =
     invoiceDetail?.purchaseRequestId ?? parsedNotes.purchaseRequestId;
@@ -732,7 +791,8 @@ function RequestCard({
   const canCorrectThis =
     canCorrectPurchaseInvoice &&
     request.source === "FACTURA_PROVEEDOR" &&
-    !["PAGADA", "ANULADA", "RECHAZADA"].includes(request.status);
+    !["PAGADA", "ANULADA", "RECHAZADA"].includes(request.status) &&
+    alreadyPaid <= 0.009;
 
   function runCorrectInvoice() {
     const doc =
@@ -781,6 +841,7 @@ function RequestCard({
             <Badge tone={statusTone(request.status)}>
               {statusLabel(request.status)}
             </Badge>
+            {hasPartialPayment ? <Badge tone="warn">Con abono</Badge> : null}
             {overdue ? <Badge tone="danger">Vencida</Badge> : null}
           </div>
           <h3 className="font-medium leading-snug text-[var(--ink)]">
@@ -851,8 +912,14 @@ function RequestCard({
         </div>
         <div className="text-right">
           <p className="font-display text-2xl font-semibold tracking-tight">
-            {formatCOP(request.amount)}
+            {formatCOP(hasPartialPayment ? remaining : request.amount)}
           </p>
+          {hasPartialPayment ? (
+            <p className="mt-0.5 text-xs text-[var(--muted)]">
+              Saldo · total {formatCOP(request.amount)} · abonado{" "}
+              {formatCOP(alreadyPaid)}
+            </p>
+          ) : null}
           {purchaseHref ? (
             <Link
               href={purchaseHref}
@@ -932,7 +999,7 @@ function RequestCard({
                 className="rounded-lg bg-[var(--accent)] px-3.5 py-2 text-sm font-medium text-[var(--on-solid)] hover:bg-[var(--accent-hover)]"
                 onClick={() => setPayOpen(true)}
               >
-                Pagar
+                {hasPartialPayment ? "Abonar / pagar saldo" : "Pagar"}
               </button>
             ) : (
               <div className="w-full">
@@ -941,11 +1008,12 @@ function RequestCard({
                   className="mb-1 text-xs text-[var(--muted)] underline"
                   onClick={() => setPayOpen(false)}
                 >
-                  Cancelar pago
+                  Cancelar
                 </button>
                 <PayForm
                   requestId={request.id}
-                  defaultAmount={request.amount}
+                  totalAmount={request.amount}
+                  paidAmount={request.paid_amount}
                   bankAccounts={bankAccounts}
                 />
               </div>
@@ -1038,10 +1106,11 @@ export function PaymentRequestQueues({
   );
 
   const active = sections.find((s) => s.key === tab) ?? sections[0];
-  const activeTotal = active.items.reduce(
-    (acc, r) => acc.plus(money(r.amount)),
-    money(0),
-  );
+  const activeTotal = active.items.reduce((acc, r) => {
+    const value =
+      active.key === "pay" ? remainingForRequest(r) : Number(r.amount || 0);
+    return acc.plus(money(value));
+  }, money(0));
 
   return (
     <div className="space-y-4">

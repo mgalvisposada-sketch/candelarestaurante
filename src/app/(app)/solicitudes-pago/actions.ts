@@ -98,7 +98,7 @@ async function getWritableRequest(
   const { data, error } = await supabase
     .from("payment_requests")
     .select(
-      "id, source, status, concept, amount, supplier_id, ap_document_id, expense_id, create_expense, due_date, document_type, document_number, issue_date, notes",
+      "id, source, status, concept, amount, paid_amount, supplier_id, ap_document_id, expense_id, create_expense, due_date, document_type, document_number, issue_date, notes",
     )
     .eq("id", requestId)
     .eq("organization_id", orgId)
@@ -375,14 +375,21 @@ export async function payPaymentRequestAction(
   }
 
   const requestTotal = Number(req.amount);
+  const previouslyPaid = Number(req.paid_amount || 0);
+  const remaining = Math.max(0, requestTotal - previouslyPaid);
+  if (remaining <= 0.009) {
+    return { ok: false, error: "Esta solicitud ya está pagada por completo" };
+  }
+
   const primaryId = String(parsed.data.bank_account_id ?? "").trim();
   const secondaryId = emptyToNull(parsed.data.secondary_account_id);
   const secondaryAmt = parseMoney(parsed.data.secondary_amount, 0) ?? 0;
-  let primaryAmt = parseMoney(parsed.data.amount, requestTotal) ?? requestTotal;
+  let primaryAmt = parseMoney(parsed.data.amount, remaining) ?? remaining;
 
   if (secondaryId && secondaryAmt > 0) {
-    primaryAmt = parseMoney(parsed.data.amount, requestTotal - secondaryAmt) ??
-      requestTotal - secondaryAmt;
+    primaryAmt =
+      parseMoney(parsed.data.amount, remaining - secondaryAmt) ??
+      Math.max(0, remaining - secondaryAmt);
   }
 
   type Leg = { accountId: string; amount: number };
@@ -398,10 +405,10 @@ export async function payPaymentRequestAction(
 
   const payAmount = legs.reduce((s, l) => s + l.amount, 0);
   if (payAmount <= 0) return { ok: false, error: "Monto de pago inválido" };
-  if (Math.abs(payAmount - requestTotal) > 0.009) {
+  if (payAmount - remaining > 0.009) {
     return {
       ok: false,
-      error: `La suma de las partes (${formatCOP(payAmount)}) debe igualar el total de la solicitud (${formatCOP(requestTotal)}).`,
+      error: `El abono (${formatCOP(payAmount)}) no puede superar el saldo pendiente (${formatCOP(remaining)}).`,
     };
   }
 
@@ -439,6 +446,10 @@ export async function payPaymentRequestAction(
     }
   }
 
+  const newPaidTotal = previouslyPaid + payAmount;
+  const fullyPaid = newPaidTotal >= requestTotal - 0.009;
+  const isAbono = !fullyPaid || previouslyPaid > 0.009;
+
   const txIds: string[] = [];
   for (const leg of legs) {
     const acc = (accountRows ?? []).find((a) => a.id === leg.accountId);
@@ -446,13 +457,14 @@ export async function payPaymentRequestAction(
       legs.length > 1
         ? ` · parte ${formatCOP(leg.amount)}${acc?.is_cash_float ? " (base)" : ""}`
         : "";
+    const abonoLabel = isAbono ? " · abono" : "";
     const { data: bankTx, error: bankError } = await supabase
       .from("bank_transactions")
       .insert({
         organization_id: orgId,
         bank_account_id: leg.accountId,
         transaction_date: parsed.data.payment_date,
-        description: `${req.concept}${partLabel}`,
+        description: `${req.concept}${abonoLabel}${partLabel}`,
         reference: emptyToNull(parsed.data.payment_reference),
         debit: leg.amount,
         credit: 0,
@@ -495,7 +507,7 @@ export async function payPaymentRequestAction(
   const primaryTxId = txIds[0]!;
   const splitNote =
     legs.length > 1
-      ? `Pago repartido: ${legs
+      ? `${fullyPaid ? "Pago" : "Abono"} repartido: ${legs
           .map((l) => {
             const n =
               (accountRows ?? []).find((a) => a.id === l.accountId)?.bank_name ??
@@ -504,8 +516,13 @@ export async function payPaymentRequestAction(
           })
           .join(" + ")}`
       : null;
+  const abonoNote = !fullyPaid
+    ? `Abono ${formatCOP(payAmount)} · saldo ${formatCOP(Math.max(0, requestTotal - newPaidTotal))}`
+    : previouslyPaid > 0.009
+      ? `Pago final ${formatCOP(payAmount)} (abonado antes ${formatCOP(previouslyPaid)})`
+      : null;
 
-  if (req.expense_id) {
+  if (req.expense_id && fullyPaid) {
     await supabase
       .from("expenses")
       .update({
@@ -518,7 +535,11 @@ export async function payPaymentRequestAction(
       .eq("organization_id", orgId);
   }
 
-  const notesMerged = [emptyToNull(parsed.data.notes) ?? req.notes, splitNote]
+  const notesMerged = [
+    emptyToNull(parsed.data.notes) ?? req.notes,
+    abonoNote,
+    splitNote,
+  ]
     .filter(Boolean)
     .join(" · ");
 
@@ -544,7 +565,10 @@ export async function payPaymentRequestAction(
       .from("documents")
       .insert({
         organization_id: orgId,
-        name: `Comprobante pago · ${req.concept}`.slice(0, 200),
+        name: `Comprobante ${fullyPaid ? "pago" : "abono"} · ${req.concept}`.slice(
+          0,
+          200,
+        ),
         document_type: "COMPROBANTE_PAGO",
         file_size: proofFile.size,
         mime_type: proofFile.type || null,
@@ -565,13 +589,17 @@ export async function payPaymentRequestAction(
   const { error } = await supabase
     .from("payment_requests")
     .update({
-      status: "PAGADA",
+      status: (fullyPaid
+        ? "PAGADA"
+        : "EN_COLA_PAGO") satisfies PaymentRequestStatus,
       bank_account_id: primaryLeg.accountId,
       bank_transaction_id: primaryTxId,
-      paid_amount: payAmount,
-      paid_at: new Date().toISOString(),
+      paid_amount: newPaidTotal,
+      paid_at: fullyPaid ? new Date().toISOString() : null,
       payment_reference: emptyToNull(parsed.data.payment_reference),
-      payment_proof_document_id: proofDocumentId,
+      ...(proofDocumentId
+        ? { payment_proof_document_id: proofDocumentId }
+        : {}),
       notes: notesMerged || null,
       updated_by: ctx.userId,
     })
@@ -583,18 +611,21 @@ export async function payPaymentRequestAction(
   await supabase.from("audit_logs").insert({
     organization_id: orgId,
     user_id: ctx.userId,
-    action: "PAYMENT",
+    action: fullyPaid ? "PAYMENT" : "PARTIAL_PAYMENT",
     entity: "payment_requests",
     entity_id: requestId,
     new_values: {
       amount: payAmount,
+      paid_amount: newPaidTotal,
+      remaining: Math.max(0, requestTotal - newPaidTotal),
+      fully_paid: fullyPaid,
       legs,
       bank_transaction_ids: txIds,
       payment_proof_document_id: proofDocumentId,
     },
   });
 
-  if (req.source === "FACTURA_PROVEEDOR") {
+  if (fullyPaid && req.source === "FACTURA_PROVEEDOR") {
     try {
       await syncPurchaseOrdersAfterPayment(requestId);
     } catch {
@@ -701,6 +732,13 @@ export async function correctPurchaseInvoicePaymentRequestAction(
     return {
       ok: false,
       error: "Ya está pagada. No se puede corregir desde aquí.",
+    };
+  }
+  if (Number(req.paid_amount || 0) > 0) {
+    return {
+      ok: false,
+      error:
+        "Ya tiene abonos registrados. No se puede corregir hasta revertir esos pagos.",
     };
   }
   if (req.status === "ANULADA") {
@@ -816,6 +854,13 @@ export async function softDeletePaymentRequestAction(
   if (!req) return { ok: false, error: "Solicitud no encontrada" };
   if (req.status === "PAGADA") {
     return { ok: false, error: "No se puede anular una solicitud ya pagada" };
+  }
+  if (Number(req.paid_amount || 0) > 0) {
+    return {
+      ok: false,
+      error:
+        "No se puede anular: ya tiene abonos. Revierta esos pagos en Tesorería/CxP.",
+    };
   }
 
   // Facturas de compra: al anular, liberar ítems (si no, no se puede refacturar).
