@@ -30,7 +30,7 @@ const optionalUuid = z
 /**
  * El local declara flujo de caja.
  * - cash_sales: ventas en efectivo del día (se acreditan a Caja ventas al avalar)
- * - cash_float: restante de base/flotante contado (debe cuadrar con la cuenta Base)
+ * - cash_float: efectivo de apertura del día (referencia; no se acredita como venta)
  * Débito/crédito/transferencia = plata que aterriza en banco(s).
  */
 export const cashDailyCloseDraftSchema = z.object({

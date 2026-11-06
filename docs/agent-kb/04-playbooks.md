@@ -8,7 +8,7 @@ Guía a la pantalla correcta. Si va a **escribir**, pedir datos precisos + confi
 
 ### Declarar el día (local)
 1. `/cierre-caja`
-2. Completar ventas efectivo / débito / crédito / transfer + base (`cash_float`)
+2. Completar apertura (`cash_float`), ventas efectivo a inyectar, débito / crédito / transfer
 3. Guardar borrador → enviar a revisión (`EN_REVISION`)
 4. Avisar: el dinero **aún no** está acreditado en bancos
 

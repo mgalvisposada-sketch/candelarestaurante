@@ -11,8 +11,8 @@ Operación diaria del efectivo y bancos. El agente debe separar **declarar** (lo
 
 **Qué declara el local (borrador):**
 - `business_date`
-- `cash_float` — base/flotante contada en caja (NO es venta)
-- `cash_sales` — ventas en efectivo
+- `cash_float` — efectivo de apertura del día (referencia; NO es venta)
+- `cash_sales` — ventas en efectivo a **inyectar** en la caja al avalar
 - `card_debit_sales` + `card_credit_sales` → suman adquirencia
 - `transfer_sales` — transferencia/QR
 - Cuentas destino: `cash_account_id`, `card_account_id`, `transfer_account_id`
@@ -24,12 +24,13 @@ Operación diaria del efectivo y bancos. El agente debe separar **declarar** (lo
 - Enviar a revisión exige cuentas destino resueltas.
 - Pendiente de aval en bandeja = cierres `EN_REVISION` (`caja_avalar`).
 
-## Base / flotante vs ventas
+## Una sola caja operativa
 
-- Target org: `organizations.cash_float_target`.
-- Cuenta especial: `bank_accounts.is_cash_float` (base del local).
-- Las **ventas en efectivo** van a cuenta de caja con propósito de ventas (`fund_purpose` VENTAS / default), **no** a la cuenta flotante.
-- `cash_float` del cierre = conteo de base reportado; al avalar **no** se acredita como ingreso de ventas.
+- Cuenta canónica: `bank_accounts.is_cash_float` (legado de Base/flotante; UI = “Caja”).
+- Ya **no** hay meta (`cash_float_target` queda legado; no se usa en UI).
+- Apertura = saldo de la caja (snapshot + movimientos).
+- Al avalar, `cash_sales` / `cash_credited` se **inyectan** a esa misma caja (`INGRESO_CAJA`).
+- `cash_float` del cierre = apertura reportada; al avalar **no** se acredita como venta.
 
 ## Tesorería — aval (`/tesoreria`)
 
@@ -96,7 +97,7 @@ Operación diaria del efectivo y bancos. El agente debe separar **declarar** (lo
 
 | Pregunta ambigua | Preguntar |
 |------------------|-----------|
-| “¿Cuánta caja hay?” | ¿Liquidez total, una cuenta, o base/flotante? |
+| “¿Cuánta caja hay?” | ¿Liquidez total o saldo de la caja operativa? |
 | “Cierra el día” | ¿Declarar cierre o avalar en tesorería? Fecha del business_date. |
 | “Paga al proveedor” | ¿Ya está facturado / en solicitudes de pago? ¿Qué solicitud? |
 | “Mueve plata” | Origen, destino, monto, concepto — y confirmación si escribe. |
@@ -104,6 +105,6 @@ Operación diaria del efectivo y bancos. El agente debe separar **declarar** (lo
 ## Qué no hacer
 
 - Decir que “ya entró el dinero” solo porque el local declaró (falta aval).
-- Confundir `cash_float` con ventas en efectivo.
+- Confundir `cash_float` (apertura) con `cash_sales` (inyección al avalar).
 - Crear CxP o pagar fuera del flujo compras → solicitudes de pago.
 - Avalar sin contraste cuando el usuario pide rigor (ofrecer revisar diferencias POS vs declarado).

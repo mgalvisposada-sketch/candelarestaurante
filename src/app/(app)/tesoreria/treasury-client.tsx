@@ -3,12 +3,12 @@
 import { useState, useTransition, type ReactNode } from "react";
 import {
   confirmAcquiringBankSettlementAction,
+  consolidateIntoOperatingCashAction,
   createBankAccountAction,
   createTreasuryTransferAction,
   reassignBankTransactionAccountAction,
   softDeleteBankAccountAction,
   updateBankAccountAction,
-  updateCashFloatTargetAction,
   upsertBankBalanceSnapshotAction,
 } from "./actions";
 import { Badge } from "@/components/ui/primitives";
@@ -16,7 +16,7 @@ import { formatCOP } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
 import {
   bankKindLabel,
-  findCashFloatAccount,
+  findOperatingCashAccount,
   fundPurposeLabel,
 } from "@/lib/treasury";
 import type { VerificationStatus } from "@/types/domain";
@@ -249,108 +249,107 @@ function verificationTone(status: VerificationStatus) {
   return "danger" as const;
 }
 
-export function CashFloatAndTransferPanel({
-  cashFloatTarget,
+export function OperatingCashAndTransferPanel({
   accounts,
   availableByAccount,
   canManage,
   defaultCutoff,
 }: {
-  cashFloatTarget: number | string;
   accounts: BankAccountRow[];
   availableByAccount: Record<string, string>;
   canManage: boolean;
   defaultCutoff: string | null;
 }) {
   const active = accounts.filter((a) => a.is_active);
-  const floatAcc = findCashFloatAccount(active);
-  const target = Number(cashFloatTarget ?? 0);
-  const current = floatAcc
-    ? Number(availableByAccount[floatAcc.id] ?? 0)
+  const cashAcc = findOperatingCashAccount(active);
+  const current = cashAcc
+    ? Number(availableByAccount[cashAcc.id] ?? 0)
     : 0;
-  const gap = Math.max(0, target - current);
-  const short = target > 0 && current + 0.009 < target;
+  const needsOpening = Boolean(cashAcc) && current <= 0;
+  const pendingLegacy = accounts.filter(
+    (a) =>
+      !a.is_cash_float &&
+      a.account_kind === "CAJA" &&
+      (a.fund_purpose ?? "VENTAS") !== "EMPRESA" &&
+      Number(availableByAccount[a.id] ?? 0) > 0.009,
+  );
+  const pendingLegacyTotal = pendingLegacy.reduce(
+    (acc, a) => acc + Number(availableByAccount[a.id] ?? 0),
+    0,
+  );
 
   return (
     <div className="space-y-3">
       <CollapsiblePanel
-        title="Base / flotante"
-        description="Cuenta de efectivo operativo: cambio y gastos autorizados. El cierre reporta el restante y debe cuadrar con este saldo."
+        title="Caja operativa"
+        description="Una sola caja: arranca con efectivo, registra movimientos (gastos/traspasos) y al cierre se inyectan las ventas en efectivo."
         summary={
           <>
-            Meta {formatCOP(target)} · Actual{" "}
+            Saldo{" "}
             <strong className="text-[var(--ink)]">{formatCOP(current)}</strong>
-            {short ? ` · Faltan ${formatCOP(gap)}` : ""}
+            {cashAcc ? ` · ${cashAcc.bank_name}` : " · Sin cuenta"}
+            {pendingLegacy.length > 0
+              ? ` · Por consolidar ${formatCOP(pendingLegacyTotal)}`
+              : ""}
           </>
         }
-        defaultOpen={target <= 0 || short || !floatAcc}
+        defaultOpen={!cashAcc || needsOpening || pendingLegacy.length > 0}
         badge={
-          target <= 0 ? (
-            <Badge tone="warn">Sin meta</Badge>
-          ) : short ? (
-            <Badge tone="danger">Incompleta</Badge>
+          !cashAcc ? (
+            <Badge tone="warn">Sin caja</Badge>
+          ) : pendingLegacy.length > 0 ? (
+            <Badge tone="warn">Por consolidar</Badge>
+          ) : needsOpening ? (
+            <Badge tone="warn">Sin apertura</Badge>
           ) : (
-            <Badge tone="ok">Al día</Badge>
+            <Badge tone="ok">Activa</Badge>
           )
         }
       >
-        <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <div className="mb-4 grid gap-3 sm:grid-cols-2">
           <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
-            <p className="text-xs text-[var(--muted)]">Meta</p>
-            <p className="mt-1 font-medium">{formatCOP(target)}</p>
-          </div>
-          <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
-            <p className="text-xs text-[var(--muted)]">Saldo actual (cuenta Base)</p>
+            <p className="text-xs text-[var(--muted)]">Efectivo disponible</p>
             <p className="mt-1 font-medium">{formatCOP(current)}</p>
           </div>
-          <div
-            className={cn(
-              "rounded-lg px-3 py-2 text-sm",
-              short ? "bg-[var(--gold-soft)]" : "bg-[var(--surface-muted)]",
-            )}
-          >
-            <p className="text-xs text-[var(--muted)]">Para llegar a la meta</p>
-            <p className="mt-1 font-medium">{formatCOP(gap)}</p>
+          <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
+            <p className="text-xs text-[var(--muted)]">Cuenta</p>
+            <p className="mt-1 font-medium">
+              {cashAcc?.bank_name ?? "Se crea al entrar a Tesorería"}
+            </p>
           </div>
         </div>
-        <p className="mb-4 text-sm text-[var(--muted)]">
-          Si se paga un gasto desde Base, el saldo baja. Recargue con un
-          traspaso hacia Base desde banco o caja de ventas.
-        </p>
-        {canManage ? (
-          <div className="space-y-4">
-            <CashFloatTargetForm defaultValue={target} />
-            {floatAcc && current <= 0 && target > 0 ? (
-              <RegisterFloatOpeningForm
-                accountId={floatAcc.id}
-                defaultAmount={target}
-                defaultCutoff={defaultCutoff}
-              />
-            ) : null}
-          </div>
+        {pendingLegacy.length > 0 ? (
+          <p className="mb-4 rounded-lg border border-[var(--warn)]/40 bg-[var(--gold-soft)] px-3 py-2 text-sm">
+            Hay {pendingLegacy.length === 1 ? "una caja" : "cajas"} con saldo
+            fuera de la operativa ({pendingLegacy.map((a) => a.bank_name).join(", ")}
+            : {formatCOP(pendingLegacyTotal)}). Ábrala y pulse{" "}
+            <strong>Pasar saldo a caja operativa</strong>.
+          </p>
         ) : (
-          <p className="text-sm">
-            Meta {formatCOP(target)} · Actual {formatCOP(current)}
+          <p className="mb-4 text-sm text-[var(--muted)]">
+            Ya no hay meta ni flotante aparte. El saldo baja con pagos desde caja
+            y sube con traspasos o con la inyección del cierre avalado.
           </p>
         )}
+        {canManage && cashAcc && needsOpening ? (
+          <RegisterCashOpeningForm
+            accountId={cashAcc.id}
+            defaultCutoff={defaultCutoff}
+          />
+        ) : null}
       </CollapsiblePanel>
 
       {canManage && active.length >= 2 ? (
         <CollapsiblePanel
           title="Traspaso entre cuentas"
-          description="Incluye recargar Base (destino = Base / flotante)."
-          summary={
-            short
-              ? `Sugerido: traspasar ${formatCOP(gap)} → Base`
-              : "Origen → destino · valida disponible"
-          }
-          defaultOpen={short}
+          description="Mueva efectivo entre caja y bancos. Queda trazado en movimientos."
+          summary="Origen → destino · valida disponible"
+          defaultOpen={false}
         >
           <TreasuryTransferForm
             accounts={active}
             availableByAccount={availableByAccount}
-            defaultAmount={short ? String(gap) : ""}
-            preferFloatDestination
+            preferCashDestination
           />
         </CollapsiblePanel>
       ) : null}
@@ -358,65 +357,11 @@ export function CashFloatAndTransferPanel({
   );
 }
 
-function CashFloatTargetForm({ defaultValue }: { defaultValue: number }) {
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-  const [pending, startTransition] = useTransition();
-
-  return (
-    <form
-      className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"
-      action={(fd) => {
-        setError(null);
-        setSaved(false);
-        startTransition(async () => {
-          const result = await updateCashFloatTargetAction(fd);
-          if (!result.ok) setError(result.error ?? "Error");
-          else setSaved(true);
-        });
-      }}
-    >
-      <label className="block text-sm">
-        <span className="mb-1.5 block text-[var(--muted)]">
-          Meta de base (COP)
-        </span>
-        <input
-          name="cash_float_target"
-          required
-          inputMode="decimal"
-          defaultValue={String(defaultValue || "")}
-          placeholder="Ej. 300000"
-          className={inputClass}
-        />
-      </label>
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded-lg bg-[var(--solid)] px-4 py-2.5 text-sm font-medium text-[var(--on-solid)] disabled:opacity-60"
-      >
-        {pending ? "Guardando…" : "Guardar meta"}
-      </button>
-      {saved ? (
-        <p className="text-xs text-teal-700 sm:col-span-2">
-          Meta guardada · se creó/confirmó la cuenta Base
-        </p>
-      ) : null}
-      {error ? (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 sm:col-span-2">
-          {error}
-        </p>
-      ) : null}
-    </form>
-  );
-}
-
-function RegisterFloatOpeningForm({
+function RegisterCashOpeningForm({
   accountId,
-  defaultAmount,
   defaultCutoff,
 }: {
   accountId: string;
-  defaultAmount: number;
   defaultCutoff: string | null;
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -433,10 +378,10 @@ function RegisterFloatOpeningForm({
         });
       }}
     >
-      <p className="text-sm font-medium">¿La base ya está en el local?</p>
+      <p className="text-sm font-medium">¿Con cuánto efectivo arranca la caja?</p>
       <p className="mt-1 text-xs text-[var(--muted)]">
-        Registre el saldo inicial de la cuenta Base (no inventa plata: declara
-        lo que ya hay físicamente).
+        Declare el saldo inicial físico (no inventa plata: registra lo que ya
+        hay en el cajón).
       </p>
       <div className="mt-3 grid gap-3 sm:grid-cols-3 sm:items-end">
         <label className="block text-sm">
@@ -450,25 +395,26 @@ function RegisterFloatOpeningForm({
           />
         </label>
         <label className="block text-sm">
-          <span className="mb-1 block text-[var(--muted)]">Monto en local</span>
+          <span className="mb-1 block text-[var(--muted)]">Efectivo inicial</span>
           <input
             name="opening_balance"
             required
-            defaultValue={String(defaultAmount)}
+            inputMode="decimal"
+            placeholder="0"
             className={inputClass}
           />
         </label>
-        <input type="hidden" name="verification_status" value="CONFIRMADO" />
-        <input type="hidden" name="source" value="Base física en local" />
-        <input type="hidden" name="comments" value="Saldo inicial de flotante" />
         <button
           type="submit"
           disabled={pending}
           className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-4 py-2.5 text-sm font-medium disabled:opacity-60"
         >
-          {pending ? "Registrando…" : "Registrar saldo inicial"}
+          {pending ? "Registrando…" : "Registrar apertura"}
         </button>
       </div>
+      <input type="hidden" name="verification_status" value="CONFIRMADO" />
+      <input type="hidden" name="source" value="Apertura de caja" />
+      <input type="hidden" name="comments" value="Saldo inicial de caja" />
       {error ? (
         <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}
@@ -482,27 +428,25 @@ function TreasuryTransferForm({
   accounts,
   availableByAccount,
   defaultAmount = "",
-  preferFloatDestination = false,
+  preferCashDestination = false,
 }: {
   accounts: BankAccountRow[];
   availableByAccount: Record<string, string>;
   defaultAmount?: string;
-  preferFloatDestination?: boolean;
+  preferCashDestination?: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const floatAcc = findCashFloatAccount(accounts);
+  const cashAcc = findOperatingCashAccount(accounts);
   const defaultFrom =
     accounts.find((a) => a.account_kind === "BANCO" && !a.is_cash_float)?.id ??
     accounts.find((a) => !a.is_cash_float)?.id ??
     accounts[0]?.id ??
     "";
   const defaultTo =
-    preferFloatDestination && floatAcc
-      ? floatAcc.id
-      : accounts.find((a) => a.account_kind === "CAJA" && !a.is_cash_float)?.id ??
-        accounts.find((a) => a.id !== defaultFrom)?.id ??
-        "";
+    preferCashDestination && cashAcc
+      ? cashAcc.id
+      : accounts.find((a) => a.id !== defaultFrom)?.id ?? "";
 
   return (
     <form
@@ -525,7 +469,7 @@ function TreasuryTransferForm({
         >
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.is_cash_float ? "Base · " : ""}
+              {a.is_cash_float ? "Caja · " : ""}
               {a.bank_name}
               {availableByAccount[a.id] !== undefined
                 ? ` · disp. ${formatCOP(availableByAccount[a.id])}`
@@ -544,7 +488,7 @@ function TreasuryTransferForm({
         >
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.is_cash_float ? "Base · " : ""}
+              {a.is_cash_float ? "Caja · " : ""}
               {a.bank_name}
             </option>
           ))}
@@ -573,12 +517,12 @@ function TreasuryTransferForm({
       </label>
       <label className="block text-sm md:col-span-2">
         <span className="mb-1.5 block text-[var(--muted)]">
-          Nota (ej. recomponer base)
+          Nota (ej. recargar caja / remesa a banco)
         </span>
         <input
           name="notes"
-          defaultValue={preferFloatDestination ? "Recomponer base" : ""}
-          placeholder="Recomponer base / remesa a banco…"
+          defaultValue={preferCashDestination ? "Recargar caja" : ""}
+          placeholder="Recargar caja / remesa a banco…"
           className={inputClass}
         />
       </label>
@@ -728,8 +672,8 @@ function BankAccountFields({ account }: { account?: BankAccountRow }) {
           <>
             <input type="hidden" name="fund_purpose" value="VENTAS" />
             <p className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2 text-sm">
-              <strong>Ventas</strong> — la Base/flotante siempre es operativa
-              del local.
+              <strong>Ventas</strong> — caja operativa única del local
+              (apertura, inyecciones y egresos).
             </p>
           </>
         ) : (
@@ -815,6 +759,101 @@ function BankAccountFields({ account }: { account?: BankAccountRow }) {
   );
 }
 
+export function RegisteredAccountsList({
+  accounts,
+  snapshots,
+  defaultCutoff,
+  availableByAccount,
+  movementsByAccount,
+  canManage,
+}: {
+  accounts: BankAccountRow[];
+  snapshots: BalanceSnapshotRow[];
+  defaultCutoff: string | null;
+  availableByAccount: Record<string, string>;
+  movementsByAccount: Record<string, BankTransactionRow[]>;
+  canManage: boolean;
+}) {
+  const [showInactive, setShowInactive] = useState(false);
+  const inactiveCount = accounts.filter((a) => !a.is_active).length;
+  const visible = showInactive
+    ? accounts
+    : accounts.filter((a) => a.is_active);
+
+  if (accounts.length === 0) {
+    return (
+      <EmptyStateLike
+        title="Sin cuentas registradas"
+        description="Agregue bancos o pasarelas para construir la liquidez y destinar los cierres diarios."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {inactiveCount > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-[var(--muted)]">
+            {showInactive
+              ? `Mostrando ${visible.length} cuentas (${inactiveCount} inactivas)`
+              : `${visible.length} activas · ${inactiveCount} inactivas ocultas`}
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowInactive((v) => !v)}
+            className="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-medium text-[var(--ink)] hover:bg-[var(--surface-muted)]"
+          >
+            {showInactive ? "Ocultar inactivas" : "Mostrar inactivas"}
+          </button>
+        </div>
+      ) : null}
+
+      {visible.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-[var(--line)] px-4 py-6 text-center text-sm text-[var(--muted)]">
+          No hay cuentas activas.{" "}
+          <button
+            type="button"
+            onClick={() => setShowInactive(true)}
+            className="font-medium text-[var(--accent)] underline"
+          >
+            Mostrar inactivas
+          </button>
+        </p>
+      ) : (
+        visible.map((account) => (
+          <BankAccountCard
+            key={account.id}
+            account={account}
+            snapshot={
+              snapshots.find((s) => s.bank_account_id === account.id) ?? null
+            }
+            defaultCutoff={defaultCutoff}
+            availableBalance={availableByAccount[account.id]}
+            movements={movementsByAccount[account.id] ?? []}
+            accounts={accounts}
+            canManage={canManage}
+          />
+        ))
+      )}
+    </div>
+  );
+}
+
+function EmptyStateLike({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-xl border border-dashed border-[var(--line)] px-6 py-10 text-center">
+      <p className="font-medium text-[var(--ink)]">{title}</p>
+      <p className="mt-1 text-sm text-[var(--muted)]">{description}</p>
+    </div>
+  );
+}
+
 export function BankAccountCard({
   account,
   snapshot,
@@ -823,8 +862,6 @@ export function BankAccountCard({
   movements = [],
   accounts = [],
   canManage = true,
-  cashFloatAtLocal = null,
-  cashFloatDate = null,
 }: {
   account: BankAccountRow;
   snapshot: BalanceSnapshotRow | null;
@@ -833,8 +870,6 @@ export function BankAccountCard({
   movements?: BankTransactionRow[];
   accounts?: BankAccountRow[];
   canManage?: boolean;
-  cashFloatAtLocal?: number | null;
-  cashFloatDate?: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -849,10 +884,14 @@ export function BankAccountCard({
       : snapshot
         ? formatCOP(snapshot.opening_balance)
         : "—";
-  const showFloat =
-    Boolean(account.is_cash_float) &&
-    cashFloatAtLocal != null &&
-    Number.isFinite(cashFloatAtLocal);
+  const availableNum = Number(availableBalance ?? snapshot?.opening_balance ?? 0);
+  const canConsolidate =
+    canManage &&
+    !account.is_cash_float &&
+    account.account_kind === "CAJA" &&
+    (account.fund_purpose ?? "VENTAS") !== "EMPRESA" &&
+    availableNum > 0.009 &&
+    accounts.some((a) => a.is_cash_float && a.is_active);
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]">
@@ -870,15 +909,19 @@ export function BankAccountCard({
             <Badge tone={account.is_active ? "ok" : "neutral"}>
               {account.is_active ? "Activa" : "Inactiva"}
             </Badge>
-            <Badge
-              tone={
-                (account.fund_purpose ?? "VENTAS") === "EMPRESA"
-                  ? "neutral"
-                  : "info"
-              }
-            >
-              {fundPurposeLabel(account.fund_purpose)}
-            </Badge>
+            {account.is_cash_float ? (
+              <Badge tone="info">Caja operativa</Badge>
+            ) : (
+              <Badge
+                tone={
+                  (account.fund_purpose ?? "VENTAS") === "EMPRESA"
+                    ? "neutral"
+                    : "info"
+                }
+              >
+                {fundPurposeLabel(account.fund_purpose)}
+              </Badge>
+            )}
             {snapshot ? (
               <Badge tone={verificationTone(snapshot.verification_status)}>
                 {snapshot.verification_status}
@@ -896,14 +939,6 @@ export function BankAccountCard({
             <span className="font-medium text-[var(--ink)]">
               {availableLabel}
             </span>
-            {showFloat ? (
-              <>
-                {" · Meta "}
-                <span className="font-medium text-[var(--ink)]">
-                  {formatCOP(cashFloatAtLocal)}
-                </span>
-              </>
-            ) : null}
             {!expanded ? ` · ${movements.length} mov.` : ""}
           </p>
         </div>
@@ -920,30 +955,23 @@ export function BankAccountCard({
             </p>
           ) : null}
 
-          <div
-            className={
-              showFloat
-                ? "grid gap-3 md:grid-cols-5"
-                : "grid gap-3 md:grid-cols-4"
-            }
-          >
+          {!account.is_active && canConsolidate ? (
+            <div className="rounded-lg border border-[var(--warn)]/40 bg-[var(--gold-soft)] px-3 py-3 text-sm">
+              <p className="font-medium text-[var(--ink)]">
+                Saldo pendiente de consolidar
+              </p>
+              <p className="mt-1 text-[var(--muted)]">
+                Esta caja quedó inactiva al unificar. Pase {availableLabel} a
+                la caja operativa para dejar una sola.
+              </p>
+            </div>
+          ) : null}
+
+          <div className="grid gap-3 md:grid-cols-4">
             <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
               <div className="text-xs text-[var(--muted)]">Disponible</div>
               <div className="mt-1 font-medium">{availableLabel}</div>
             </div>
-            {showFloat ? (
-              <div className="rounded-lg bg-[var(--gold-soft)] px-3 py-2 text-sm">
-                <div className="text-xs text-[var(--warn)]">Base en el local</div>
-                <div className="mt-1 font-medium text-[var(--warn)]">
-                  {formatCOP(cashFloatAtLocal)}
-                </div>
-                <div className="mt-0.5 text-[10px] text-[var(--warn)]">
-                  {cashFloatDate
-                    ? `Cierre ${formatDateCO(cashFloatDate)}`
-                    : "Oficial · se recompone con traspasos"}
-                </div>
-              </div>
-            ) : null}
             <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
               <div className="text-xs text-[var(--muted)]">Saldo a corte</div>
               <div className="mt-1 font-medium">
@@ -974,6 +1002,31 @@ export function BankAccountCard({
                 ? "Ocultar movimientos"
                 : `Movimientos (${movements.length})`}
             </button>
+            {canConsolidate ? (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  if (
+                    !confirm(
+                      `¿Pasar ${availableLabel} de “${account.bank_name}” a la caja operativa?`,
+                    )
+                  ) {
+                    return;
+                  }
+                  setError(null);
+                  startTransition(async () => {
+                    const result = await consolidateIntoOperatingCashAction(
+                      account.id,
+                    );
+                    if (!result.ok) setError(result.error ?? "Error");
+                  });
+                }}
+                className="rounded-md bg-[var(--solid)] px-3 py-1.5 text-xs font-medium text-[var(--on-solid)] disabled:opacity-60"
+              >
+                {pending ? "Consolidando…" : "Pasar saldo a caja operativa"}
+              </button>
+            ) : null}
             {canManage ? (
               <>
                 <button
@@ -983,22 +1036,24 @@ export function BankAccountCard({
                 >
                   {editing ? "Cerrar edición" : "Editar cuenta / saldo"}
                 </button>
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={() => {
-                    if (!confirm("¿Desactivar esta cuenta?")) return;
-                    startTransition(async () => {
-                      const result = await softDeleteBankAccountAction(
-                        account.id,
-                      );
-                      if (!result.ok) setError(result.error ?? "Error");
-                    });
-                  }}
-                  className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700"
-                >
-                  Desactivar
-                </button>
+                {account.is_active && !account.is_cash_float ? (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => {
+                      if (!confirm("¿Desactivar esta cuenta?")) return;
+                      startTransition(async () => {
+                        const result = await softDeleteBankAccountAction(
+                          account.id,
+                        );
+                        if (!result.ok) setError(result.error ?? "Error");
+                      });
+                    }}
+                    className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700"
+                  >
+                    Desactivar
+                  </button>
+                ) : null}
               </>
             ) : null}
           </div>

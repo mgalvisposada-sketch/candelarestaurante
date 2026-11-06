@@ -140,8 +140,7 @@ export function CashCloseSection({
   history,
   canDeclare,
   canAvalar,
-  cashFloatTarget = 0,
-  cashFloatCurrent = 0,
+  cashOpeningBalance = 0,
 }: {
   accounts: BankAccountRow[];
   todayClose: CashDailyCloseRow | null;
@@ -149,9 +148,8 @@ export function CashCloseSection({
   history: CashDailyCloseRow[];
   canDeclare: boolean;
   canAvalar: boolean;
-  cashFloatTarget?: number | string;
-  /** Saldo vivo de la cuenta Base (después de gastos/traspasos). */
-  cashFloatCurrent?: number | string;
+  /** Saldo vivo de la caja operativa (apertura ± movimientos). */
+  cashOpeningBalance?: number | string;
 }) {
   const isSales = (a: BankAccountRow) =>
     (a.fund_purpose ?? "VENTAS") === "VENTAS";
@@ -159,8 +157,9 @@ export function CashCloseSection({
     (a) =>
       a.is_active &&
       isSales(a) &&
-      !a.is_cash_float &&
-      (a.account_kind === "CAJA" || a.account_kind === "OTRO"),
+      (a.is_cash_float ||
+        a.account_kind === "CAJA" ||
+        a.account_kind === "OTRO"),
   );
   const bankAccounts = accounts.filter(
     (a) =>
@@ -172,6 +171,8 @@ export function CashCloseSection({
         a.account_kind === "OTRO"),
   );
   const allActive = accounts.filter((a) => a.is_active && isSales(a));
+  const operatingCash =
+    cajaAccounts.find((a) => a.is_cash_float) ?? cajaAccounts[0] ?? null;
 
   const editable =
     canDeclare &&
@@ -194,7 +195,7 @@ export function CashCloseSection({
           <p className="mt-1 max-w-xl text-sm text-[var(--muted)]">
             {isReviewDesk
               ? "Contraste vs POS y acreditación a cuentas. El local reporta en Cierre de caja."
-              : "Reporte ventas en efectivo y el restante de base. El restante debe cuadrar con el saldo de Base en Tesorería."}
+              : "Reporte el efectivo a inyectar y lo que aterriza en banco. Una sola caja operativa."}
           </p>
         </div>
         {isLocalDesk ? <FlowSteps /> : null}
@@ -219,11 +220,14 @@ export function CashCloseSection({
       {canDeclare && editable ? (
         <DeclareForm
           accounts={allActive}
-          cajaAccounts={cajaAccounts.length > 0 ? cajaAccounts : allActive.filter((a) => !a.is_cash_float)}
-          bankAccounts={bankAccounts.length > 0 ? bankAccounts : allActive.filter((a) => !a.is_cash_float)}
+          cajaAccounts={operatingCash ? [operatingCash] : cajaAccounts}
+          bankAccounts={
+            bankAccounts.length > 0
+              ? bankAccounts
+              : allActive.filter((a) => !a.is_cash_float)
+          }
           todayClose={todayClose}
-          cashFloatTarget={cashFloatTarget}
-          cashFloatCurrent={cashFloatCurrent}
+          cashOpeningBalance={cashOpeningBalance}
         />
       ) : null}
 
@@ -335,12 +339,12 @@ function TodayStatusCard({
       </div>
       <div className="grid gap-0 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryTile
-          label="Restante de base"
+          label="Efectivo al abrir"
           value={formatCOP(close.cash_float)}
-          hint="Contado en el local al cierre"
+          hint="Referencia de apertura del día"
         />
         <SummaryTile
-          label="Ventas efectivo"
+          label="Efectivo inyectado"
           value={formatCOP(close.cash_sales)}
           hint={accountLabel(accounts, close.cash_account_id)}
         />
@@ -412,25 +416,22 @@ function DeclareForm({
   cajaAccounts,
   bankAccounts,
   todayClose,
-  cashFloatTarget,
-  cashFloatCurrent,
+  cashOpeningBalance,
 }: {
   accounts: BankAccountRow[];
   cajaAccounts: BankAccountRow[];
   bankAccounts: BankAccountRow[];
   todayClose: CashDailyCloseRow | null;
-  cashFloatTarget: number | string;
-  cashFloatCurrent: number | string;
+  cashOpeningBalance: number | string;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const targetAmt = Number(cashFloatTarget ?? 0);
-  const systemFloat = Number(cashFloatCurrent ?? 0);
-  const [floatRaw, setFloatRaw] = useState(
+  const systemOpening = Number(cashOpeningBalance ?? 0);
+  const [openingRaw, setOpeningRaw] = useState(
     todayClose
       ? String(todayClose.cash_float)
-      : systemFloat > 0
-        ? String(systemFloat)
+      : systemOpening > 0
+        ? String(systemOpening)
         : "",
   );
   const [cashRaw, setCashRaw] = useState(
@@ -468,7 +469,7 @@ function DeclareForm({
   const [openStep, setOpenStep] = useState<1 | 2 | 3>(1);
   const [notesOpen, setNotesOpen] = useState(Boolean(todayClose?.comments));
 
-  const floatAmt = parseAmount(floatRaw);
+  const openingAmt = parseAmount(openingRaw);
   const cashAmt = parseAmount(cashRaw);
   const debitAmt = parseAmount(debitRaw);
   const creditAmt = parseAmount(creditRaw);
@@ -476,10 +477,7 @@ function DeclareForm({
   const transferAmt = parseAmount(transferRaw);
   const bankAmt = cardAmt + transferAmt;
   const dayTotal = cashAmt + bankAmt;
-  const expectedInDrawer = floatAmt + cashAmt;
-  const floatDelta = floatRaw.trim()
-    ? floatAmt - systemFloat
-    : null;
+  const expectedInDrawer = openingAmt + cashAmt;
 
   const cashDest =
     cajaAccounts[0] ?? accounts.find((a) => a.account_kind === "CAJA") ?? null;
@@ -557,80 +555,56 @@ function DeclareForm({
 
         <FormStep
           step={1}
-          title="Efectivo: ventas + restante de base"
-          hint={`Ventas → ${cashDest.bank_name}. Restante de base debe cuadrar con Tesorería (${formatCOP(systemFloat)}).`}
+          title="Efectivo: apertura + inyección"
+          hint={`Ventas en efectivo se inyectan a ${cashDest.bank_name}. Al avalar, ese valor suma al saldo de la caja.`}
           open={openStep === 1}
           onOpen={() => setOpenStep(1)}
-          done={cashRaw.trim() !== "" && floatRaw.trim() !== ""}
+          done={cashRaw.trim() !== "" && openingRaw.trim() !== ""}
           summary={
-            cashRaw.trim() || floatRaw.trim()
-              ? `Ventas ${formatCOP(cashAmt)} · Base restante ${formatCOP(floatAmt)}`
-              : `Meta ${formatCOP(targetAmt)} · En sistema ${formatCOP(systemFloat)}`
+            cashRaw.trim() || openingRaw.trim()
+              ? `Apertura ${formatCOP(openingAmt)} · Inyectar ${formatCOP(cashAmt)}`
+              : `Saldo sistema ${formatCOP(systemOpening)}`
           }
         >
           <div className="mb-4 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm">
             <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
-              Referencia Tesorería
+              Caja operativa
             </p>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Meta {formatCOP(targetAmt)} · Saldo actual de Base{" "}
+              Saldo actual en Tesorería{" "}
               <strong className="text-[var(--ink)]">
-                {formatCOP(systemFloat)}
+                {formatCOP(systemOpening)}
               </strong>
-              {systemFloat + 0.009 < targetAmt ? (
-                <span className="text-[var(--warn)]">
-                  {" "}
-                  (faltan {formatCOP(targetAmt - systemFloat)} por recargar)
-                </span>
-              ) : null}
+              . Sin meta: solo apertura, movimientos e inyección al cierre.
             </p>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <label className="block rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-sm text-[var(--ink)]">
               <span className="mb-1 block font-medium text-[var(--ink)]">
-                Restante de base (contado)
+                Efectivo al abrir
               </span>
               <span className="mb-3 block text-xs text-[var(--muted)]">
-                Lo que quedó del flotante tras gastos del día
+                Con lo que arrancó el cajón (referencia)
               </span>
               <input
                 name="cash_float"
                 required
                 inputMode="decimal"
                 placeholder="0"
-                value={floatRaw}
-                onChange={(e) => setFloatRaw(e.target.value)}
+                value={openingRaw}
+                onChange={(e) => setOpeningRaw(e.target.value)}
                 className={inputLgClass}
               />
               <span className="mt-2 block text-sm font-medium">
-                {floatRaw.trim() !== "" ? formatCOP(floatAmt) : "—"}
+                {openingRaw.trim() !== "" ? formatCOP(openingAmt) : "—"}
               </span>
-              {floatDelta !== null ? (
-                <span className="mt-2 block">
-                  {Math.abs(floatDelta) < 0.01 ? (
-                    <span className="inline-flex rounded-md bg-[var(--surface-muted)] px-2 py-0.5 text-xs font-medium text-[var(--ok)]">
-                      Cuadra con Tesorería
-                    </span>
-                  ) : (
-                    <span
-                      className={cn(
-                        "inline-flex rounded-md px-2 py-0.5 text-xs font-medium",
-                        Math.abs(floatDelta) > 5000
-                          ? "bg-[var(--accent-soft)] text-[var(--danger)]"
-                          : "bg-[var(--gold-soft)] text-[var(--warn)]",
-                      )}
-                    >
-                      {floatDelta > 0 ? "Sobra vs sistema" : "Falta vs sistema"}{" "}
-                      {formatCOP(Math.abs(floatDelta))}
-                    </span>
-                  )}
-                </span>
-              ) : null}
             </label>
             <label className="block rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-sm text-[var(--ink)]">
-              <span className="mb-1 block font-medium text-[var(--ink)]">Ventas en efectivo</span>
+              <span className="mb-1 block font-medium text-[var(--ink)]">
+                Ventas en efectivo a inyectar
+              </span>
               <span className="mb-3 block text-xs text-[var(--muted)]">
-                Contado del cajón menos el restante de base
+                Valor que se acredita a la caja al avalar
               </span>
               <input
                 name="cash_sales"
@@ -647,11 +621,10 @@ function DeclareForm({
             </label>
           </div>
           <p className="mt-3 text-sm text-[var(--muted)]">
-            Total contado en cajón:{" "}
+            Total esperado en cajón (apertura + inyección):{" "}
             <strong className="text-[var(--ink)]">
               {formatCOP(expectedInDrawer)}
-            </strong>{" "}
-            (restante base + ventas)
+            </strong>
           </p>
           <div className="mt-4 flex justify-end">
             <button
@@ -840,7 +813,9 @@ function DeclareForm({
               <p className="mt-1 font-display text-2xl font-semibold">
                 {formatCOP(expectedInDrawer)}
               </p>
-              <p className="mt-1 text-xs text-white/50">Base + ventas efectivo</p>
+              <p className="mt-1 text-xs text-white/50">
+                Apertura + efectivo a inyectar
+              </p>
             </div>
             <div>
               <p className="text-xs text-white/60">Aterriza en banco</p>
@@ -871,8 +846,8 @@ function DeclareForm({
                 Surte → <strong>{cashDest.bank_name}</strong>
               </p>
               <p className="mt-1 text-xs text-[var(--muted)]">
-                Restante de base ({formatCOP(floatAmt)}) no se acredita; ya
-                vive en la cuenta Base.
+                Se inyecta {formatCOP(cashAmt)} a la caja. La apertura (
+                {formatCOP(openingAmt)}) ya está en el saldo.
               </p>
             </div>
             <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3">
@@ -1049,8 +1024,9 @@ function ReviewCard({
             {formatDateCO(close.business_date)}
           </h4>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Local reportó {formatCOP(dayTotal)} · Restante base{" "}
-            {formatCOP(close.cash_float)}
+            Local reportó {formatCOP(dayTotal)} · Apertura{" "}
+            {formatCOP(close.cash_float)} · Inyectar{" "}
+            {formatCOP(close.cash_sales)}
           </p>
         </div>
         <Badge tone="warn">Esperando aval</Badge>

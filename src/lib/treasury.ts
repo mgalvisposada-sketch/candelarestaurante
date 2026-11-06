@@ -10,7 +10,7 @@ export function sumOpeningBalances(balances: MoneyInput[]): string {
 export type BankAccountFundPurpose = "VENTAS" | "EMPRESA";
 
 export function bankKindLabel(kind: string, opts?: { isCashFloat?: boolean }) {
-  if (opts?.isCashFloat) return "Base / flotante";
+  if (opts?.isCashFloat) return "Caja operativa";
   switch (kind) {
     case "BANCO":
       return "Banco";
@@ -30,15 +30,27 @@ export function fundPurposeLabel(purpose: string | null | undefined) {
   return "Ventas";
 }
 
-export function findCashFloatAccount<
-  T extends { is_cash_float?: boolean | null; is_active?: boolean },
+/** Cuenta única de efectivo operativo (legado: is_cash_float = Base/flotante). */
+export function findOperatingCashAccount<
+  T extends {
+    is_cash_float?: boolean | null;
+    is_active?: boolean;
+    account_kind?: string | null;
+  },
 >(accounts: T[]): T | null {
   return (
     accounts.find((a) => a.is_cash_float && a.is_active !== false) ??
     accounts.find((a) => a.is_cash_float) ??
+    accounts.find(
+      (a) => a.account_kind === "CAJA" && a.is_active !== false,
+    ) ??
+    accounts.find((a) => a.account_kind === "CAJA") ??
     null
   );
 }
+
+/** @deprecated Usar findOperatingCashAccount. */
+export const findCashFloatAccount = findOperatingCashAccount;
 
 type AccountForClose = {
   id: string;
@@ -55,7 +67,7 @@ function isSalesAccount(a: AccountForClose) {
 
 /**
  * Destinos del cierre (solo cuentas de ventas):
- * - efectivo (ventas) → cuenta CAJA que NO es la base/flotante
+ * - efectivo (ventas) → la única caja operativa (se inyecta al avalar)
  * - adquirencia (débito+crédito) → banco/pasarela donde liquida el datáfono
  * - transferencia/QR → banco donde caen esos abonos (puede ser otro)
  */
@@ -71,13 +83,15 @@ export function resolveCashCloseDestinations(
   transferAccountId: string | null;
 } {
   const active = accounts.filter((a) => a.is_active && isSalesAccount(a));
+  const operating = findOperatingCashAccount(active);
   const cash =
-    active.find((a) => a.account_kind === "CAJA" && !a.is_cash_float) ??
+    operating ??
     active.find((a) => a.account_kind === "CAJA") ??
-    active.find((a) => a.account_kind === "OTRO" && !a.is_cash_float) ??
+    active.find((a) => a.account_kind === "OTRO") ??
     null;
   const banks = active.filter(
     (a) =>
+      a.id !== cash?.id &&
       !a.is_cash_float &&
       (a.account_kind === "BANCO" ||
         a.account_kind === "PASARELA" ||

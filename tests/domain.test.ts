@@ -158,7 +158,7 @@ describe("treasury", () => {
     );
     expect(sumOpeningBalances(["1000.50", "2000.25"])).toBe("3000.75");
     expect(bankKindLabel("CAJA")).toBe("Caja");
-    expect(bankKindLabel("CAJA", { isCashFloat: true })).toBe("Base / flotante");
+    expect(bankKindLabel("CAJA", { isCashFloat: true })).toBe("Caja operativa");
   });
 
   it("resuelve destinos del cierre solo con cuentas de ventas", async () => {
@@ -166,8 +166,7 @@ describe("treasury", () => {
       "../src/lib/treasury"
     );
     const accounts = [
-      { id: "base-1", account_kind: "CAJA", is_active: true, is_cash_float: true, fund_purpose: "VENTAS" },
-      { id: "caja-1", account_kind: "CAJA", is_active: true, is_cash_float: false, fund_purpose: "VENTAS" },
+      { id: "caja-1", account_kind: "CAJA", is_active: true, is_cash_float: true, fund_purpose: "VENTAS" },
       { id: "banco-1", account_kind: "BANCO", is_active: true, fund_purpose: "VENTAS" },
       { id: "banco-2", account_kind: "BANCO", is_active: true, fund_purpose: "VENTAS" },
       { id: "banco-prestamo", account_kind: "BANCO", is_active: true, fund_purpose: "EMPRESA" },

@@ -9,7 +9,8 @@ import {
   type BalanceSnapshotInput,
   type BankTransactionInput,
 } from "@/lib/treasury-balance";
-import { findCashFloatAccount } from "@/lib/treasury";
+import { findOperatingCashAccount } from "@/lib/treasury";
+import { ensureOperatingCashAccount } from "@/lib/cash-float";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
@@ -52,7 +53,12 @@ export default async function CierreCajaPage() {
   const canDeclare =
     ctxCanAccess(ctx, "cierre-caja.declarar") ||
     ctxCanAccess(ctx, "tesoreria.caja.declarar");
-  const cashFloatTarget = Number(ctx.organization.cash_float_target ?? 0);
+
+  try {
+    await ensureOperatingCashAccount(supabase, orgId, ctx.userId);
+  } catch {
+    /* sigue sin caja si falla */
+  }
 
   const { data: accountRows } = await supabase
     .from("bank_accounts")
@@ -66,16 +72,16 @@ export default async function CierreCajaPage() {
   const accounts = (accountRows ?? []) as BankAccountRow[];
   const accountIds = accounts.map((a) => a.id);
 
-  let cashFloatCurrent = 0;
-  const floatAcc = findCashFloatAccount(accounts);
-  if (floatAcc && accountIds.length > 0) {
+  let cashOpeningBalance = 0;
+  const cashAcc = findOperatingCashAccount(accounts);
+  if (cashAcc && accountIds.length > 0) {
     let snapQuery = supabase
       .from("bank_balance_snapshots")
       .select(
         "bank_account_id, cutoff_date, opening_balance, verification_status",
       )
       .eq("organization_id", orgId)
-      .eq("bank_account_id", floatAcc.id)
+      .eq("bank_account_id", cashAcc.id)
       .is("deleted_at", null);
     if (cutoff) snapQuery = snapQuery.eq("cutoff_date", cutoff);
     const { data: snapRows } = await snapQuery;
@@ -87,7 +93,7 @@ export default async function CierreCajaPage() {
           "bank_account_id, cutoff_date, opening_balance, verification_status",
         )
         .eq("organization_id", orgId)
-        .eq("bank_account_id", floatAcc.id)
+        .eq("bank_account_id", cashAcc.id)
         .is("deleted_at", null)
         .order("cutoff_date", { ascending: false })
         .limit(1);
@@ -99,10 +105,10 @@ export default async function CierreCajaPage() {
         "bank_account_id, transaction_date, debit, credit, settlement_status",
       )
       .eq("organization_id", orgId)
-      .eq("bank_account_id", floatAcc.id)
+      .eq("bank_account_id", cashAcc.id)
       .is("deleted_at", null);
-    cashFloatCurrent = availableBalanceForAccount({
-      accountId: floatAcc.id,
+    cashOpeningBalance = availableBalanceForAccount({
+      accountId: cashAcc.id,
       snapshots,
       transactions: (txRows ?? []) as BankTransactionInput[],
       orgCutoff: cutoff,
@@ -135,7 +141,7 @@ export default async function CierreCajaPage() {
       <main className="space-y-6 p-8">
         <PageIntro
           title="¿Cómo quedó el día en el local?"
-          description="Reporte ventas en efectivo y el restante de base (debe cuadrar con Tesorería). Gerencia avala en Tesorería."
+          description="Reporte la apertura y el efectivo a inyectar. Gerencia avala en Tesorería y acredita ese valor a la caja."
         />
 
         <CashCloseSection
@@ -145,8 +151,7 @@ export default async function CierreCajaPage() {
           history={history}
           canDeclare={canDeclare}
           canAvalar={false}
-          cashFloatTarget={cashFloatTarget}
-          cashFloatCurrent={cashFloatCurrent}
+          cashOpeningBalance={cashOpeningBalance}
         />
       </main>
     </>

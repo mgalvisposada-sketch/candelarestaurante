@@ -139,7 +139,7 @@ export default async function TesoreriaPagosPage({
   const accountOptions: FilterOption[] = [...accountsById.values()].map(
     (a) => ({
       id: a.id,
-      label: `${a.is_cash_float ? "Base · " : ""}${a.bank_name}${
+      label: `${a.is_cash_float ? "Caja · " : ""}${a.bank_name}${
         a.masked_number ? ` · ${a.masked_number}` : ""
       }${a.fund_purpose ? ` · ${a.fund_purpose === "VENTAS" ? "Ventas" : "Empresa"}` : ""}`,
     }),

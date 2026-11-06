@@ -2,7 +2,6 @@ import { AppHeader } from "@/components/layout/app-header";
 import {
   Badge,
   Card,
-  EmptyState,
   PageIntro,
   StatCard,
 } from "@/components/ui/primitives";
@@ -12,8 +11,8 @@ import { ctxCanAccess, requireModuleAccess } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
-import { ensureCashFloatAccount } from "@/lib/cash-float";
-import { bankKindLabel } from "@/lib/treasury";
+import { ensureOperatingCashAccount } from "@/lib/cash-float";
+import { bankKindLabel, findOperatingCashAccount } from "@/lib/treasury";
 import {
   availableBalanceForAccount,
   sumAvailableBalances,
@@ -24,10 +23,10 @@ import { isSuperAdmin } from "@/types/domain";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
-  BankAccountCard,
-  CashFloatAndTransferPanel,
   CreateBankAccountForm,
+  OperatingCashAndTransferPanel,
   PendingAcquiringSettlementsPanel,
+  RegisteredAccountsList,
   type BalanceSnapshotRow,
   type BankAccountRow,
   type BankTransactionRow,
@@ -89,9 +88,9 @@ export default async function TesoreriaPage() {
     ctxCanAccess(ctx, "tesoreria.caja") || canAvalar;
 
   try {
-    await ensureCashFloatAccount(supabase, orgId, ctx.userId);
+    await ensureOperatingCashAccount(supabase, orgId, ctx.userId);
   } catch {
-    /* sigue sin Base si falla */
+    /* sigue sin caja operativa si falla */
   }
 
   const { data: accountRows } = await supabase
@@ -222,8 +221,6 @@ export default async function TesoreriaPage() {
   const history = cashCloses
     .filter((c) => c.business_date !== today)
     .slice(0, 12);
-  const cashFloatTarget = Number(ctx.organization.cash_float_target ?? 0);
-
   const availableByAccount = new Map(
     accounts.map((a) => [
       a.id,
@@ -233,9 +230,11 @@ export default async function TesoreriaPage() {
       }).toFixed(2),
     ]),
   );
-  const floatAccount = accounts.find((a) => a.is_cash_float && a.is_active);
-  const cashFloatCurrent = floatAccount
-    ? Number(availableByAccount.get(floatAccount.id) ?? 0)
+  const operatingCash = findOperatingCashAccount(
+    accounts.filter((a) => a.is_active),
+  );
+  const operatingCashBalance = operatingCash
+    ? Number(availableByAccount.get(operatingCash.id) ?? 0)
     : 0;
 
   const movementsByAccount = new Map<string, BankTransactionRow[]>();
@@ -273,7 +272,7 @@ export default async function TesoreriaPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <PageIntro
             title="Liquidez y cuentas"
-            description="Avalar cierres, definir la base y mover plata entre cuentas. El local reporta en Cierre de caja."
+            description="Avalar cierres, administrar la caja operativa y mover plata entre cuentas. El local reporta en Cierre de caja."
           />
           <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--muted)]">
             {cutoff ? (
@@ -297,7 +296,7 @@ export default async function TesoreriaPage() {
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             label="Liquidez disponible"
             value={formatCOP(totalLiquidity)}
@@ -305,18 +304,9 @@ export default async function TesoreriaPage() {
           />
           <StatCard label="Bancos" value={formatCOP(byKind.BANCO)} />
           <StatCard
-            label="Caja (disponible)"
-            value={formatCOP(byKind.CAJA)}
-            hint="Ventas efectivo acreditadas"
-          />
-          <StatCard
-            label="Base (actual / meta)"
-            value={`${formatCOP(cashFloatCurrent)} / ${formatCOP(cashFloatTarget)}`}
-            hint={
-              cashFloatCurrent + 0.009 < cashFloatTarget
-                ? `Faltan ${formatCOP(cashFloatTarget - cashFloatCurrent)}`
-                : "Flotante operativo"
-            }
+            label="Caja operativa"
+            value={formatCOP(operatingCashBalance)}
+            hint="Apertura + inyecciones − egresos"
           />
           <StatCard
             label="Pasarelas / otros"
@@ -356,8 +346,7 @@ export default async function TesoreriaPage() {
             history={history}
             canDeclare={false}
             canAvalar={canAvalar}
-            cashFloatTarget={cashFloatTarget}
-            cashFloatCurrent={cashFloatCurrent}
+            cashOpeningBalance={operatingCashBalance}
           />
         ) : null}
 
@@ -372,8 +361,8 @@ export default async function TesoreriaPage() {
           <div>
             <h2 className="font-display text-2xl font-semibold">Cuentas</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Defina la base del local y use traspasos para recomponerla. Toque
-              una cuenta para el detalle.
+              Una sola caja operativa más bancos/pasarelas. Use traspasos para
+              mover efectivo. Toque una cuenta para el detalle y la trazabilidad.
             </p>
           </div>
 
@@ -382,15 +371,14 @@ export default async function TesoreriaPage() {
               <WorkSection
                 kind="form"
                 title="Nueva cuenta"
-                description="Banco, caja o pasarela con saldo inicial opcional."
+                description="Banco o pasarela con saldo inicial opcional. La caja operativa ya se crea sola."
                 defaultOpen={accounts.length === 0}
               >
                 <CreateBankAccountForm defaultCutoff={cutoff} embedded />
               </WorkSection>
             ) : null}
 
-            <CashFloatAndTransferPanel
-              cashFloatTarget={cashFloatTarget}
+            <OperatingCashAndTransferPanel
               accounts={accounts}
               availableByAccount={Object.fromEntries(availableByAccount)}
               canManage={canManageAccounts}
@@ -400,43 +388,30 @@ export default async function TesoreriaPage() {
             <WorkSection
               kind="list"
               title="Cuentas registradas"
-              badge={<Badge tone="neutral">{accounts.length}</Badge>}
+              badge={
+                <Badge tone="neutral">
+                  {accounts.filter((a) => a.is_active).length} activas
+                </Badge>
+              }
               summary={
                 accounts.length === 0
                   ? "Sin cuentas"
-                  : `${accounts.length} cuentas activas`
+                  : `${accounts.filter((a) => a.is_active).length} activas${
+                      accounts.some((a) => !a.is_active)
+                        ? ` · ${accounts.filter((a) => !a.is_active).length} inactivas`
+                        : ""
+                    }`
               }
               defaultOpen
             >
-              {accounts.length === 0 ? (
-                <EmptyState
-                  title="Sin cuentas registradas"
-                  description="Agregue bancos, caja o pasarelas para construir la liquidez y destinar los cierres diarios."
-                />
-              ) : (
-                <div className="space-y-3">
-                  {accounts.map((account) => (
-                    <BankAccountCard
-                      key={account.id}
-                      account={account}
-                      snapshot={
-                        snapshots.find(
-                          (s) => s.bank_account_id === account.id,
-                        ) ?? null
-                      }
-                      defaultCutoff={cutoff}
-                      availableBalance={availableByAccount.get(account.id)}
-                      movements={movementsByAccount.get(account.id) ?? []}
-                      accounts={accounts}
-                      canManage={canManageAccounts}
-                      cashFloatAtLocal={
-                        account.is_cash_float ? cashFloatTarget : null
-                      }
-                      cashFloatDate={null}
-                    />
-                  ))}
-                </div>
-              )}
+              <RegisteredAccountsList
+                accounts={accounts}
+                snapshots={snapshots}
+                defaultCutoff={cutoff}
+                availableByAccount={Object.fromEntries(availableByAccount)}
+                movementsByAccount={Object.fromEntries(movementsByAccount)}
+                canManage={canManageAccounts}
+              />
             </WorkSection>
 
             {accounts.length > 0 ? (

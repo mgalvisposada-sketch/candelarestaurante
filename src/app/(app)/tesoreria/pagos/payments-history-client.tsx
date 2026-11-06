@@ -85,7 +85,7 @@ function downloadCsv(rows: PaymentHistoryRow[]) {
     const accounts = r.legs
       .map(
         (l) =>
-          `${l.account_name}${l.is_cash_float ? " (Base)" : ""}: ${formatCOP(l.debit)}`,
+          `${l.account_name}${l.is_cash_float ? " (Caja)" : ""}: ${formatCOP(l.debit)}`,
       )
       .join(" | ");
     const doc = [r.document_type, r.document_number].filter(Boolean).join(" ");
@@ -340,7 +340,7 @@ export function PaymentHistoryTable({
                   >
                     <span className="text-[var(--muted)]">
                       {leg.account_name}
-                      {leg.is_cash_float ? " · Base" : ""}
+                      {leg.is_cash_float ? " · Caja" : ""}
                       {leg.fund_purpose ? (
                         <span
                           className={cn(

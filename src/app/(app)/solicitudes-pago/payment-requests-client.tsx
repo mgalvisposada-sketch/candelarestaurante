@@ -158,7 +158,7 @@ function isOverdue(dueDate: string | null, status: string) {
 
 function accountOptionLabel(a: BankAccountOption) {
   const kind = a.is_cash_float
-    ? "Base / flotante"
+    ? "Caja operativa"
     : a.account_kind === "CAJA"
       ? "Caja"
       : a.account_kind === "BANCO"
@@ -274,16 +274,16 @@ function PayForm({
             }}
           />
           <span>
-            Repartir entre <strong>Base</strong> y otra cuenta (caja/banco)
+            Repartir entre <strong>Caja</strong> y otra cuenta (banco)
           </span>
         </label>
       ) : (
         <p className="md:col-span-12 text-xs text-[var(--danger)]">
-          Aún no hay cuenta Base. Defínala en{" "}
+          Aún no hay caja operativa. Se crea al entrar a{" "}
           <Link href="/tesoreria" className="underline">
             Tesorería
-          </Link>{" "}
-          (meta + saldo).
+          </Link>
+          .
         </p>
       )}
 
@@ -373,7 +373,7 @@ function PayForm({
           <input type="hidden" name="secondary_account_id" value={floatAcc.id} />
           <label className="block text-sm md:col-span-8">
             <span className="mb-1 block text-[var(--muted)]">
-              Monto desde Base / flotante * · disp.{" "}
+              Monto desde Caja operativa * · disp.{" "}
               {formatCOP(floatAcc.available_balance ?? 0)}
             </span>
             <input
@@ -466,8 +466,8 @@ function PayForm({
       ) : null}
       {floatAcc && Number(floatAcc.available_balance ?? 0) <= 0 ? (
         <p className="md:col-span-12 text-xs text-[var(--danger)]">
-          La Base tiene disponible $0. Registre o traspase saldo en Tesorería
-          antes de usarla.
+          La caja tiene disponible $0. Registre apertura o traspase saldo en
+          Tesorería antes de usarla.
         </p>
       ) : null}
     </form>
