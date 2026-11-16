@@ -22,7 +22,12 @@ import type {
   SlipOrg,
   SlipPaymentRequest,
 } from "../payroll-slips-client";
-import type { AttendanceDayKind } from "@/lib/payroll";
+import {
+  mapEmployeeSchedule,
+  mapScheduleRow,
+  netShiftMinutes,
+  type AttendanceDayKind,
+} from "@/lib/payroll";
 
 export default async function LiquidacionDetailPage({
   params,
@@ -53,8 +58,13 @@ export default async function LiquidacionDetailPage({
 
   const { periodId } = await params;
   const supabase = await createClient();
-  const [{ data: period }, { data: lines }, { data: employees }, { data: attendance }] =
-    await Promise.all([
+  const [
+    { data: period },
+    { data: lines },
+    { data: employees },
+    { data: attendance },
+    { data: schedule },
+  ] = await Promise.all([
       supabase
         .from("payroll_periods")
         .select(
@@ -76,7 +86,7 @@ export default async function LiquidacionDetailPage({
       supabase
         .from("employees")
         .select(
-          "id, full_name, id_number, employment_type, position_title, hire_date, basic_salary, eps, pension_fund, arl, compensation_fund, arl_risk_level",
+          "id, full_name, id_number, employment_type, position_title, hire_date, basic_salary, eps, pension_fund, arl, compensation_fund, arl_risk_level, ordinary_entry_time, ordinary_exit_time, break_minutes, uses_custom_schedule",
         )
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
@@ -90,6 +100,15 @@ export default async function LiquidacionDetailPage({
         .eq("organization_id", ctx.organization.id)
         .is("deleted_at", null)
         .order("work_date"),
+      supabase
+        .from("payroll_schedules")
+        .select(
+          "ordinary_entry_time, ordinary_exit_time, break_minutes, works_monday, works_tuesday, works_wednesday, works_thursday, works_friday, works_saturday, works_sunday",
+        )
+        .eq("organization_id", ctx.organization.id)
+        .eq("is_active", true)
+        .is("deleted_at", null)
+        .maybeSingle(),
     ]);
 
   if (!period) notFound();
@@ -133,16 +152,39 @@ export default async function LiquidacionDetailPage({
     arl: string | null;
     compensation_fund: string | null;
     arl_risk_level: string | null;
+    ordinary_entry_time: string | null;
+    ordinary_exit_time: string | null;
+    break_minutes: number | string | null;
+    uses_custom_schedule: boolean | null;
   }>;
+
+  const candelaSchedule = schedule ? mapScheduleRow(schedule) : null;
 
   const attendanceEmployees = employeeRows
     .filter((e) => !isShiftDayContractor(String(e.employment_type ?? "")))
-    .map(
-      (e): AttendanceEmployee => ({
+    .map((e): AttendanceEmployee => {
+      let ordinaryCapacityMinutes = 0;
+      if (candelaSchedule) {
+        const empSchedule = mapEmployeeSchedule({
+          ordinary_entry_time: e.ordinary_entry_time,
+          ordinary_exit_time: e.ordinary_exit_time,
+          break_minutes:
+            e.break_minutes == null ? null : Number(e.break_minutes),
+          uses_custom_schedule: Boolean(e.uses_custom_schedule),
+          fallback: candelaSchedule,
+        });
+        ordinaryCapacityMinutes = netShiftMinutes(
+          empSchedule.ordinary_entry_time,
+          empSchedule.ordinary_exit_time,
+          empSchedule.break_minutes,
+        );
+      }
+      return {
         id: e.id,
         full_name: e.full_name,
-      }),
-    );
+        ordinaryCapacityMinutes,
+      };
+    });
 
   const employeesById: Record<string, SlipEmployee> = {};
   for (const e of employeeRows) {

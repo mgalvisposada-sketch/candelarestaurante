@@ -336,7 +336,7 @@ export function PeriodDetailClient({
               onClick={() => {
                 if (
                   !confirm(
-                    "¿Reabrir esta liquidación para corregir errores?\n\nVolverá a estado CALCULADA: podrá editar planilla, novedades y recalcular. Las colillas impresas anteriores dejarán de ser válidas hasta volver a emitir.",
+                    "¿Reabrir esta liquidación para corregir errores?\n\nVolverá a estado CALCULADA: podrá editar planilla, novedades y recalcular.\n\nSi ya hay colillas enviadas o pagadas en Tesorería, se revertirán esos egresos y se anularán las solicitudes de pago.",
                   )
                 )
                   return;

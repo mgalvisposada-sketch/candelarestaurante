@@ -548,8 +548,9 @@ describe("planilla de asistencia", () => {
     expect(att.overtimePay).toBeGreaterThan(0);
   });
 
-  it("compensa faltante con extras de la misma semana", () => {
-    // Capacidad 7h. Mar 4,5h (faltante 2,5h) + Mié 8h (extra 1h) → compensa 1h, descuenta 1,5h
+  it("compensa faltante con extras de la misma semana sin descontar salario", () => {
+    // Capacidad 7h. Mar 4,5h (faltante 2,5h) + Mié 8h (extra 1h) → compensa 1h;
+    // el 1,5h restante de cronograma NO descuenta el básico.
     const days: AttendanceDayInput[] = [
       {
         employeeId: "e1",
@@ -576,13 +577,17 @@ describe("planilla de asistencia", () => {
       hourValue: ordinaryHourValue(1_750_905, 42),
     });
     expect(att.overtimeMinutes).toBe(0);
-    expect(att.unpaidMinutes).toBe(90); // 2,5h faltante − 1h compensada
+    expect(att.unpaidMinutes).toBe(0);
+    expect(att.unpaidTimeDiscount).toBe(0);
     expect(
       att.notes.some((n) => n.includes("compensados con extras")),
     ).toBe(true);
+    expect(
+      att.notes.some((n) => n.includes("no se descuenta el básico")),
+    ).toBe(true);
   });
 
-  it("faltante sin extras de la semana se descuenta", () => {
+  it("faltante de cronograma sin extras no descuenta el salario", () => {
     const days: AttendanceDayInput[] = [
       {
         employeeId: "e1",
@@ -593,7 +598,7 @@ describe("planilla de asistencia", () => {
         breakMinutes: 30,
       },
     ];
-    // 18–23 − 30 = 4,5h; capacidad 7h → faltante 2,5h = 150 min
+    // 18–23 − 30 = 4,5h; capacidad 7h → faltante 2,5h = 150 min (solo flexible)
     const att = computeAttendanceHours({
       days,
       employee: empSchedule,
@@ -602,8 +607,48 @@ describe("planilla de asistencia", () => {
       hourValue: ordinaryHourValue(1_750_905, 42),
     });
     expect(att.overtimeMinutes).toBe(0);
-    expect(att.unpaidMinutes).toBe(150);
-    expect(att.unpaidTimeDiscount).toBeGreaterThan(0);
+    expect(att.unpaidMinutes).toBe(0);
+    expect(att.unpaidTimeDiscount).toBe(0);
+    expect(
+      att.notes.some((n) => n.includes("no se descuenta el básico")),
+    ).toBe(true);
+  });
+
+  it("novedad de llegada tarde sí descuenta aunque la planilla tenga turno corto", () => {
+    const hourValue = ordinaryHourValue(1_750_905, 42);
+    const days: AttendanceDayInput[] = [
+      {
+        employeeId: "e1",
+        workDate: "2026-10-06",
+        dayKind: "LABORADO",
+        entryTime: "18:00",
+        exitTime: "23:00",
+        breakMinutes: 30,
+      },
+    ];
+    const sim = simulateBiweekly({
+      year: 2026,
+      month: 10,
+      half: 1,
+      basicSalary: 1_750_905,
+      employmentType: "INDEFINIDO",
+      receivesTransportAid: null,
+      arlRiskLevel: "I",
+      schedule: empSchedule,
+      candelaSchedule: candelaRestaurant,
+      legal: legalBase,
+      bonuses: [],
+      attendanceDays: days,
+      novelties: [
+        {
+          novelty_type: "LLEGADA_TARDE",
+          novelty_date: "2026-10-06",
+          minutes: 60,
+        },
+      ],
+    });
+    expect(sim.novelties.unpaidMinutes).toBe(60);
+    expect(sim.earnings.unpaidTimeDiscount).toBeCloseTo(hourValue, 0);
   });
 
   it("permiso no remunerado de día completo descuenta la jornada ordinaria", () => {

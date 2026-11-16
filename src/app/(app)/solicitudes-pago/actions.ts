@@ -835,6 +835,128 @@ export async function correctPurchaseInvoicePaymentRequestAction(
   return { ok: true, id: purchaseRequestId ?? requestId };
 }
 
+/**
+ * Revierte abonos/pagos ejecutados de una solicitud:
+ * soft-delete de bank_transactions (+ CxP si aplica) y deja paid_amount en 0.
+ * Por defecto anula la solicitud para que no quede en cola.
+ */
+export async function revertPaymentRequestPaymentsAction(
+  requestId: string,
+  options?: { annulRequest?: boolean },
+): Promise<ActionResult & { revertedTransactions?: number }> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (
+    !ctxCanAccess(ctx, "solicitudes-pago.pagar") &&
+    !ctxCanAccess(ctx, "solicitudes-pago.aprobar")
+  ) {
+    return { ok: false, error: "Sin permiso para revertir pagos" };
+  }
+
+  const supabase = await createClient();
+  const orgId = ctx.organization.id;
+  const annulRequest = options?.annulRequest !== false;
+
+  let req;
+  try {
+    req = await getWritableRequest(supabase, orgId, requestId);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Error" };
+  }
+  if (!req) return { ok: false, error: "Solicitud no encontrada" };
+
+  const now = new Date().toISOString();
+  const { data: txs, error: txErr } = await supabase
+    .from("bank_transactions")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("linked_entity_type", "payment_requests")
+    .eq("linked_entity_id", requestId)
+    .is("deleted_at", null);
+  if (txErr) return { ok: false, error: txErr.message };
+
+  const txIds = (txs ?? []).map((t) => t.id);
+  if (txIds.length > 0) {
+    const { error: softTxErr } = await supabase
+      .from("bank_transactions")
+      .update({
+        deleted_at: now,
+        updated_by: ctx.userId,
+        updated_at: now,
+      })
+      .in("id", txIds)
+      .eq("organization_id", orgId)
+      .is("deleted_at", null);
+    if (softTxErr) return { ok: false, error: softTxErr.message };
+
+    await supabase
+      .from("accounts_payable_payments")
+      .update({
+        deleted_at: now,
+        updated_by: ctx.userId,
+      })
+      .eq("organization_id", orgId)
+      .in("bank_transaction_id", txIds)
+      .is("deleted_at", null);
+  }
+
+  if (req.ap_document_id) {
+    await refreshDocumentPaid(supabase, orgId, req.ap_document_id);
+  }
+
+  if (req.expense_id) {
+    await supabase
+      .from("expenses")
+      .update({
+        status: "APROBADO",
+        updated_by: ctx.userId,
+      })
+      .eq("id", req.expense_id)
+      .eq("organization_id", orgId)
+      .eq("status", "PAGADO");
+  }
+
+  const requestUpdate: Record<string, unknown> = {
+    paid_amount: 0,
+    paid_at: null,
+    bank_transaction_id: null,
+    payment_reference: null,
+    updated_by: ctx.userId,
+  };
+  if (annulRequest) {
+    requestUpdate.status = "ANULADA" satisfies PaymentRequestStatus;
+    requestUpdate.deleted_at = now;
+  } else if (req.status === "PAGADA") {
+    requestUpdate.status = "EN_COLA_PAGO" satisfies PaymentRequestStatus;
+  }
+
+  const { error: reqErr } = await supabase
+    .from("payment_requests")
+    .update(requestUpdate)
+    .eq("id", requestId)
+    .eq("organization_id", orgId);
+  if (reqErr) return { ok: false, error: reqErr.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: orgId,
+    user_id: ctx.userId,
+    action: "ANULAR",
+    entity: "payment_requests",
+    entity_id: requestId,
+    new_values: {
+      reverted_payment: true,
+      reverted_transaction_ids: txIds,
+      annulled: annulRequest,
+      previous_status: req.status,
+      previous_paid_amount: req.paid_amount,
+    },
+  });
+
+  revalidatePaymentPaths();
+  revalidatePath("/cierre-caja");
+  return { ok: true, id: requestId, revertedTransactions: txIds.length };
+}
+
 export async function softDeletePaymentRequestAction(
   requestId: string,
 ): Promise<ActionResult> {
@@ -852,15 +974,10 @@ export async function softDeletePaymentRequestAction(
     return { ok: false, error: e instanceof Error ? e.message : "Error" };
   }
   if (!req) return { ok: false, error: "Solicitud no encontrada" };
-  if (req.status === "PAGADA") {
-    return { ok: false, error: "No se puede anular una solicitud ya pagada" };
-  }
-  if (Number(req.paid_amount || 0) > 0) {
-    return {
-      ok: false,
-      error:
-        "No se puede anular: ya tiene abonos. Revierta esos pagos en Tesorería/CxP.",
-    };
+  if (req.status === "PAGADA" || Number(req.paid_amount || 0) > 0) {
+    return revertPaymentRequestPaymentsAction(requestId, {
+      annulRequest: true,
+    });
   }
 
   // Facturas de compra: al anular, liberar ítems (si no, no se puede refacturar).

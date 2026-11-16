@@ -154,11 +154,36 @@ type DayWorkSlice = {
 };
 
 /**
+ * Una sola fila por fecha (la última gana). Evita doble descuento si por
+ * error quedan dos registros activos del mismo día.
+ */
+export function dedupeAttendanceDaysByDate(
+  days: AttendanceDayInput[],
+): AttendanceDayInput[] {
+  const byDate = new Map<string, AttendanceDayInput>();
+  const sorted = [...days].sort((a, b) => {
+    const d = a.workDate.localeCompare(b.workDate);
+    if (d !== 0) return d;
+    return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+  });
+  for (const day of sorted) {
+    byDate.set(day.workDate, day);
+  }
+  return [...byDate.values()].sort((a, b) =>
+    a.workDate.localeCompare(b.workDate),
+  );
+}
+
+/**
  * Horas/recargos/extras desde planilla de asistencia (fuente de verdad).
  * Capacidad ordinaria = jornada Candela/empleado (net).
  * Exceso = extra; faltante en LABORADO se compensa con extras de la misma
  * semana (lun–dom), días más antiguos primero (jornada flexible art. 161 CST).
- * Solo el faltante no compensado se descuenta del salario.
+ *
+ * El faltante de cronograma (turno más corto que la jornada teórica) NO descuenta
+ * el salario mensual: solo reduce extras pagables de la semana. El descuento
+ * salarial desde planilla aplica únicamente a PERMISO_NO_REMUNERADO (día completo).
+ * Impuntualidad/ausencia parcial se descuenta vía novedades explícitas.
  */
 export function computeAttendanceHours(input: {
   days: AttendanceDayInput[];
@@ -186,9 +211,12 @@ export function computeAttendanceHours(input: {
   const notes: string[] = [];
   const slices: DayWorkSlice[] = [];
 
-  const sorted = [...input.days].sort((a, b) =>
-    a.workDate.localeCompare(b.workDate),
-  );
+  const sorted = dedupeAttendanceDaysByDate(input.days);
+  if (sorted.length < input.days.length) {
+    notes.push(
+      `Se ignoraron ${input.days.length - sorted.length} fila(s) duplicada(s) de planilla (misma fecha).`,
+    );
+  }
 
   for (const day of sorted) {
     if (day.dayKind === "DESCANSO" || day.dayKind === "FESTIVO") {
@@ -303,8 +331,13 @@ export function computeAttendanceHours(input: {
   }
 
   const totalFaltante = slices.reduce((acc, s) => acc + s.faltante, 0);
-  const unpaidMinutes =
-    Math.max(0, totalFaltante - compensatedMinutes) + unpaidLeaveMinutes;
+  const uncompensatedFlexibleMinutes = Math.max(
+    0,
+    totalFaltante - compensatedMinutes,
+  );
+  // Solo permiso no remunerado descuenta salario desde planilla.
+  // El faltante de cronograma solo absorbe extras (jornada flexible).
+  const unpaidMinutes = unpaidLeaveMinutes;
 
   let ordinaryDayMinutes = 0;
   let ordinaryNightMinutes = 0;
@@ -360,16 +393,16 @@ export function computeAttendanceHours(input: {
   }
   if (compensatedMinutes > 0) {
     notes.push(
-      `${compensatedMinutes} min faltantes compensados con extras de la misma semana (jornada flexible).`,
+      `${compensatedMinutes} min de turnos cortos compensados con extras de la misma semana (jornada flexible; no descuenta salario).`,
+    );
+  }
+  if (uncompensatedFlexibleMinutes > 0) {
+    notes.push(
+      `${uncompensatedFlexibleMinutes} min bajo jornada teórica sin extras que compensar: no se descuenta el básico (requiere novedad de impuntualidad/ausencia o permiso no remunerado).`,
     );
   }
   if (overtimeMinutes > 0) {
     notes.push(`${overtimeMinutes} min extras desde planilla.`);
-  }
-  if (unpaidMinutes > unpaidLeaveMinutes) {
-    notes.push(
-      `${unpaidMinutes - unpaidLeaveMinutes} min bajo jornada ordinaria no compensados, descontados desde planilla.`,
-    );
   }
   if (unpaidMinutes > 0) {
     notes.push(

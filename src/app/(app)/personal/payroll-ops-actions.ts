@@ -14,6 +14,7 @@ import {
 import {
   biweeklyRange,
   buildAttendanceSeedRows,
+  dedupeAttendanceDaysByDate,
   liquidatePeriod,
   mapEmployeeSchedule,
   mapLegalParamsRow,
@@ -1006,6 +1007,9 @@ export async function calculatePayrollPeriodAction(
     list.push(mapped);
     attByEmp.set(row.employee_id, list);
   }
+  for (const [empId, days] of attByEmp) {
+    attByEmp.set(empId, dedupeAttendanceDaysByDate(days));
+  }
 
   const payrollEmployees = (employees ?? []).filter(
     (e) => !isShiftDayContractor(String(e.employment_type ?? "")),
@@ -1231,6 +1235,82 @@ export async function reopenPayrollPeriodAction(
     };
   }
 
+  // Si ya se enviaron/pagaron colillas, revertir movimientos y anular solicitudes
+  // para no dejar egresos huérfanos al corregir la liquidación.
+  const { data: lines } = await supabase
+    .from("payroll_period_lines")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("period_id", periodId)
+    .is("deleted_at", null);
+  const lineIds = (lines ?? []).map((l) => l.id);
+  if (lineIds.length > 0) {
+    const { data: payReqs } = await supabase
+      .from("payment_requests")
+      .select("id, status, paid_amount")
+      .eq("organization_id", orgId)
+      .eq("document_type", "COLILLA")
+      .in("document_number", lineIds)
+      .is("deleted_at", null);
+
+    const now = new Date().toISOString();
+    for (const req of payReqs ?? []) {
+      const paid = Number(req.paid_amount || 0);
+      if (paid > 0 || req.status === "PAGADA") {
+        const { data: txs } = await supabase
+          .from("bank_transactions")
+          .select("id")
+          .eq("organization_id", orgId)
+          .eq("linked_entity_type", "payment_requests")
+          .eq("linked_entity_id", req.id)
+          .is("deleted_at", null);
+        const txIds = (txs ?? []).map((t) => t.id);
+        if (txIds.length > 0) {
+          const { error: softTxErr } = await supabase
+            .from("bank_transactions")
+            .update({
+              deleted_at: now,
+              updated_by: ctx.userId,
+              updated_at: now,
+            })
+            .in("id", txIds)
+            .eq("organization_id", orgId)
+            .is("deleted_at", null);
+          if (softTxErr) return { ok: false, error: softTxErr.message };
+        }
+      }
+
+      const { error: annulErr } = await supabase
+        .from("payment_requests")
+        .update({
+          status: "ANULADA",
+          paid_amount: 0,
+          paid_at: null,
+          bank_transaction_id: null,
+          deleted_at: now,
+          updated_by: ctx.userId,
+        })
+        .eq("id", req.id)
+        .eq("organization_id", orgId);
+      if (annulErr) return { ok: false, error: annulErr.message };
+
+      await supabase.from("audit_logs").insert({
+        organization_id: orgId,
+        user_id: ctx.userId,
+        action: "ANULAR",
+        entity: "payment_requests",
+        entity_id: req.id,
+        new_values: {
+          reverted_payment: true,
+          reason: "reopen_payroll_period",
+          period_id: periodId,
+          previous_status: req.status,
+          previous_paid_amount: req.paid_amount,
+        },
+      });
+    }
+  }
+
   const { error } = await supabase
     .from("payroll_periods")
     .update({
@@ -1244,5 +1324,8 @@ export async function reopenPayrollPeriodAction(
   if (error) return { ok: false, error: error.message };
 
   revalidateAll(`/personal/liquidacion/${periodId}`);
+  revalidatePath("/solicitudes-pago");
+  revalidatePath("/tesoreria");
+  revalidatePath("/tesoreria/pagos");
   return { ok: true, id: periodId };
 }

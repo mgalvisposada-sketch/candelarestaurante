@@ -41,6 +41,8 @@ export type AttendanceRow = {
 export type AttendanceEmployee = {
   id: string;
   full_name: string;
+  /** Minutos netos de jornada ordinaria (entrada–salida − descanso). */
+  ordinaryCapacityMinutes: number;
 };
 
 function formatHours(mins: number): string {
@@ -82,10 +84,22 @@ export function AttendanceGridClient({
     {},
   );
 
+  const selectedEmployee = useMemo(
+    () => employees.find((e) => e.id === employeeId) ?? null,
+    [employees, employeeId],
+  );
+  const ordinaryCapacity = selectedEmployee?.ordinaryCapacityMinutes ?? 0;
+
   const empRows = useMemo(() => {
-    return rows
-      .filter((r) => r.employee_id === employeeId)
-      .sort((a, b) => a.work_date.localeCompare(b.work_date));
+    const byDate = new Map<string, AttendanceRow>();
+    for (const r of rows) {
+      if (r.employee_id !== employeeId) continue;
+      const prev = byDate.get(r.work_date);
+      if (!prev || r.id.localeCompare(prev.id) > 0) byDate.set(r.work_date, r);
+    }
+    return [...byDate.values()].sort((a, b) =>
+      a.work_date.localeCompare(b.work_date),
+    );
   }, [rows, employeeId]);
 
   function merged(row: AttendanceRow): AttendanceRow {
@@ -126,6 +140,17 @@ export function AttendanceGridClient({
   }
 
   let acumulado = 0;
+  let faltanteTotal = 0;
+  for (const row of empRows) {
+    const m = merged(row);
+    if (m.day_kind !== "LABORADO" || !m.entry_time || !m.exit_time) continue;
+    const totalMins = netShiftMinutes(
+      timeFromDb(m.entry_time),
+      timeFromDb(m.exit_time),
+      m.break_minutes,
+    );
+    faltanteTotal += Math.max(0, ordinaryCapacity - totalMins);
+  }
 
   return (
     <section className="space-y-4 rounded-xl border border-[var(--line)] bg-white p-5">
@@ -137,7 +162,12 @@ export function AttendanceGridClient({
           <h2 className="mt-1 font-medium">Planilla de la quincena</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
             Fuente de verdad para horas, recargos y extras. El horario Candela
-            solo precarga; ajuste lo real antes de calcular.
+            solo precarga; ajuste lo real antes de calcular. Un turno más corto
+            que la jornada ordinaria (
+            {ordinaryCapacity > 0 ? formatHours(ordinaryCapacity) : "—"}) solo
+            compensa extras de la misma semana; no baja el básico. Para
+            descontar salario use novedad (tarde/temprana/ausencia) o marque
+            permiso no remunerado.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -257,6 +287,7 @@ export function AttendanceGridClient({
                     <th className="px-2 py-2">Salida</th>
                     <th className="px-2 py-2">Descanso</th>
                     <th className="px-2 py-2">Total</th>
+                    <th className="px-2 py-2">Vs jornada</th>
                     <th className="px-2 py-2">Acum.</th>
                     {!locked ? <th className="px-2 py-2" /> : null}
                   </tr>
@@ -273,12 +304,20 @@ export function AttendanceGridClient({
                             m.break_minutes,
                           )
                         : 0;
+                    const faltanteMins =
+                      m.day_kind === "LABORADO" && ordinaryCapacity > 0
+                        ? Math.max(0, ordinaryCapacity - totalMins)
+                        : 0;
                     acumulado += totalMins;
                     const dirty = Boolean(drafts[row.id]);
                     return (
                       <tr
                         key={row.id}
-                        className={`border-b border-[var(--line)] ${rowBg(m.day_kind)}`}
+                        className={`border-b border-[var(--line)] ${
+                          faltanteMins > 0
+                            ? "bg-amber-50"
+                            : rowBg(m.day_kind)
+                        }`}
                       >
                         <td className="whitespace-nowrap px-2 py-1.5">
                           {formatDateCO(m.work_date)}
@@ -380,6 +419,17 @@ export function AttendanceGridClient({
                         <td className="px-2 py-1.5 font-medium">
                           {rest ? "—" : formatHours(totalMins)}
                         </td>
+                        <td
+                          className={`px-2 py-1.5 tabular-nums ${
+                            faltanteMins > 0
+                              ? "font-medium text-amber-900"
+                              : "text-[var(--muted)]"
+                          }`}
+                        >
+                          {faltanteMins > 0
+                            ? `−${formatHours(faltanteMins)}`
+                            : "—"}
+                        </td>
                         <td className="px-2 py-1.5 text-[var(--muted)]">
                           {formatHours(acumulado)}
                         </td>
@@ -402,6 +452,16 @@ export function AttendanceGridClient({
               </table>
             </div>
           )}
+          {faltanteTotal > 0 ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-950">
+              Este empleado tiene{" "}
+              <strong>{formatHours(faltanteTotal)}</strong> (
+              {faltanteTotal} min) bajo la jornada ordinaria en días
+              «Laborado». Eso solo absorbe extras de la misma semana (jornada
+              flexible); no reduce el salario básico. Si hubo impuntualidad o
+              ausencia, regístrela como novedad para descontar.
+            </p>
+          ) : null}
         </>
       )}
 

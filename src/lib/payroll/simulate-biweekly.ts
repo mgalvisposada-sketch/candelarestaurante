@@ -173,10 +173,12 @@ export function simulateBiweekly(
       ? attendanceOvertime
       : money(noveltyImpact.overtimePay);
   const occasionalBonuses = money(noveltyImpact.occasionalBonuses);
+  // Con planilla: permiso no rem. (día) + novedades de impuntualidad/ausencia.
+  // Sin planilla: todo el unpaid viene de novedades.
   const unpaidDisc = byShift
     ? money(0)
     : useAttendance
-      ? attendanceUnpaid
+      ? attendanceUnpaid.plus(noveltyImpact.unpaidTimeDiscount)
       : money(noveltyImpact.unpaidTimeDiscount);
   const advances = money(noveltyImpact.advances);
   const authDisc = money(noveltyImpact.authorizedDiscounts);
@@ -348,7 +350,7 @@ export function simulateBiweekly(
     novelties: {
       count: noveltiesForImpact.length,
       unpaidMinutes: useAttendance
-        ? (attendanceMeta?.unpaidMinutes ?? 0)
+        ? (attendanceMeta?.unpaidMinutes ?? 0) + noveltyImpact.unpaidMinutes
         : noveltyImpact.unpaidMinutes,
       overtimeMinutes: useAttendance
         ? (attendanceMeta?.overtimeMinutes ?? 0)

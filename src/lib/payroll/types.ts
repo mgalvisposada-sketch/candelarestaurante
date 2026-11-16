@@ -102,11 +102,13 @@ export type NoveltyInput = {
   end_time?: string | null;
 };
 
-/** Tipos horarios que la planilla de asistencia ya expresa (no duplicar). */
+/**
+ * Novedades que la planilla ya liquida (no duplicar).
+ * Impuntualidad/ausencia parcial SÍ se dejan pasar: el faltante de cronograma
+ * ya no descuenta salario; solo estas novedades (o permiso no rem. en planilla)
+ * pueden reducir el básico.
+ */
 export const ATTENDANCE_REPLACED_NOVELTY_TYPES: ShiftNoveltyType[] = [
-  "LLEGADA_TARDE",
-  "SALIDA_TEMPRANA",
-  "AUSENCIA",
   "HORA_EXTRA",
   "PERMISO_NO_REMUNERADO",
 ];
