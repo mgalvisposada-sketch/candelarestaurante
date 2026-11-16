@@ -9,7 +9,10 @@ import {
 } from "../payroll-ops-actions";
 import { formatDateCO } from "@/lib/dates";
 import { netShiftMinutes, timeFromDb } from "@/lib/payroll";
-import type { AttendanceDayKind } from "@/lib/payroll";
+import {
+  isNonWorkedAttendanceKind,
+  type AttendanceDayKind,
+} from "@/lib/payroll";
 
 const inputClass =
   "w-full rounded border border-[var(--line)] bg-white px-2 py-1.5 text-sm outline-none ring-[var(--accent)] focus:ring-2";
@@ -21,6 +24,7 @@ const KIND_LABELS: Record<AttendanceDayKind, string> = {
   DESCANSO: "Descanso",
   FESTIVO: "Festivo",
   FESTIVO_LABORADO: "Fest. laborado",
+  PERMISO_NO_REMUNERADO: "Permiso no rem.",
 };
 
 export type AttendanceRow = {
@@ -54,6 +58,7 @@ function rowBg(kind: AttendanceDayKind): string {
   if (kind === "DESCANSO") return "bg-cyan-50";
   if (kind === "FESTIVO") return "bg-emerald-50";
   if (kind === "FESTIVO_LABORADO") return "bg-amber-50";
+  if (kind === "PERMISO_NO_REMUNERADO") return "bg-rose-50";
   return "";
 }
 
@@ -207,6 +212,9 @@ export function AttendanceGridClient({
         <span className="inline-flex items-center gap-1.5">
           <span className="h-3 w-3 rounded bg-amber-200" /> Fest. laborado
         </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-3 w-3 rounded bg-rose-200" /> Permiso no rem.
+        </span>
       </div>
 
       {employees.length === 0 ? (
@@ -256,8 +264,7 @@ export function AttendanceGridClient({
                 <tbody>
                   {empRows.map((row) => {
                     const m = merged(row);
-                    const rest =
-                      m.day_kind === "DESCANSO" || m.day_kind === "FESTIVO";
+                    const rest = isNonWorkedAttendanceKind(m.day_kind);
                     const totalMins =
                       !rest && m.entry_time && m.exit_time
                         ? netShiftMinutes(
@@ -284,12 +291,21 @@ export function AttendanceGridClient({
                             <select
                               className={inputClass}
                               value={m.day_kind}
-                              onChange={(e) =>
-                                setDraft(row.id, {
-                                  day_kind: e.target
-                                    .value as AttendanceDayKind,
-                                })
-                              }
+                              onChange={(e) => {
+                                const day_kind = e.target
+                                  .value as AttendanceDayKind;
+                                setDraft(
+                                  row.id,
+                                  isNonWorkedAttendanceKind(day_kind)
+                                    ? {
+                                        day_kind,
+                                        entry_time: null,
+                                        exit_time: null,
+                                        break_minutes: 0,
+                                      }
+                                    : { day_kind },
+                                );
+                              }}
                             >
                               {(
                                 Object.keys(KIND_LABELS) as AttendanceDayKind[]

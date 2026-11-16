@@ -158,9 +158,10 @@ export function NovedadesClient({
         <div>
           <h3 className="font-medium">Reportar novedad</h3>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Anticipos, bonos, descuentos y permisos: el admin del local registra
-            y el gerente aprueba. Horas, extras y ausencias de nómina se capturan
-            en Liquidación → planilla de asistencia. Prestadores por turno: Gastos.
+            Anticipos, bonos y descuentos: el admin del local registra y el
+            gerente aprueba. Horas, extras, ausencias y permiso no remunerado de
+            día completo van en Liquidación → planilla de asistencia. Prestadores
+            por turno: Gastos.
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-3">

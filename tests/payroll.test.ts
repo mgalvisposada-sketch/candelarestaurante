@@ -606,6 +606,95 @@ describe("planilla de asistencia", () => {
     expect(att.unpaidTimeDiscount).toBeGreaterThan(0);
   });
 
+  it("permiso no remunerado de día completo descuenta la jornada ordinaria", () => {
+    const hourValue = ordinaryHourValue(1_750_905, 42);
+    const days: AttendanceDayInput[] = [
+      {
+        employeeId: "e1",
+        workDate: "2026-10-06",
+        dayKind: "PERMISO_NO_REMUNERADO",
+        entryTime: null,
+        exitTime: null,
+        breakMinutes: 0,
+      },
+      {
+        employeeId: "e1",
+        workDate: "2026-10-07",
+        dayKind: "PERMISO_NO_REMUNERADO",
+        entryTime: null,
+        exitTime: null,
+        breakMinutes: 0,
+      },
+      {
+        employeeId: "e1",
+        workDate: "2026-10-08",
+        dayKind: "PERMISO_NO_REMUNERADO",
+        entryTime: null,
+        exitTime: null,
+        breakMinutes: 0,
+      },
+      {
+        employeeId: "e1",
+        workDate: "2026-10-09",
+        dayKind: "PERMISO_NO_REMUNERADO",
+        entryTime: null,
+        exitTime: null,
+        breakMinutes: 0,
+      },
+      {
+        employeeId: "e1",
+        workDate: "2026-10-10",
+        dayKind: "PERMISO_NO_REMUNERADO",
+        entryTime: null,
+        exitTime: null,
+        breakMinutes: 0,
+      },
+    ];
+    // Capacidad Candela 15–23 − 60 = 7h → 5 días × 420 min
+    const att = computeAttendanceHours({
+      days,
+      employee: empSchedule,
+      candela: candelaRestaurant,
+      legal: legalBase,
+      hourValue,
+    });
+    expect(att.hours.workedDays).toBe(0);
+    expect(att.netWorkedHours).toBe(0);
+    expect(att.unpaidMinutes).toBe(5 * 7 * 60);
+    expect(att.unpaidTimeDiscount).toBeCloseTo(5 * 7 * hourValue, 1);
+    expect(
+      att.notes.some((n) => n.includes("permiso no remunerado")),
+    ).toBe(true);
+
+    const sim = simulateBiweekly({
+      year: 2026,
+      month: 10,
+      half: 1,
+      basicSalary: 1_750_905,
+      employmentType: "INDEFINIDO",
+      receivesTransportAid: null,
+      arlRiskLevel: "I",
+      schedule: empSchedule,
+      candelaSchedule: candelaRestaurant,
+      legal: legalBase,
+      bonuses: [],
+      attendanceDays: days,
+      novelties: [
+        {
+          novelty_type: "PERMISO_NO_REMUNERADO",
+          novelty_date: "2026-10-06",
+          minutes: 420,
+        },
+      ],
+    });
+    // No duplica el descuento de la novedad si ya está en planilla
+    expect(sim.earnings.unpaidTimeDiscount).toBe(
+      Math.round(att.unpaidTimeDiscount),
+    );
+    expect(sim.novelties.count).toBe(0);
+    expect(sim.earnings.total).toBeLessThan(sim.earnings.basicSalary);
+  });
+
   it("con planilla ANTICIPO descuenta y HORA_EXTRA no duplica", () => {
     const seeded = buildAttendanceSeedRows({
       year: 2026,

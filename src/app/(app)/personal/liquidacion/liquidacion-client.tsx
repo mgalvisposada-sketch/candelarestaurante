@@ -235,14 +235,15 @@ export function PeriodDetailClient({
         </p>
         <h2 className="mt-1 font-medium">Dinero y permisos</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Anticipos, bonos, descuentos y permisos se gestionan en{" "}
+          Anticipos, bonos y descuentos se gestionan en{" "}
           <Link
             href="/personal/novedades"
             className="underline underline-offset-2"
           >
             Novedades
           </Link>
-          . Las horas reales ya no se reportan ahí: van en la planilla de arriba.
+          . Horas reales y permiso no remunerado de día completo van en la
+          planilla de arriba (Tipo).
         </p>
       </section>
 

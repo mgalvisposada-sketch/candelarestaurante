@@ -108,14 +108,26 @@ export const ATTENDANCE_REPLACED_NOVELTY_TYPES: ShiftNoveltyType[] = [
   "SALIDA_TEMPRANA",
   "AUSENCIA",
   "HORA_EXTRA",
+  "PERMISO_NO_REMUNERADO",
 ];
 
 export type AttendanceDayKind =
   | "LABORADO"
   | "DESCANSO"
   | "FESTIVO"
-  | "FESTIVO_LABORADO";
+  | "FESTIVO_LABORADO"
+  | "PERMISO_NO_REMUNERADO";
 
+/** Días sin horas de trabajo en planilla (sin ingreso/salida). */
+export function isNonWorkedAttendanceKind(
+  kind: AttendanceDayKind,
+): boolean {
+  return (
+    kind === "DESCANSO" ||
+    kind === "FESTIVO" ||
+    kind === "PERMISO_NO_REMUNERADO"
+  );
+}
 export type AttendanceDayInput = {
   id?: string;
   employeeId: string;

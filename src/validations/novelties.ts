@@ -60,6 +60,7 @@ export const ATTENDANCE_DAY_KINDS = [
   "DESCANSO",
   "FESTIVO",
   "FESTIVO_LABORADO",
+  "PERMISO_NO_REMUNERADO",
 ] as const;
 
 export const attendanceDaySaveSchema = z.object({

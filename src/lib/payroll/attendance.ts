@@ -119,7 +119,7 @@ export function validateAttendanceForCalculate(
     if (!day.entryTime || !day.exitTime) {
       return {
         ok: false,
-        error: `Falta ingreso/salida en ${day.workDate}. Complete la planilla o márquelo como descanso/festivo.`,
+        error: `Falta ingreso/salida en ${day.workDate}. Complete la planilla o márquelo como descanso/festivo/permiso no remunerado.`,
       };
     }
   }
@@ -180,6 +180,8 @@ export function computeAttendanceHours(input: {
   let sundayDays = 0;
   let holidayWorkedDays = 0;
   let restDays = 0;
+  let unpaidLeaveDays = 0;
+  let unpaidLeaveMinutes = 0;
   let netWorkedMinutes = 0;
   const notes: string[] = [];
   const slices: DayWorkSlice[] = [];
@@ -191,6 +193,11 @@ export function computeAttendanceHours(input: {
   for (const day of sorted) {
     if (day.dayKind === "DESCANSO" || day.dayKind === "FESTIVO") {
       restDays += 1;
+      continue;
+    }
+    if (day.dayKind === "PERMISO_NO_REMUNERADO") {
+      unpaidLeaveDays += 1;
+      unpaidLeaveMinutes += ordinaryCapacity;
       continue;
     }
     if (!day.entryTime || !day.exitTime) continue;
@@ -296,7 +303,8 @@ export function computeAttendanceHours(input: {
   }
 
   const totalFaltante = slices.reduce((acc, s) => acc + s.faltante, 0);
-  const unpaidMinutes = Math.max(0, totalFaltante - compensatedMinutes);
+  const unpaidMinutes =
+    Math.max(0, totalFaltante - compensatedMinutes) + unpaidLeaveMinutes;
 
   let ordinaryDayMinutes = 0;
   let ordinaryNightMinutes = 0;
@@ -334,6 +342,17 @@ export function computeAttendanceHours(input: {
   notes.push(
     `Planilla de asistencia: ${workedDays} día(s) laborado(s), ${restDays} descanso/festivo.`,
   );
+  if (unpaidLeaveDays > 0) {
+    notes.push(
+      `${unpaidLeaveDays} día(s) de permiso no remunerado (−${unpaidLeaveMinutes} min / $${money(
+        unpaidLeaveMinutes,
+      )
+        .div(60)
+        .times(input.hourValue)
+        .toDecimalPlaces(2)
+        .toNumber()}).`,
+    );
+  }
   if (sundayDays > 0 || holidayWorkedDays > 0) {
     notes.push(
       `${sundayDays} domingo(s) y ${holidayWorkedDays} festivo(s) laborado(s) en planilla.`,
@@ -347,9 +366,14 @@ export function computeAttendanceHours(input: {
   if (overtimeMinutes > 0) {
     notes.push(`${overtimeMinutes} min extras desde planilla.`);
   }
+  if (unpaidMinutes > unpaidLeaveMinutes) {
+    notes.push(
+      `${unpaidMinutes - unpaidLeaveMinutes} min bajo jornada ordinaria no compensados, descontados desde planilla.`,
+    );
+  }
   if (unpaidMinutes > 0) {
     notes.push(
-      `${unpaidMinutes} min bajo jornada ordinaria no compensados, descontados desde planilla ($${unpaidTimeDiscount}).`,
+      `Total tiempo no remunerado descontado desde planilla: ${unpaidMinutes} min ($${unpaidTimeDiscount}).`,
     );
   }
 

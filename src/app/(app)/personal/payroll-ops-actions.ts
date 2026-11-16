@@ -19,6 +19,7 @@ import {
   mapLegalParamsRow,
   mapScheduleRow,
   timeFromDb,
+  isNonWorkedAttendanceKind,
   validateAttendanceForCalculate,
   type AttendanceDayInput,
   type AttendanceDayKind,
@@ -825,7 +826,7 @@ export async function saveAttendanceDayAction(
   }
 
   const kind = parsed.data.day_kind;
-  const rest = kind === "DESCANSO" || kind === "FESTIVO";
+  const rest = isNonWorkedAttendanceKind(kind);
   const entryRaw = emptyToNull(parsed.data.entry_time ?? null);
   const exitRaw = emptyToNull(parsed.data.exit_time ?? null);
   const entry_time = rest ? null : entryRaw ? timeFromDb(entryRaw) : null;
