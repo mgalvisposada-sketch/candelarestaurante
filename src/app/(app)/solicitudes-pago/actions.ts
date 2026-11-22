@@ -836,6 +836,170 @@ export async function correctPurchaseInvoicePaymentRequestAction(
 }
 
 /**
+ * Elimina un egreso de pago (bank_transaction) y recalcula la solicitud:
+ * vuelve a EN_COLA_PAGO / pendiente si ya no está cubierta.
+ */
+export async function deletePaymentBankTransactionAction(
+  transactionId: string,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext();
+  if (!ctx?.organization) return { ok: false, error: "Sin organización" };
+  if (
+    !ctxCanAccess(ctx, "solicitudes-pago.pagar") &&
+    !ctxCanAccess(ctx, "tesoreria.cuentas")
+  ) {
+    return { ok: false, error: "Sin permiso para eliminar el movimiento" };
+  }
+
+  const supabase = await createClient();
+  const orgId = ctx.organization.id;
+  const now = new Date().toISOString();
+
+  const { data: tx, error: txError } = await supabase
+    .from("bank_transactions")
+    .select(
+      "id, debit, credit, category, origin, linked_entity_type, linked_entity_id, description",
+    )
+    .eq("id", transactionId)
+    .eq("organization_id", orgId)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (txError) return { ok: false, error: txError.message };
+  if (!tx) return { ok: false, error: "Movimiento no encontrado" };
+
+  const isPayment =
+    tx.linked_entity_type === "payment_requests" ||
+    tx.category === "PAGO" ||
+    tx.origin === "solicitudes-pago";
+
+  if (!isPayment || !tx.linked_entity_id) {
+    return {
+      ok: false,
+      error:
+        "Solo se pueden eliminar movimientos de pago. Los traspasos y cierres de caja no se borran aquí.",
+    };
+  }
+
+  if (tx.category === "TRASPASO" || tx.origin === "tesoreria.traspaso") {
+    return { ok: false, error: "Los traspasos no se eliminan aquí" };
+  }
+
+  const requestId = tx.linked_entity_id as string;
+  let req;
+  try {
+    req = await getWritableRequest(supabase, orgId, requestId);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Error" };
+  }
+  if (!req) return { ok: false, error: "Solicitud de pago no encontrada" };
+
+  const { error: softTxErr } = await supabase
+    .from("bank_transactions")
+    .update({
+      deleted_at: now,
+      updated_by: ctx.userId,
+      updated_at: now,
+    })
+    .eq("id", transactionId)
+    .eq("organization_id", orgId)
+    .is("deleted_at", null);
+  if (softTxErr) return { ok: false, error: softTxErr.message };
+
+  await supabase
+    .from("accounts_payable_payments")
+    .update({
+      deleted_at: now,
+      updated_by: ctx.userId,
+    })
+    .eq("organization_id", orgId)
+    .eq("bank_transaction_id", transactionId)
+    .is("deleted_at", null);
+
+  const { data: remainingTxs, error: remErr } = await supabase
+    .from("bank_transactions")
+    .select("id, debit")
+    .eq("organization_id", orgId)
+    .eq("linked_entity_type", "payment_requests")
+    .eq("linked_entity_id", requestId)
+    .is("deleted_at", null);
+  if (remErr) return { ok: false, error: remErr.message };
+
+  const remainingPaid = (remainingTxs ?? []).reduce(
+    (acc, row) => acc + Number(row.debit || 0),
+    0,
+  );
+  const requestTotal = Number(req.amount || 0);
+  const fullyPaid = remainingPaid >= requestTotal - 0.009;
+  const primaryRemainingId = remainingTxs?.[0]?.id ?? null;
+
+  if (req.ap_document_id) {
+    await refreshDocumentPaid(supabase, orgId, req.ap_document_id);
+  }
+
+  if (req.expense_id && !fullyPaid) {
+    await supabase
+      .from("expenses")
+      .update({
+        status: "APROBADO",
+        updated_by: ctx.userId,
+      })
+      .eq("id", req.expense_id)
+      .eq("organization_id", orgId)
+      .eq("status", "PAGADO");
+  }
+
+  const { error: reqErr } = await supabase
+    .from("payment_requests")
+    .update({
+      paid_amount: remainingPaid,
+      bank_transaction_id: primaryRemainingId,
+      status: (fullyPaid
+        ? "PAGADA"
+        : "EN_COLA_PAGO") satisfies PaymentRequestStatus,
+      ...(fullyPaid
+        ? {}
+        : {
+            paid_at: null,
+            ...(remainingPaid <= 0.009 ? { payment_reference: null } : {}),
+          }),
+      updated_by: ctx.userId,
+    })
+    .eq("id", requestId)
+    .eq("organization_id", orgId);
+  if (reqErr) return { ok: false, error: reqErr.message };
+
+  await supabase.from("audit_logs").insert({
+    organization_id: orgId,
+    user_id: ctx.userId,
+    action: "ANULAR",
+    entity: "bank_transactions",
+    entity_id: transactionId,
+    new_values: {
+      deleted_payment_movement: true,
+      payment_request_id: requestId,
+      previous_paid_amount: req.paid_amount,
+      remaining_paid_amount: remainingPaid,
+      request_status: fullyPaid ? "PAGADA" : "EN_COLA_PAGO",
+      description: tx.description,
+      debit: Number(tx.debit || 0),
+    },
+  });
+
+  if (req.source === "FACTURA_PROVEEDOR") {
+    try {
+      await syncPurchaseOrdersAfterPayment(requestId);
+    } catch {
+      /* no bloquear la reversión del egreso */
+    }
+  }
+
+  revalidatePaymentPaths();
+  revalidatePath("/cierre-caja");
+  return { ok: true, id: transactionId };
+}
+
+/**
  * Revierte abonos/pagos ejecutados de una solicitud:
  * soft-delete de bank_transactions (+ CxP si aplica) y deja paid_amount en 0.
  * Por defecto anula la solicitud para que no quede en cola.

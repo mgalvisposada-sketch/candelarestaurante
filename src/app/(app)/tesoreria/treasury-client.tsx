@@ -11,6 +11,7 @@ import {
   updateBankAccountAction,
   upsertBankBalanceSnapshotAction,
 } from "./actions";
+import { deletePaymentBankTransactionAction } from "../solicitudes-pago/actions";
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO, todayInBogota } from "@/lib/dates";
@@ -57,10 +58,19 @@ export type BankTransactionRow = {
   origin: string | null;
   category: string | null;
   linked_entity_type: string | null;
+  linked_entity_id?: string | null;
   settlement_status?: string | null;
   settled_at?: string | null;
   parent_transaction_id?: string | null;
 };
+
+function isPaymentMovement(tx: BankTransactionRow): boolean {
+  return (
+    tx.linked_entity_type === "payment_requests" ||
+    tx.category === "PAGO" ||
+    tx.origin === "solicitudes-pago"
+  );
+}
 
 function movementLabel(tx: BankTransactionRow): string {
   if (tx.description?.trim()) return tx.description.trim();
@@ -766,6 +776,7 @@ export function RegisteredAccountsList({
   availableByAccount,
   movementsByAccount,
   canManage,
+  canDeletePayments = false,
 }: {
   accounts: BankAccountRow[];
   snapshots: BalanceSnapshotRow[];
@@ -773,6 +784,7 @@ export function RegisteredAccountsList({
   availableByAccount: Record<string, string>;
   movementsByAccount: Record<string, BankTransactionRow[]>;
   canManage: boolean;
+  canDeletePayments?: boolean;
 }) {
   const [showInactive, setShowInactive] = useState(false);
   const inactiveCount = accounts.filter((a) => !a.is_active).length;
@@ -832,6 +844,7 @@ export function RegisteredAccountsList({
             movements={movementsByAccount[account.id] ?? []}
             accounts={accounts}
             canManage={canManage}
+            canDeletePayments={canDeletePayments}
           />
         ))
       )}
@@ -862,6 +875,7 @@ export function BankAccountCard({
   movements = [],
   accounts = [],
   canManage = true,
+  canDeletePayments = false,
 }: {
   account: BankAccountRow;
   snapshot: BalanceSnapshotRow | null;
@@ -870,6 +884,7 @@ export function BankAccountCard({
   movements?: BankTransactionRow[];
   accounts?: BankAccountRow[];
   canManage?: boolean;
+  canDeletePayments?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -1063,6 +1078,7 @@ export function BankAccountCard({
               movements={movements}
               accounts={accounts}
               canManage={canManage}
+              canDeletePayments={canDeletePayments}
             />
           ) : null}
 
@@ -1209,11 +1225,13 @@ export function AccountMovementsList({
   movements,
   accounts = [],
   canManage = false,
+  canDeletePayments = false,
   limit = 20,
 }: {
   movements: BankTransactionRow[];
   accounts?: BankAccountRow[];
   canManage?: boolean;
+  canDeletePayments?: boolean;
   limit?: number;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1231,6 +1249,8 @@ export function AccountMovementsList({
   }
 
   const canReassign = canManage && activeAccounts.length > 1;
+  const canDelete = canManage || canDeletePayments;
+  const canActOnMovements = canReassign || canDelete;
 
   return (
     <div className="mt-4 space-y-2">
@@ -1243,7 +1263,7 @@ export function AccountMovementsList({
               <th className="px-3 py-2 font-medium">Ref.</th>
               <th className="px-3 py-2 text-right font-medium">Ingreso</th>
               <th className="px-3 py-2 text-right font-medium">Egreso</th>
-              {canReassign ? (
+              {canActOnMovements ? (
                 <th className="px-3 py-2 text-right font-medium"> </th>
               ) : null}
             </tr>
@@ -1254,6 +1274,7 @@ export function AccountMovementsList({
               const debit = Number(tx.debit || 0);
               const isTransfer =
                 tx.category === "TRASPASO" || tx.origin === "tesoreria.traspaso";
+              const isPayment = isPaymentMovement(tx);
               const isEditing = editingId === tx.id;
               const isPendingBank = tx.settlement_status === "PENDIENTE_BANCO";
               const isSettledBank = tx.settlement_status === "INGRESADO";
@@ -1364,21 +1385,57 @@ export function AccountMovementsList({
                   <td className="whitespace-nowrap px-3 py-2 align-top text-right text-red-700">
                     {debit > 0 ? formatCOP(debit) : "—"}
                   </td>
-                  {canReassign ? (
+                  {canActOnMovements ? (
                     <td className="whitespace-nowrap px-3 py-2 align-top text-right">
-                      {isTransfer ? (
-                        <span className="text-xs text-[var(--muted)]">—</span>
-                      ) : isEditing ? null : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setError(null);
-                            setEditingId(tx.id);
-                          }}
-                          className="text-xs font-medium text-[var(--accent)] hover:underline"
-                        >
-                          Cambiar cuenta
-                        </button>
+                      {isTransfer || isEditing ? (
+                        isTransfer ? (
+                          <span className="text-xs text-[var(--muted)]">—</span>
+                        ) : null
+                      ) : (
+                        <div className="flex flex-col items-end gap-1">
+                          {canReassign ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setError(null);
+                                setEditingId(tx.id);
+                              }}
+                              className="text-xs font-medium text-[var(--accent)] hover:underline"
+                            >
+                              Cambiar cuenta
+                            </button>
+                          ) : null}
+                          {canDelete && isPayment ? (
+                            <button
+                              type="button"
+                              disabled={pending}
+                              onClick={() => {
+                                if (
+                                  !confirm(
+                                    "¿Eliminar este pago?\n\nSe quitará el egreso de la cuenta y la solicitud volverá a pendiente por pagar.",
+                                  )
+                                ) {
+                                  return;
+                                }
+                                setError(null);
+                                startTransition(async () => {
+                                  const result =
+                                    await deletePaymentBankTransactionAction(
+                                      tx.id,
+                                    );
+                                  if (!result.ok) {
+                                    setError(
+                                      result.error ?? "No se pudo eliminar",
+                                    );
+                                  }
+                                });
+                              }}
+                              className="text-xs font-medium text-red-700 hover:underline disabled:opacity-60"
+                            >
+                              Eliminar
+                            </button>
+                          ) : null}
+                        </div>
                       )}
                     </td>
                   ) : null}
@@ -1398,10 +1455,14 @@ export function AccountMovementsList({
           {error}
         </p>
       ) : null}
-      {canReassign ? (
+      {canDelete || canReassign ? (
         <p className="text-xs text-[var(--muted)]">
-          Si cargó un pago a la cuenta equivocada, use «Cambiar cuenta». Los
-          saldos se recalculan al guardar.
+          {canDelete
+            ? "«Eliminar» en un pago revierte el egreso y deja la solicitud en pendiente por pagar."
+            : ""}
+          {canReassign
+            ? `${canDelete ? " " : ""}«Cambiar cuenta» corrige un pago cargado a la cuenta equivocada.`
+            : ""}
         </p>
       ) : null}
     </div>

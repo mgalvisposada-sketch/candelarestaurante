@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useState, useTransition } from "react";
 import { Badge } from "@/components/ui/primitives";
 import { formatCOP } from "@/lib/money";
 import { formatDateCO, formatDateTimeCO } from "@/lib/dates";
 import { cn } from "@/lib/utils";
+import { revertPaymentRequestPaymentsAction } from "../../solicitudes-pago/actions";
 
 export type PaymentHistoryFilters = {
   from: string;
@@ -256,10 +258,15 @@ export function PaymentHistoryFiltersForm({
 export function PaymentHistoryTable({
   rows,
   totalAmount,
+  canRevert = false,
 }: {
   rows: PaymentHistoryRow[];
   totalAmount: string;
+  canRevert?: boolean;
 }) {
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -279,6 +286,12 @@ export function PaymentHistoryTable({
           Exportar CSV
         </button>
       </div>
+
+      {error ? (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error}
+        </p>
+      ) : null}
 
       {rows.length === 0 ? (
         <p className="rounded-xl border border-dashed border-[var(--line)] px-4 py-8 text-center text-sm text-[var(--muted)]">
@@ -361,7 +374,7 @@ export function PaymentHistoryTable({
                 ))}
               </ul>
 
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--muted)]">
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[var(--muted)]">
                 {r.paid_by_name ? <span>Ejecutó: {r.paid_by_name}</span> : null}
                 {r.approved_by_name ? (
                   <span>Aprobó: {r.approved_by_name}</span>
@@ -373,6 +386,34 @@ export function PaymentHistoryTable({
                 >
                   Ver bandeja
                 </Link>
+                {canRevert ? (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => {
+                      if (
+                        !confirm(
+                          "¿Devolver este pago a pendiente?\n\nSe eliminarán los egresos de tesorería y la solicitud volverá a la cola por pagar.",
+                        )
+                      ) {
+                        return;
+                      }
+                      setError(null);
+                      startTransition(async () => {
+                        const result = await revertPaymentRequestPaymentsAction(
+                          r.id,
+                          { annulRequest: false },
+                        );
+                        if (!result.ok) {
+                          setError(result.error ?? "No se pudo revertir");
+                        }
+                      });
+                    }}
+                    className="font-medium text-red-700 underline-offset-2 hover:underline disabled:opacity-60"
+                  >
+                    Devolver a pendiente
+                  </button>
+                ) : null}
               </div>
             </li>
           ))}

@@ -61,6 +61,9 @@ export default async function TesoreriaPagosPage({
     ctxCanAccess(ctx, "tesoreria.cuentas") ||
     ctxCanAccess(ctx, "tesoreria.caja") ||
     ctxCanAccess(ctx, "solicitudes-pago.pagar");
+  const canRevert =
+    ctxCanAccess(ctx, "solicitudes-pago.pagar") ||
+    ctxCanAccess(ctx, "tesoreria.cuentas");
 
   if (!canSee) {
     redirect("/tesoreria");
@@ -382,7 +385,11 @@ export default async function TesoreriaPagosPage({
             description="Cuando se confirmen pagos en Solicitudes de pago, aparecerán aquí con sus cuentas y referencias."
           />
         ) : (
-          <PaymentHistoryTable rows={rows} totalAmount={totalAmount} />
+          <PaymentHistoryTable
+            rows={rows}
+            totalAmount={totalAmount}
+            canRevert={canRevert}
+          />
         )}
       </main>
     </>

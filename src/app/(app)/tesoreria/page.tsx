@@ -82,6 +82,8 @@ export default async function TesoreriaPage() {
   const today = todayInBogota();
 
   const canManageAccounts = ctxCanAccess(ctx, "tesoreria.cuentas");
+  const canDeletePayments =
+    canManageAccounts || ctxCanAccess(ctx, "solicitudes-pago.pagar");
   const canAvalar = ctxCanAccess(ctx, "tesoreria.caja.avalar");
   const canConfirmAcquiring = canAvalar || canManageAccounts;
   const canSeeCaja =
@@ -151,7 +153,7 @@ export default async function TesoreriaPage() {
     const { data: txRows } = await supabase
       .from("bank_transactions")
       .select(
-        "id, bank_account_id, transaction_date, description, reference, debit, credit, origin, category, linked_entity_type, settlement_status, settled_at, parent_transaction_id",
+        "id, bank_account_id, transaction_date, description, reference, debit, credit, origin, category, linked_entity_type, linked_entity_id, settlement_status, settled_at, parent_transaction_id",
       )
       .eq("organization_id", orgId)
       .is("deleted_at", null)
@@ -411,6 +413,7 @@ export default async function TesoreriaPage() {
                 availableByAccount={Object.fromEntries(availableByAccount)}
                 movementsByAccount={Object.fromEntries(movementsByAccount)}
                 canManage={canManageAccounts}
+                canDeletePayments={canDeletePayments}
               />
             </WorkSection>
 
