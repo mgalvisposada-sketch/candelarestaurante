@@ -139,7 +139,7 @@ export const NAV_ITEMS = [
   {
     href: "/reportes",
     label: "Reportes",
-    mvp: 4,
+    mvp: 3,
     hint: "Consulta de reportes",
   },
   {

@@ -1,8 +1,53 @@
 import type {
+  DayHoursSlot,
   EmployeeScheduleInput,
   HoursBreakdown,
   PayrollScheduleInput,
+  ScheduleDayHours,
+  WeekdayName,
 } from "./types";
+
+export const WEEKDAY_NAMES: WeekdayName[] = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+];
+
+export const WEEKDAY_LABELS: Record<WeekdayName, string> = {
+  monday: "Lunes",
+  tuesday: "Martes",
+  wednesday: "Miércoles",
+  thursday: "Jueves",
+  friday: "Viernes",
+  saturday: "Sábado",
+  sunday: "Domingo",
+};
+
+/** JS getUTCDay: 0=Sun … 6=Sat → nombre de día Candela. */
+export function utcDowToWeekdayName(utcDay: number): WeekdayName {
+  switch (utcDay) {
+    case 0:
+      return "sunday";
+    case 1:
+      return "monday";
+    case 2:
+      return "tuesday";
+    case 3:
+      return "wednesday";
+    case 4:
+      return "thursday";
+    case 5:
+      return "friday";
+    case 6:
+      return "saturday";
+    default:
+      return "monday";
+  }
+}
 
 /** Parse "HH:mm" or "HH:mm:ss" to minutes from midnight. */
 export function timeToMinutes(value: string): number {
@@ -20,6 +65,14 @@ export function formatTimeHm(value: string | null | undefined): string {
   if (!value) return "—";
   const [h, m] = value.split(":");
   return `${(h ?? "00").padStart(2, "0")}:${(m ?? "00").padStart(2, "0")}`;
+}
+
+export function formatDurationHm(totalMinutes: number): string {
+  const m = Math.max(0, Math.round(totalMinutes));
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  if (min === 0) return `${h} h`;
+  return `${h} h ${min} min`;
 }
 
 export function biweeklyRange(
@@ -40,7 +93,7 @@ export function biweeklyRange(
   };
 }
 
-function weekdayWorks(
+export function weekdayWorks(
   schedule: PayrollScheduleInput,
   utcDay: number,
 ): boolean {
@@ -62,6 +115,28 @@ function weekdayWorks(
       return schedule.works_saturday;
     default:
       return false;
+  }
+}
+
+export function weekdayWorksByName(
+  schedule: PayrollScheduleInput,
+  day: WeekdayName,
+): boolean {
+  switch (day) {
+    case "monday":
+      return schedule.works_monday;
+    case "tuesday":
+      return schedule.works_tuesday;
+    case "wednesday":
+      return schedule.works_wednesday;
+    case "thursday":
+      return schedule.works_thursday;
+    case "friday":
+      return schedule.works_friday;
+    case "saturday":
+      return schedule.works_saturday;
+    case "sunday":
+      return schedule.works_sunday;
   }
 }
 
@@ -123,6 +198,74 @@ export function resolveEmployeeSchedule(
   };
 }
 
+function slotFromDayHours(
+  dayHours: ScheduleDayHours | undefined,
+  day: WeekdayName,
+): DayHoursSlot | null {
+  if (!dayHours) return null;
+  const slot = dayHours[day];
+  if (!slot?.entry || !slot?.exit) return null;
+  return {
+    entry: slot.entry.slice(0, 5),
+    exit: slot.exit.slice(0, 5),
+  };
+}
+
+/**
+ * Resuelve entrada/salida/descanso para un día de la semana.
+ * Empleado custom → un solo horario; si no, day_hours del Candela o ordinary_*.
+ */
+export function resolveScheduleForDay(
+  employee: EmployeeScheduleInput,
+  candela: PayrollScheduleInput,
+  utcDay: number,
+): { entry: string; exit: string; breakMinutes: number } {
+  if (employee.uses_custom_schedule) {
+    return {
+      entry: employee.ordinary_entry_time,
+      exit: employee.ordinary_exit_time,
+      breakMinutes: employee.break_minutes,
+    };
+  }
+  const name = utcDowToWeekdayName(utcDay);
+  const slot = slotFromDayHours(candela.day_hours, name);
+  return {
+    entry: slot?.entry ?? candela.ordinary_entry_time,
+    exit: slot?.exit ?? candela.ordinary_exit_time,
+    breakMinutes: candela.break_minutes,
+  };
+}
+
+export function resolveScheduleForWeekday(
+  candela: PayrollScheduleInput,
+  day: WeekdayName,
+): { entry: string; exit: string; breakMinutes: number } {
+  const slot = slotFromDayHours(candela.day_hours, day);
+  return {
+    entry: slot?.entry ?? candela.ordinary_entry_time,
+    exit: slot?.exit ?? candela.ordinary_exit_time,
+    breakMinutes: candela.break_minutes,
+  };
+}
+
+/** Primer día laborable → ordinary_* de respaldo / sync empleados. */
+export function defaultTimesFromDayHours(
+  dayHours: ScheduleDayHours,
+  works: Record<WeekdayName, boolean>,
+  fallbackEntry: string,
+  fallbackExit: string,
+): { entry: string; exit: string } {
+  for (const day of WEEKDAY_NAMES) {
+    if (!works[day]) continue;
+    const slot = slotFromDayHours(dayHours, day);
+    if (slot) return slot;
+  }
+  return {
+    entry: fallbackEntry.slice(0, 5),
+    exit: fallbackExit.slice(0, 5),
+  };
+}
+
 export function scheduleDiffSummary(
   employee: EmployeeScheduleInput,
   candela: PayrollScheduleInput,
@@ -139,6 +282,12 @@ export function scheduleDiffSummary(
     parts.push(
       `Descanso ${employee.break_minutes} min vs Candela ${candela.break_minutes} min`,
     );
+  }
+  const hasDayOverrides = WEEKDAY_NAMES.some((d) =>
+    Boolean(slotFromDayHours(candela.day_hours, d)),
+  );
+  if (hasDayOverrides) {
+    parts.push("Candela tiene horarios distintos por día");
   }
   return parts.length > 0 ? parts.join(" · ") : "Horario personalizado";
 }
@@ -158,7 +307,6 @@ export function computePeriodHours(input: {
   nightEnd: string;
 }): HoursBreakdown {
   const { start, end } = biweeklyRange(input.year, input.month, input.half);
-  const resolved = resolveEmployeeSchedule(input.employee, input.candela);
   const nightStart = timeToMinutes(input.nightStart);
   const nightEnd = timeToMinutes(input.nightEnd);
 
@@ -181,6 +329,11 @@ export function computePeriodHours(input: {
     const isSunday = dow === 0;
     if (isSunday) sundayDays += 1;
 
+    const resolved = resolveScheduleForDay(
+      input.employee,
+      input.candela,
+      dow,
+    );
     const entryMin = timeToMinutes(resolved.entry);
     let exitMin = timeToMinutes(resolved.exit);
     if (exitMin <= entryMin) exitMin += 24 * 60;

@@ -675,9 +675,7 @@ async function toolEmployees(ctx: OrgContext) {
       .order("full_name"),
     supabase
       .from("payroll_schedules")
-      .select(
-        "ordinary_entry_time, ordinary_exit_time, break_minutes, works_sunday",
-      )
+      .select("*")
       .eq("organization_id", org.id)
       .is("deleted_at", null)
       .order("created_at", { ascending: true })
@@ -750,9 +748,7 @@ async function toolPayrollContext(ctx: OrgContext) {
   const supabase = await createClient();
   const { data: schedule } = await supabase
     .from("payroll_schedules")
-    .select(
-      "name, ordinary_entry_time, ordinary_exit_time, break_minutes, works_monday, works_tuesday, works_wednesday, works_thursday, works_friday, works_saturday, works_sunday",
-    )
+    .select("*")
     .eq("organization_id", org.id)
     .is("deleted_at", null)
     .order("created_at", { ascending: true })
@@ -975,9 +971,7 @@ async function toolSimulateSundays(ctx: OrgContext, args: ToolArgs) {
   const supabase = await createClient();
   const { data: scheduleRow, error: schErr } = await supabase
     .from("payroll_schedules")
-    .select(
-      "ordinary_entry_time, ordinary_exit_time, break_minutes, works_monday, works_tuesday, works_wednesday, works_thursday, works_friday, works_saturday, works_sunday",
-    )
+    .select("*")
     .eq("organization_id", org.id)
     .is("deleted_at", null)
     .order("created_at", { ascending: true })

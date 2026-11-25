@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import {
   savePayrollLegalParamsAction,
   upsertPayrollScheduleAction,
@@ -9,7 +9,14 @@ import {
   softDeleteJobPositionAction,
   upsertJobPositionAction,
 } from "../payroll-ops-actions";
-import { formatTimeHm } from "@/lib/payroll";
+import {
+  formatDurationHm,
+  formatTimeHm,
+  netShiftMinutes,
+  timeToMinutes,
+  type ScheduleDayHours,
+  type WeekdayName,
+} from "@/lib/payroll";
 import { Badge } from "@/components/ui/primitives";
 
 const inputClass =
@@ -21,6 +28,7 @@ export type ScheduleRow = {
   ordinary_entry_time: string;
   ordinary_exit_time: string;
   break_minutes: number;
+  day_hours?: ScheduleDayHours | null;
   works_monday: boolean;
   works_tuesday: boolean;
   works_wednesday: boolean;
@@ -72,15 +80,44 @@ export type LegalParamsRow = {
   round_to_peso: boolean;
 };
 
-const DAYS: Array<{ key: keyof ScheduleRow; label: string }> = [
-  { key: "works_monday", label: "Lun" },
-  { key: "works_tuesday", label: "Mar" },
-  { key: "works_wednesday", label: "Mié" },
-  { key: "works_thursday", label: "Jue" },
-  { key: "works_friday", label: "Vie" },
-  { key: "works_saturday", label: "Sáb" },
-  { key: "works_sunday", label: "Dom" },
+const WEEK_DAYS: Array<{
+  day: WeekdayName;
+  worksKey: keyof ScheduleRow;
+  label: string;
+}> = [
+  { day: "monday", worksKey: "works_monday", label: "Lunes" },
+  { day: "tuesday", worksKey: "works_tuesday", label: "Martes" },
+  { day: "wednesday", worksKey: "works_wednesday", label: "Miércoles" },
+  { day: "thursday", worksKey: "works_thursday", label: "Jueves" },
+  { day: "friday", worksKey: "works_friday", label: "Viernes" },
+  { day: "saturday", worksKey: "works_saturday", label: "Sábado" },
+  { day: "sunday", worksKey: "works_sunday", label: "Domingo" },
 ];
+
+type DayFormState = {
+  works: boolean;
+  entry: string;
+  exit: string;
+};
+
+function initialDayState(schedule: ScheduleRow | null): Record<WeekdayName, DayFormState> {
+  const fallbackEntry = formatTimeHm(schedule?.ordinary_entry_time ?? "10:00");
+  const fallbackExit = formatTimeHm(schedule?.ordinary_exit_time ?? "22:00");
+  const out = {} as Record<WeekdayName, DayFormState>;
+  for (const { day, worksKey } of WEEK_DAYS) {
+    const works =
+      schedule != null
+        ? Boolean(schedule[worksKey])
+        : day !== "sunday";
+    const slot = schedule?.day_hours?.[day];
+    out[day] = {
+      works,
+      entry: formatTimeHm(slot?.entry ?? fallbackEntry),
+      exit: formatTimeHm(slot?.exit ?? fallbackExit),
+    };
+  }
+  return out;
+}
 
 function Field({
   label,
@@ -152,6 +189,39 @@ export function HorarioCandelaForm({ schedule }: { schedule: ScheduleRow | null 
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [days, setDays] = useState(() => initialDayState(schedule));
+  const [breakMinutes, setBreakMinutes] = useState(
+    () => schedule?.break_minutes ?? 60,
+  );
+
+  const summary = useMemo(() => {
+    let weeklyNet = 0;
+    const permanencias: number[] = [];
+    for (const { day } of WEEK_DAYS) {
+      const row = days[day];
+      if (!row.works) continue;
+      const entryMin = timeToMinutes(row.entry);
+      let exitMin = timeToMinutes(row.exit);
+      if (exitMin <= entryMin) exitMin += 24 * 60;
+      permanencias.push(exitMin - entryMin);
+      weeklyNet += netShiftMinutes(row.entry, row.exit, breakMinutes);
+    }
+    const uniquePermanencia = [...new Set(permanencias)];
+    return {
+      weeklyNet,
+      breakMinutes,
+      permanenciaLabel:
+        uniquePermanencia.length === 0
+          ? "—"
+          : uniquePermanencia.length === 1
+            ? formatDurationHm(uniquePermanencia[0]!)
+            : "Según día",
+    };
+  }, [days, breakMinutes]);
+
+  function patchDay(day: WeekdayName, patch: Partial<DayFormState>) {
+    setDays((prev) => ({ ...prev, [day]: { ...prev[day], ...patch } }));
+  }
 
   return (
     <form
@@ -169,45 +239,126 @@ export function HorarioCandelaForm({ schedule }: { schedule: ScheduleRow | null 
       <div>
         <h3 className="font-medium">Horario Candela</h3>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Define los días que el restaurante abre y la jornada ordinaria plantilla.
-          Impacta la simulación quincenal y la futura liquidación con novedades.
+          Define por día si el restaurante abre y a qué hora. Impacta la
+          simulación quincenal y la precarga de planilla.
         </p>
       </div>
 
       <Field label="Nombre" name="name" defaultValue={schedule?.name ?? "Horario Candela"} />
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <Field
-          label="Entrada ordinaria"
-          name="ordinary_entry_time"
-          type="time"
-          defaultValue={formatTimeHm(schedule?.ordinary_entry_time ?? "10:00")}
-        />
-        <Field
-          label="Salida ordinaria"
-          name="ordinary_exit_time"
-          type="time"
-          defaultValue={formatTimeHm(schedule?.ordinary_exit_time ?? "22:00")}
-        />
-        <Field
-          label="Descanso (minutos)"
+      <label className="block max-w-xs text-sm">
+        <span className="mb-1.5 block text-[var(--muted)]">Descanso diario (minutos)</span>
+        <input
           name="break_minutes"
           type="number"
-          defaultValue={schedule?.break_minutes ?? 60}
+          min={0}
+          max={240}
+          value={breakMinutes}
+          onChange={(e) => setBreakMinutes(Number(e.target.value) || 0)}
+          className={inputClass}
         />
+      </label>
+
+      <div className="overflow-x-auto rounded-xl border border-[var(--line)]">
+        <table className="w-full min-w-[640px] text-left text-sm">
+          <thead className="border-b border-[var(--line)] bg-[var(--surface)] text-[var(--muted)]">
+            <tr>
+              <th className="px-3 py-2 font-medium">Día</th>
+              <th className="px-3 py-2 font-medium">Labora</th>
+              <th className="px-3 py-2 font-medium">Entrada</th>
+              <th className="px-3 py-2 font-medium">Salida</th>
+              <th className="px-3 py-2 font-medium text-right">Horas efectivas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {WEEK_DAYS.map(({ day, worksKey, label }) => {
+              const row = days[day];
+              const net = row.works
+                ? netShiftMinutes(row.entry, row.exit, breakMinutes)
+                : 0;
+              return (
+                <tr key={day} className="border-b border-[var(--line)] last:border-0">
+                  <td className="px-3 py-2.5 font-medium">{label}</td>
+                  <td className="px-3 py-2.5">
+                    <input type="hidden" name={worksKey} value={row.works ? "true" : "false"} />
+                    <input
+                      type="checkbox"
+                      checked={row.works}
+                      onChange={(e) => patchDay(day, { works: e.target.checked })}
+                      className="rounded border-[var(--line)]"
+                      aria-label={`${label} labora`}
+                    />
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {row.works ? (
+                      <input
+                        name={`${day}_entry`}
+                        type="time"
+                        value={row.entry}
+                        onChange={(e) => patchDay(day, { entry: e.target.value })}
+                        className={inputClass}
+                        required
+                      />
+                    ) : (
+                      <span className="text-[var(--muted)]">Descanso</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {row.works ? (
+                      <input
+                        name={`${day}_exit`}
+                        type="time"
+                        value={row.exit}
+                        onChange={(e) => patchDay(day, { exit: e.target.value })}
+                        className={inputClass}
+                        required
+                      />
+                    ) : (
+                      <span className="text-[var(--muted)]">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">
+                    {row.works ? (net / 60).toLocaleString("es-CO", { maximumFractionDigits: 2 }) : "0"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="bg-[var(--surface)] font-medium">
+              <td className="px-3 py-2.5" colSpan={4}>
+                Total semanal
+              </td>
+              <td className="px-3 py-2.5 text-right tabular-nums">
+                {(summary.weeklyNet / 60).toLocaleString("es-CO", {
+                  maximumFractionDigits: 2,
+                })}{" "}
+                horas
+              </td>
+            </tr>
+          </tfoot>
+        </table>
       </div>
 
-      <div>
-        <p className="mb-2 text-sm text-[var(--muted)]">Días que se labora</p>
-        <div className="flex flex-wrap gap-4">
-          {DAYS.map((d) => (
-            <Check
-              key={d.key}
-              label={d.label}
-              name={d.key}
-              defaultChecked={Boolean(schedule?.[d.key] ?? d.key !== "works_sunday")}
-            />
-          ))}
+      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
+        <p className="text-sm font-medium">Jornada por trabajador</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div>
+            <p className="text-xs text-[var(--muted)]">Permanencia diaria</p>
+            <p className="mt-0.5 text-sm font-medium">{summary.permanenciaLabel}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[var(--muted)]">Descanso diario</p>
+            <p className="mt-0.5 text-sm font-medium">
+              {summary.breakMinutes} min
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-[var(--muted)]">Trabajo semanal</p>
+            <p className="mt-0.5 text-sm font-medium text-emerald-700">
+              {formatDurationHm(summary.weeklyNet)}
+            </p>
+          </div>
         </div>
       </div>
 

@@ -2,9 +2,10 @@ import { money } from "@/lib/money";
 import {
   biweeklyRange,
   netShiftMinutes,
-  resolveEmployeeSchedule,
+  resolveScheduleForDay,
   splitDayNightMinutes,
   timeToMinutes,
+  weekdayWorks,
 } from "./schedule";
 import { overtimeSurchargePct } from "./novelties";
 import type {
@@ -21,30 +22,6 @@ const WORKED_KINDS = new Set<AttendanceDayKind>([
   "LABORADO",
   "FESTIVO_LABORADO",
 ]);
-
-function weekdayWorks(
-  schedule: PayrollScheduleInput,
-  utcDay: number,
-): boolean {
-  switch (utcDay) {
-    case 0:
-      return schedule.works_sunday;
-    case 1:
-      return schedule.works_monday;
-    case 2:
-      return schedule.works_tuesday;
-    case 3:
-      return schedule.works_wednesday;
-    case 4:
-      return schedule.works_thursday;
-    case 5:
-      return schedule.works_friday;
-    case 6:
-      return schedule.works_saturday;
-    default:
-      return false;
-  }
-}
 
 function isoDateUtc(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -69,7 +46,6 @@ export function buildAttendanceSeedRows(input: {
   candela: PayrollScheduleInput;
 }): Omit<AttendanceDayInput, "id">[] {
   const { start, end } = biweeklyRange(input.year, input.month, input.half);
-  const resolved = resolveEmployeeSchedule(input.employee, input.candela);
   const rows: Omit<AttendanceDayInput, "id">[] = [];
 
   for (
@@ -92,6 +68,11 @@ export function buildAttendanceSeedRows(input: {
       });
       continue;
     }
+    const resolved = resolveScheduleForDay(
+      input.employee,
+      input.candela,
+      dow,
+    );
     rows.push({
       employeeId: input.employeeId,
       workDate,
@@ -194,12 +175,6 @@ export function computeAttendanceHours(input: {
 }): AttendanceHoursResult {
   const nightStart = timeToMinutes(input.legal.night_start_time);
   const nightEnd = timeToMinutes(input.legal.night_end_time);
-  const resolved = resolveEmployeeSchedule(input.employee, input.candela);
-  const ordinaryCapacity = netShiftMinutes(
-    resolved.entry,
-    resolved.exit,
-    resolved.breakMinutes,
-  );
 
   let workedDays = 0;
   let sundayDays = 0;
@@ -219,6 +194,18 @@ export function computeAttendanceHours(input: {
   }
 
   for (const day of sorted) {
+    const dow = new Date(`${day.workDate}T12:00:00Z`).getUTCDay();
+    const daySchedule = resolveScheduleForDay(
+      input.employee,
+      input.candela,
+      dow,
+    );
+    const ordinaryCapacity = netShiftMinutes(
+      daySchedule.entry,
+      daySchedule.exit,
+      daySchedule.breakMinutes,
+    );
+
     if (day.dayKind === "DESCANSO" || day.dayKind === "FESTIVO") {
       restDays += 1;
       continue;
@@ -255,7 +242,6 @@ export function computeAttendanceHours(input: {
     breakLeft -= fromDay;
     nightMins = Math.max(0, nightMins - breakLeft);
 
-    const dow = new Date(`${day.workDate}T12:00:00Z`).getUTCDay();
     const isSundayOrHoliday = dow === 0 || day.dayKind === "FESTIVO_LABORADO";
     if (day.dayKind === "FESTIVO_LABORADO") holidayWorkedDays += 1;
     if (dow === 0) sundayDays += 1;

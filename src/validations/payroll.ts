@@ -9,10 +9,28 @@ const boolFromForm = z
   .optional()
   .transform((v) => v === "true" || v === "on");
 
+const dayHoursSlotSchema = z.object({
+  entry: timeStr,
+  exit: timeStr,
+});
+
+const dayHoursSchema = z
+  .object({
+    monday: dayHoursSlotSchema.optional().nullable(),
+    tuesday: dayHoursSlotSchema.optional().nullable(),
+    wednesday: dayHoursSlotSchema.optional().nullable(),
+    thursday: dayHoursSlotSchema.optional().nullable(),
+    friday: dayHoursSlotSchema.optional().nullable(),
+    saturday: dayHoursSlotSchema.optional().nullable(),
+    sunday: dayHoursSlotSchema.optional().nullable(),
+  })
+  .optional()
+  .default({});
+
 export const payrollScheduleSchema = z.object({
   name: z.string().min(1).default("Horario Candela"),
-  ordinary_entry_time: timeStr,
-  ordinary_exit_time: timeStr,
+  ordinary_entry_time: timeStr.optional(),
+  ordinary_exit_time: timeStr.optional(),
   break_minutes: z.coerce.number().int().min(0).max(240),
   works_monday: boolFromForm,
   works_tuesday: boolFromForm,
@@ -21,6 +39,7 @@ export const payrollScheduleSchema = z.object({
   works_friday: boolFromForm,
   works_saturday: boolFromForm,
   works_sunday: boolFromForm,
+  day_hours: dayHoursSchema,
 });
 
 export const payrollLegalParamsSchema = z.object({

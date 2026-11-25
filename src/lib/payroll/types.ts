@@ -14,6 +14,26 @@ export type EmploymentContractType =
 
 export type EmployeeBonusType = "FIJA" | "POR_META";
 
+export type WeekdayName =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+
+/** Entrada/salida de un día concreto (HH:mm). */
+export type DayHoursSlot = {
+  entry: string;
+  exit: string;
+};
+
+/** Overrides por día; ausente o null = usa ordinary_entry/exit. */
+export type ScheduleDayHours = Partial<
+  Record<WeekdayName, DayHoursSlot | null>
+>;
+
 export type PayrollScheduleInput = {
   ordinary_entry_time: string; // HH:mm or HH:mm:ss
   ordinary_exit_time: string;
@@ -25,6 +45,8 @@ export type PayrollScheduleInput = {
   works_friday: boolean;
   works_saturday: boolean;
   works_sunday: boolean;
+  /** Horarios distintos por día (opcional; vacío = mismo horario todos los días). */
+  day_hours?: ScheduleDayHours;
 };
 
 export type EmployeeScheduleInput = {

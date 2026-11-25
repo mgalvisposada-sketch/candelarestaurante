@@ -57,9 +57,7 @@ export default async function PersonalPage() {
         .order("full_name"),
       supabase
         .from("payroll_schedules")
-        .select(
-          "ordinary_entry_time, ordinary_exit_time, break_minutes, works_monday, works_tuesday, works_wednesday, works_thursday, works_friday, works_saturday, works_sunday",
-        )
+        .select("*")
         .eq("organization_id", ctx.organization.id)
         .eq("is_active", true)
         .is("deleted_at", null)

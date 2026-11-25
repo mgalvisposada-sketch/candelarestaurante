@@ -103,6 +103,48 @@ describe("payroll schedule helpers", () => {
     );
     expect(summary).toContain("Entrada 11:00 vs Candela 10:00");
   });
+
+  it("usa entrada/salida distintas por día en la precarga", () => {
+    const candela: PayrollScheduleInput = {
+      ...candelaClosedSunday,
+      ordinary_entry_time: "15:00",
+      ordinary_exit_time: "22:30",
+      break_minutes: 30,
+      works_monday: false,
+      day_hours: {
+        tuesday: { entry: "15:00", exit: "22:30" },
+        wednesday: { entry: "15:00", exit: "22:30" },
+        thursday: { entry: "16:00", exit: "23:30" },
+        friday: { entry: "16:00", exit: "23:30" },
+        saturday: { entry: "16:00", exit: "23:30" },
+      },
+    };
+    const rows = buildAttendanceSeedRows({
+      year: 2026,
+      month: 11,
+      half: 2,
+      employeeId: "emp-1",
+      employee: {
+        ordinary_entry_time: "15:00",
+        ordinary_exit_time: "22:30",
+        break_minutes: 30,
+        uses_custom_schedule: false,
+      },
+      candela,
+    });
+    // 2026-11-17 = martes → 15:00
+    const tue = rows.find((r) => r.workDate === "2026-11-17");
+    expect(tue?.dayKind).toBe("LABORADO");
+    expect(tue?.entryTime).toBe("15:00");
+    expect(tue?.exitTime).toBe("22:30");
+    // 2026-11-19 = jueves → 16:00
+    const thu = rows.find((r) => r.workDate === "2026-11-19");
+    expect(thu?.entryTime).toBe("16:00");
+    expect(thu?.exitTime).toBe("23:30");
+    // 2026-11-16 = lunes → descanso
+    const mon = rows.find((r) => r.workDate === "2026-11-16");
+    expect(mon?.dayKind).toBe("DESCANSO");
+  });
 });
 
 describe("horas quincenales", () => {

@@ -1,12 +1,45 @@
 import type {
+  DayHoursSlot,
   EmployeeScheduleInput,
   LegalParamsInput,
   PayrollScheduleInput,
+  ScheduleDayHours,
+  WeekdayName,
 } from "./types";
+
+const DAY_KEYS: WeekdayName[] = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+];
 
 export function timeFromDb(value: string | null | undefined): string {
   if (!value) return "00:00";
   return value.slice(0, 5);
+}
+
+function parseDayHours(raw: unknown): ScheduleDayHours | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: ScheduleDayHours = {};
+  let any = false;
+  for (const day of DAY_KEYS) {
+    const slot = (raw as Record<string, unknown>)[day];
+    if (!slot || typeof slot !== "object") continue;
+    const entryRaw = (slot as { entry?: unknown }).entry;
+    const exitRaw = (slot as { exit?: unknown }).exit;
+    if (typeof entryRaw !== "string" || typeof exitRaw !== "string") continue;
+    if (!entryRaw.trim() || !exitRaw.trim()) continue;
+    out[day] = {
+      entry: timeFromDb(entryRaw),
+      exit: timeFromDb(exitRaw),
+    } satisfies DayHoursSlot;
+    any = true;
+  }
+  return any ? out : undefined;
 }
 
 export function mapScheduleRow(row: {
@@ -20,7 +53,9 @@ export function mapScheduleRow(row: {
   works_friday: boolean;
   works_saturday: boolean;
   works_sunday: boolean;
+  day_hours?: unknown;
 }): PayrollScheduleInput {
+  const day_hours = parseDayHours(row.day_hours);
   return {
     ordinary_entry_time: timeFromDb(row.ordinary_entry_time),
     ordinary_exit_time: timeFromDb(row.ordinary_exit_time),
@@ -32,6 +67,7 @@ export function mapScheduleRow(row: {
     works_friday: row.works_friday,
     works_saturday: row.works_saturday,
     works_sunday: row.works_sunday,
+    ...(day_hours ? { day_hours } : {}),
   };
 }
 

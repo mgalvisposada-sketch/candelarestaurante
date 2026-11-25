@@ -440,10 +440,52 @@ export async function upsertPayrollScheduleAction(
   const ctx = await getOrgContext();
   if (!ctx?.organization) return { ok: false, error: "Sin organización" };
 
+  const dayKeys = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+  ] as const;
+  const dayLabels: Record<(typeof dayKeys)[number], string> = {
+    monday: "lunes",
+    tuesday: "martes",
+    wednesday: "miércoles",
+    thursday: "jueves",
+    friday: "viernes",
+    saturday: "sábado",
+    sunday: "domingo",
+  };
+
+  const day_hours: Record<string, { entry: string; exit: string }> = {};
+  for (const day of dayKeys) {
+    const works = formBool(formData, `works_${day}`);
+    if (!works) continue;
+    const entry = String(formData.get(`${day}_entry`) ?? "").trim();
+    const exit = String(formData.get(`${day}_exit`) ?? "").trim();
+    if (!entry || !exit) {
+      return {
+        ok: false,
+        error: `Indique entrada y salida para ${dayLabels[day]}`,
+      };
+    }
+    day_hours[day] = { entry: entry.slice(0, 5), exit: exit.slice(0, 5) };
+  }
+
+  const firstWorking = dayKeys.find((d) => formBool(formData, `works_${d}`));
+  const fallbackEntry =
+    (firstWorking ? day_hours[firstWorking]?.entry : null) ??
+    String(formData.get("ordinary_entry_time") ?? "10:00").slice(0, 5);
+  const fallbackExit =
+    (firstWorking ? day_hours[firstWorking]?.exit : null) ??
+    String(formData.get("ordinary_exit_time") ?? "22:00").slice(0, 5);
+
   const parsed = payrollScheduleSchema.safeParse({
     name: formData.get("name") || "Horario Candela",
-    ordinary_entry_time: formData.get("ordinary_entry_time"),
-    ordinary_exit_time: formData.get("ordinary_exit_time"),
+    ordinary_entry_time: fallbackEntry,
+    ordinary_exit_time: fallbackExit,
     break_minutes: formData.get("break_minutes"),
     works_monday: formBool(formData, "works_monday") ? "true" : "false",
     works_tuesday: formBool(formData, "works_tuesday") ? "true" : "false",
@@ -452,17 +494,25 @@ export async function upsertPayrollScheduleAction(
     works_friday: formBool(formData, "works_friday") ? "true" : "false",
     works_saturday: formBool(formData, "works_saturday") ? "true" : "false",
     works_sunday: formBool(formData, "works_sunday") ? "true" : "false",
+    day_hours,
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
   }
 
+  if (!firstWorking) {
+    return { ok: false, error: "Marque al menos un día laborable" };
+  }
+
+  const ordinaryEntry = parsed.data.ordinary_entry_time!.slice(0, 5);
+  const ordinaryExit = parsed.data.ordinary_exit_time!.slice(0, 5);
+
   const payload = {
     organization_id: ctx.organization.id,
     name: parsed.data.name,
     is_active: true,
-    ordinary_entry_time: parsed.data.ordinary_entry_time.slice(0, 5),
-    ordinary_exit_time: parsed.data.ordinary_exit_time.slice(0, 5),
+    ordinary_entry_time: ordinaryEntry,
+    ordinary_exit_time: ordinaryExit,
     break_minutes: parsed.data.break_minutes,
     works_monday: parsed.data.works_monday,
     works_tuesday: parsed.data.works_tuesday,
@@ -471,11 +521,17 @@ export async function upsertPayrollScheduleAction(
     works_friday: parsed.data.works_friday,
     works_saturday: parsed.data.works_saturday,
     works_sunday: parsed.data.works_sunday,
+    day_hours: parsed.data.day_hours ?? {},
     updated_by: ctx.userId,
   };
 
   const supabase = await createClient();
   let id = scheduleId ?? undefined;
+
+  const dayHoursMissing = (message: string) =>
+    message.includes("day_hours")
+      ? "Falta la columna day_hours en la base. Ejecuta la migración supabase/migrations/20261125000100_payroll_schedule_day_hours.sql en el SQL Editor de Supabase y vuelve a guardar."
+      : message;
 
   if (id) {
     const { error } = await supabase
@@ -483,14 +539,14 @@ export async function upsertPayrollScheduleAction(
       .update(payload)
       .eq("id", id)
       .eq("organization_id", ctx.organization.id);
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: dayHoursMissing(error.message) };
   } else {
     const { data, error } = await supabase
       .from("payroll_schedules")
       .insert({ ...payload, created_by: ctx.userId })
       .select("id")
       .single();
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: dayHoursMissing(error.message) };
     id = data.id;
   }
 

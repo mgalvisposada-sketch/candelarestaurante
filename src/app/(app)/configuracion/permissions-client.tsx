@@ -166,7 +166,7 @@ export function PermissionsManager({
             dentro del techo se marcan como «extra».
           </p>
           <div className="space-y-4">
-            {APP_MODULES.filter((m) => m.mvp <= 3 || m.key === "reportes").map(
+            {APP_MODULES.filter((m) => m.mvp <= 3).map(
               (mod) => {
                 const role = selected.role;
                 const subs = mod.submodules.filter((s) => {
