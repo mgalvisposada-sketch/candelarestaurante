@@ -12,7 +12,8 @@ export type PendingActionKind =
   | "pago_ejecutar"
   | "inventario_revisar"
   | "caja_avalar"
-  | "caja_ingreso_banco";
+  | "caja_ingreso_banco"
+  | "gestion_asignada";
 
 export type PendingAction = {
   id: string;
@@ -31,6 +32,7 @@ export type PendingActionCounts = {
   pagos: number;
   inventario: number;
   caja: number;
+  gestiones: number;
 };
 
 export type PendingActionsResult = {
@@ -52,14 +54,15 @@ const NOVELTY_TYPE_LABELS: Record<string, string> = {
 };
 
 const KIND_ORDER: Record<PendingActionKind, number> = {
-  compra_autorizar: 0,
-  compra_recibir: 1,
-  novedad_aprobar: 2,
-  caja_avalar: 3,
-  caja_ingreso_banco: 4,
-  pago_aprobar: 5,
-  pago_ejecutar: 6,
-  inventario_revisar: 7,
+  gestion_asignada: 0,
+  compra_autorizar: 1,
+  compra_recibir: 2,
+  novedad_aprobar: 3,
+  caja_avalar: 4,
+  caja_ingreso_banco: 5,
+  pago_aprobar: 6,
+  pago_ejecutar: 7,
+  inventario_revisar: 8,
 };
 
 /**
@@ -67,7 +70,7 @@ const KIND_ORDER: Record<PendingActionKind, number> = {
  * Desaparecen solas cuando se gestionan (autorizar/aprobar/pagar/rechazar).
  */
 export async function fetchPendingActions(
-  ctx: Pick<OrgContext, "role" | "permissions" | "organization">,
+  ctx: Pick<OrgContext, "userId" | "role" | "permissions" | "organization">,
 ): Promise<PendingActionsResult> {
   const empty: PendingActionsResult = {
     items: [],
@@ -78,6 +81,7 @@ export async function fetchPendingActions(
       pagos: 0,
       inventario: 0,
       caja: 0,
+      gestiones: 0,
     },
   };
 
@@ -93,6 +97,7 @@ export async function fetchPendingActions(
   const canAvalarCaja = ctxCanAccess(ctx, "tesoreria.caja.avalar");
   const canConfirmAcquiring =
     canAvalarCaja || ctxCanAccess(ctx, "tesoreria.cuentas");
+  const canGestiones = ctxCanAccess(ctx, "gestiones.bandeja");
 
   if (
     !canApprovePurchase &&
@@ -102,7 +107,8 @@ export async function fetchPendingActions(
     !canPay &&
     !canReviewInventory &&
     !canAvalarCaja &&
-    !canConfirmAcquiring
+    !canConfirmAcquiring &&
+    !canGestiones
   ) {
     return empty;
   }
@@ -110,7 +116,20 @@ export async function fetchPendingActions(
   const supabase = await createClient();
   const items: PendingAction[] = [];
 
+  const gestionesPromise = canGestiones
+    ? supabase
+        .from("gestiones")
+        .select("id, title, priority, due_date, status, created_at")
+        .eq("organization_id", orgId)
+        .eq("assigned_to", ctx.userId)
+        .in("status", ["PENDIENTE", "EN_PROGRESO"])
+        .is("deleted_at", null)
+        .order("due_date", { ascending: true, nullsFirst: false })
+        .limit(50)
+    : Promise.resolve({ data: null as null | Array<Record<string, unknown>> });
+
   const [
+    gestionesRes,
     purchasesRes,
     receiveOrdersRes,
     noveltiesRes,
@@ -120,6 +139,7 @@ export async function fetchPendingActions(
     cashClosesRes,
     acquiringPendingRes,
   ] = await Promise.all([
+      gestionesPromise,
       canApprovePurchase
         ? supabase
             .from("purchase_requests")
@@ -230,6 +250,24 @@ export async function fetchPendingActions(
     for (const e of empRows ?? []) {
       employeeNameById.set(e.id as string, e.full_name as string);
     }
+  }
+
+  for (const row of gestionesRes.data ?? []) {
+    const priority = String(row.priority ?? "NORMAL");
+    const due = row.due_date ? formatDateCO(row.due_date as string) : null;
+    const statusLabel =
+      row.status === "EN_PROGRESO" ? "En progreso" : "Pendiente";
+    items.push({
+      id: `gestion:${row.id}`,
+      kind: "gestion_asignada",
+      title: String(row.title ?? "Gestión"),
+      body: due
+        ? `${statusLabel} · vence ${due}`
+        : statusLabel,
+      href: `/gestiones#gestion-${row.id}`,
+      createdAt: (row.created_at as string) ?? new Date().toISOString(),
+      urgent: priority === "URGENTE" || priority === "ALTA",
+    });
   }
 
   for (const row of purchasesRes.data ?? []) {
@@ -429,6 +467,7 @@ export async function fetchPendingActions(
     caja: items.filter(
       (i) => i.kind === "caja_avalar" || i.kind === "caja_ingreso_banco",
     ).length,
+    gestiones: items.filter((i) => i.kind === "gestion_asignada").length,
   };
 
   return { items, counts };

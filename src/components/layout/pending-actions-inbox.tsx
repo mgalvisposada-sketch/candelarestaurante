@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   Bell,
   CreditCard,
+  ListTodo,
   Package,
   ShoppingCart,
   UserCog,
@@ -27,12 +28,18 @@ const EMPTY_COUNTS: PendingActionCounts = {
   pagos: 0,
   inventario: 0,
   caja: 0,
+  gestiones: 0,
 };
 
 const KIND_META: Record<
   PendingActionKind,
   { icon: typeof Bell; tone: string; short: string }
 > = {
+  gestion_asignada: {
+    icon: ListTodo,
+    tone: "bg-[var(--info)]/15 text-[var(--info)]",
+    short: "Gestiones",
+  },
   compra_autorizar: {
     icon: ShoppingCart,
     tone: "bg-[var(--accent)]/15 text-[var(--accent)]",

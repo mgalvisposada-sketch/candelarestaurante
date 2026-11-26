@@ -323,6 +323,30 @@ export const APP_MODULES: AppModuleDef[] = [
     ],
   },
   {
+    key: "gestiones",
+    label: "Gestiones",
+    href: "/gestiones",
+    mvp: 1,
+    submodules: [
+      {
+        key: "gestiones.bandeja",
+        label: "Ver bandeja de gestiones",
+        description: "Lista tareas propias, del equipo y creadas por uno.",
+      },
+      {
+        key: "gestiones.crear",
+        label: "Crear y asignar gestiones",
+        description: "Crear tareas para sí mismo o para otro usuario del equipo.",
+      },
+      {
+        key: "gestiones.gestionar",
+        label: "Editar / completar / cancelar",
+        description:
+          "Cambiar estado, prioridad, responsable o archivar gestiones.",
+      },
+    ],
+  },
+  {
     key: "personal",
     label: "Personal",
     href: "/personal",
@@ -438,6 +462,10 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
    * No autoriza, no factura, no paga, no ajusta inventario físico.
    */
   ADMIN_LOCAL: [
+    "gestiones",
+    "gestiones.bandeja",
+    "gestiones.crear",
+    "gestiones.gestionar",
     "personal",
     "personal.novedades",
     "inventario",
@@ -465,6 +493,10 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
   TESORERIA: [
     "inicio",
     "inicio.resumen",
+    "gestiones",
+    "gestiones.bandeja",
+    "gestiones.crear",
+    "gestiones.gestionar",
     "tesoreria",
     "tesoreria.cuentas",
     "tesoreria.saldos",
@@ -496,6 +528,10 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
   SOCIO: [
     "inicio",
     "inicio.resumen",
+    "gestiones",
+    "gestiones.bandeja",
+    "gestiones.crear",
+    "gestiones.gestionar",
     "socios",
     "socios.maestro",
     "socios.cuentas",
@@ -511,6 +547,10 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AppRole, string[]> = {
   CONTADOR: [
     "inicio",
     "inicio.resumen",
+    "gestiones",
+    "gestiones.bandeja",
+    "gestiones.crear",
+    "gestiones.gestionar",
     "tesoreria",
     "tesoreria.cuentas",
     "tesoreria.saldos",
@@ -576,7 +616,11 @@ export const ROLE_PERMISSION_CEILING: Record<AppRole, string[]> = {
   ],
   SOCIO: [...ROLE_DEFAULT_PERMISSIONS.SOCIO],
   CONTADOR: [...ROLE_DEFAULT_PERMISSIONS.CONTADOR],
-  LECTURA: [...ROLE_DEFAULT_PERMISSIONS.LECTURA],
+  LECTURA: [
+    ...ROLE_DEFAULT_PERMISSIONS.LECTURA,
+    "gestiones",
+    "gestiones.bandeja",
+  ],
 };
 
 /** Claves que no se otorgan por checkbox (requieren rol Super admin). */

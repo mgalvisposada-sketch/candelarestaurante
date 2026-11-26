@@ -107,6 +107,12 @@ export const NAV_ITEMS = [
     hint: "Líneas presupuestales",
   },
   {
+    href: "/gestiones",
+    label: "Gestiones",
+    mvp: 1,
+    hint: "Tareas del equipo",
+  },
+  {
     href: "/personal",
     label: "Personal",
     mvp: 3,
@@ -182,7 +188,7 @@ export const NAV_GROUPS = [
   {
     id: "equipo",
     label: "Equipo",
-    hrefs: ["/personal"] as const,
+    hrefs: ["/gestiones", "/personal"] as const,
   },
   {
     id: "cumplimiento",

@@ -21,6 +21,7 @@ import {
   PieChart,
   Receipt,
   Search,
+  ListTodo,
   Settings,
   Shield,
   ShoppingCart,
@@ -56,6 +57,7 @@ function pendingCountForHref(
     pagos: number;
     inventario: number;
     caja: number;
+    gestiones: number;
   },
 ) {
   if (href === "/compras") return counts.compras;
@@ -63,6 +65,7 @@ function pendingCountForHref(
   if (href === "/solicitudes-pago") return counts.pagos;
   if (href === "/inventario") return counts.inventario;
   if (href === "/tesoreria") return counts.caja;
+  if (href === "/gestiones") return counts.gestiones;
   return 0;
 }
 
@@ -88,6 +91,7 @@ const NAV_ICONS: Record<NavItem["href"], LucideIcon> = {
   "/cocina": ChefHat,
   "/compras": ShoppingCart,
   "/presupuesto": PieChart,
+  "/gestiones": ListTodo,
   "/personal": UserCog,
   "/tributario": Calculator,
   "/contratos": FileText,

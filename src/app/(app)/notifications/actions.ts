@@ -18,6 +18,7 @@ export async function getPendingActionsAction(): Promise<PendingActionsResult> {
         pagos: 0,
         inventario: 0,
         caja: 0,
+        gestiones: 0,
       },
     };
   }
